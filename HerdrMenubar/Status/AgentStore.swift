@@ -112,7 +112,7 @@ final class AgentStore {
         do {
             _ = try await client.focus(paneID: item.paneID)
         } catch {
-            AppLog.systemActions.error("Pane focus failed: \(error.localizedDescription, privacy: .public)")
+            AppLog.systemActions.error("Pane focus failed: \(error.localizedDescription, privacy: .private)")
             transientError = "Could not focus pane: \(error.localizedDescription)"
             return
         }
@@ -121,7 +121,7 @@ final class AgentStore {
         do {
             try await terminalActivator.activate(bundleIdentifier: terminalBundleIdentifier)
         } catch {
-            AppLog.systemActions.error("Terminal activation failed: \(error.localizedDescription, privacy: .public)")
+            AppLog.systemActions.error("Terminal activation failed: \(error.localizedDescription, privacy: .private)")
             transientError = error.localizedDescription
         }
         await client.refresh()

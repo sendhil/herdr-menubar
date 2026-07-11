@@ -308,7 +308,7 @@ private extension HerdrClient {
                         } else if Self.refreshEvents.contains(event.event) {
                             scheduleRefresh()
                         } else {
-                            AppLog.synchronization.debug("Ignoring unknown Herdr event: \(event.event, privacy: .public)")
+                            AppLog.synchronization.debug("Ignoring unknown Herdr event: \(event.event, privacy: .private)")
                         }
                     } catch {
                         AppLog.synchronization.error("Ignoring malformed Herdr event message: \(String(describing: type(of: error)), privacy: .public)")
@@ -376,7 +376,7 @@ private extension HerdrClient {
             if owns(generation), rebuildToken == token, shouldInvalidate(for: error) {
                 await invalidate(reason: description(for: error), generation: generation)
             } else if owns(generation), rebuildToken == token {
-                AppLog.synchronization.error("Herdr subscription rebuild failed: \(error.localizedDescription, privacy: .public)")
+                AppLog.synchronization.error("Herdr subscription rebuild failed: \(error.localizedDescription, privacy: .private)")
             }
         }
     }
@@ -417,7 +417,7 @@ private extension HerdrClient {
                 if owns(generation), refreshToken == token, shouldInvalidate(for: error) {
                     await invalidate(reason: description(for: error), generation: generation)
                 } else if owns(generation), refreshToken == token {
-                    AppLog.synchronization.error("Herdr snapshot refresh failed: \(error.localizedDescription, privacy: .public)")
+                    AppLog.synchronization.error("Herdr snapshot refresh failed: \(error.localizedDescription, privacy: .private)")
                 }
                 return
             }
@@ -510,7 +510,7 @@ private extension HerdrClient {
         guard owns(generation) else { return }
         if wasConnected || !disconnectedPublished {
             disconnectedPublished = true
-            AppLog.synchronization.info("Disconnected from Herdr: \(reason, privacy: .public)")
+            AppLog.synchronization.info("Disconnected from Herdr: \(reason, privacy: .private)")
             publish(.disconnected(reason))
         }
     }

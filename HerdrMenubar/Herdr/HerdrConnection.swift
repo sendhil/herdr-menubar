@@ -50,7 +50,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
                 Task { await self.state.markReady() }
                 self.receiveNext()
             case .failed(let error):
-                AppLog.transport.error("Unix socket connection failed: \(error.localizedDescription, privacy: .public)")
+                AppLog.transport.error("Unix socket connection failed: \(error.localizedDescription, privacy: .private)")
                 Task { await self.state.fail(.connectionFailed(error.localizedDescription)) }
             case .cancelled:
                 AppLog.transport.debug("Unix socket connection closed")

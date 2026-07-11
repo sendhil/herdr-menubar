@@ -4,6 +4,11 @@ import SwiftUI
 @MainActor
 final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
     var store: AgentStore?
+    var loginItemService: LoginItemService?
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        loginItemService?.refreshStatus()
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
@@ -51,6 +56,8 @@ struct HerdrMenubarApp: App {
             )
             .task {
                 appDelegate.store = store
+                appDelegate.loginItemService = loginItemService
+                loginItemService.refreshStatus()
                 await store.start()
             }
         }

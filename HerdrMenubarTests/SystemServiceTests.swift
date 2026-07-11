@@ -89,6 +89,18 @@ final class SystemServiceTests: XCTestCase {
         XCTAssertEqual(LoginItemService(backend: FakeLoginBackend(status: .notFound)).status, .unavailable)
     }
 
+    func testRefreshLoginStatusReflectsExternallyMutatedBackend() {
+        let backend = FakeLoginBackend(status: .notRegistered)
+        let service = LoginItemService(backend: backend)
+
+        backend.setStatus(.requiresApproval)
+        service.refreshStatus()
+
+        XCTAssertEqual(service.status, .requiresApproval)
+        XCTAssertFalse(service.isEnabled)
+        XCTAssertEqual(service.helpText, "Allow in System Settings")
+    }
+
     func testLoginRegistrationAndUnregistrationUseSystemConfirmedStatus() async throws {
         let backend = FakeLoginBackend(status: .notRegistered)
         let service = LoginItemService(backend: backend)
@@ -131,6 +143,65 @@ final class SystemServiceTests: XCTestCase {
         XCTAssertFalse(service.isChanging)
     }
 
+    func testConcurrentLoginUpdateThrowsBusyWithoutPerformingSecondOperation() async throws {
+        let backend = FakeLoginBackend(status: .notRegistered)
+        let service = LoginItemService(backend: backend)
+        let firstOperation = Task { try await service.setEnabled(true) }
+        while !service.isChanging { await Task.yield() }
+
+        await XCTAssertThrowsErrorAsync(try await service.setEnabled(false)) { error in
+            XCTAssertEqual(error as? LoginItemOperationError, .busy)
+        }
+        try await firstOperation.value
+
+        XCTAssertEqual(backend.registerCount, 1)
+        XCTAssertEqual(backend.unregisterCount, 0)
+        XCTAssertEqual(service.status, .enabled)
+    }
+
+    func testLaunchIntentPersistsOnlyAfterCompletedLoginOperation() async throws {
+        let suiteName = "dev.herdr.menubar.login-tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = Preferences(defaults: defaults)
+        let backend = FakeLoginBackend(status: .notRegistered)
+        let service = LoginItemService(backend: backend)
+        let firstOperation = Task {
+            try await StatusMenu.updateLoginIntent(
+                enabled: true,
+                service: service,
+                preferences: preferences
+            )
+        }
+        while !service.isChanging { await Task.yield() }
+
+        await XCTAssertThrowsErrorAsync(
+            try await StatusMenu.updateLoginIntent(
+                enabled: false,
+                service: service,
+                preferences: preferences
+            )
+        ) { error in
+            XCTAssertEqual(error as? LoginItemOperationError, .busy)
+        }
+        XCTAssertFalse(preferences.launchAtLoginIntent)
+
+        try await firstOperation.value
+        XCTAssertTrue(preferences.launchAtLoginIntent)
+        XCTAssertTrue(defaults.bool(forKey: Preferences.launchAtLoginIntentKey))
+    }
+
+    func testLoginErrorClearsAfterBoundedDisplayDuration() async {
+        let backend = FakeLoginBackend(status: .notRegistered, registerError: LoginTestFailure.failed)
+        let service = LoginItemService(backend: backend, errorDisplayDuration: .milliseconds(10))
+
+        await XCTAssertThrowsErrorAsync(try await service.setEnabled(true)) { _ in }
+        XCTAssertEqual(service.errorMessage, "Could not update Launch at Login.")
+
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertNil(service.errorMessage)
+    }
+
     func testRequiresApprovalIsNotEnabledAndProvidesSystemSettingsHelp() async throws {
         let backend = FakeLoginBackend(status: .notRegistered, statusAfterRegister: .requiresApproval)
         let service = LoginItemService(backend: backend)
@@ -170,6 +241,10 @@ private final class FakeLoginBackend: LoginItemBackend {
         self.registerError = registerError
         self.unregisterError = unregisterError
         self.statusAfterRegister = statusAfterRegister
+    }
+
+    func setStatus(_ status: LoginItemRegistrationStatus) {
+        self.status = status
     }
 
     func register() throws {

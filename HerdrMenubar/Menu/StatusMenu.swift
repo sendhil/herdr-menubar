@@ -64,6 +64,9 @@ struct StatusMenu: View {
         Button("Quit") {
             NSApplication.shared.terminate(nil)
         }
+        .onAppear {
+            loginItemService.refreshStatus()
+        }
     }
 
     private var terminalPicker: some View {
@@ -88,16 +91,27 @@ struct StatusMenu: View {
     @MainActor
     private func updateLoginItem(enabled: Bool) async {
         do {
-            try await loginItemService.setEnabled(enabled)
-            if enabled {
-                if loginItemService.status == .enabled || loginItemService.status == .requiresApproval {
-                    preferences.launchAtLoginIntent = true
-                }
-            } else if loginItemService.status == .disabled {
-                preferences.launchAtLoginIntent = false
-            }
+            try await Self.updateLoginIntent(
+                enabled: enabled,
+                service: loginItemService,
+                preferences: preferences
+            )
         } catch {
-            // LoginItemService retains and presents the concise operation error.
+            // LoginItemService presents failures; busy means no operation occurred.
+        }
+    }
+
+    @MainActor
+    static func updateLoginIntent(
+        enabled: Bool,
+        service: LoginItemService,
+        preferences: Preferences
+    ) async throws {
+        try await service.setEnabled(enabled)
+        if enabled && (service.status == .enabled || service.status == .requiresApproval) {
+            preferences.launchAtLoginIntent = true
+        } else if !enabled, service.status == .disabled {
+            preferences.launchAtLoginIntent = false
         }
     }
 
