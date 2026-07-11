@@ -13,6 +13,8 @@ struct MenuBarIcon: View {
             return "Disconnected"
         case .connected where attentionCount == 0:
             return "Connected, no agents need attention"
+        case .connected where attentionCount == 1:
+            return "Connected, 1 agent needs attention"
         case .connected:
             return "Connected, \(attentionCount) agents need attention"
         }

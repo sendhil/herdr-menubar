@@ -3,6 +3,8 @@ import SwiftUI
 
 struct StatusMenu: View {
     let store: AgentStore
+    let preferences: Preferences
+    let installedTerminals: [TerminalApp]
 
     var body: some View {
         if !store.attentionItems.isEmpty {
@@ -32,6 +34,8 @@ struct StatusMenu: View {
                 .foregroundStyle(.red)
         }
 
+        terminalPicker
+
         if case .disconnected = store.connectionState {
             Button("Retry") {
                 Task { await store.retry() }
@@ -42,6 +46,31 @@ struct StatusMenu: View {
         Button("Quit") {
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private var terminalPicker: some View {
+        Picker("Terminal", selection: Binding(
+            get: { preferences.selectedTerminalBundleIdentifier },
+            set: { preferences.selectedTerminalBundleIdentifier = $0 }
+        )) {
+            if !installedTerminals.contains(where: {
+                $0.bundleIdentifier == preferences.selectedTerminalBundleIdentifier
+            }) {
+                Text("\(savedTerminalName) (Unavailable)")
+                    .tag(preferences.selectedTerminalBundleIdentifier)
+                    .disabled(true)
+            }
+            ForEach(installedTerminals) { terminal in
+                Text(terminal.name)
+                    .tag(terminal.bundleIdentifier)
+            }
+        }
+    }
+
+    private var savedTerminalName: String {
+        TerminalCatalog.knownTerminals.first {
+            $0.bundleIdentifier == preferences.selectedTerminalBundleIdentifier
+        }?.name ?? preferences.selectedTerminalBundleIdentifier
     }
 
     @ViewBuilder

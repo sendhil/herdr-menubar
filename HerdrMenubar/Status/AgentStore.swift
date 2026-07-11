@@ -12,15 +12,6 @@ protocol AgentClientServing: Sendable {
 
 extension HerdrClient: AgentClientServing {}
 
-protocol TerminalActivating: Sendable {
-    func activate() async throws
-}
-
-/// Task 4 composition seam. Task 5 replaces this with NSWorkspace-backed activation.
-struct DeferredTerminalActivator: TerminalActivating {
-    func activate() async throws {}
-}
-
 enum ConnectionState: Equatable, Sendable {
     case connected
     case disconnected(String)
@@ -61,6 +52,7 @@ struct AgentMenuItem: Identifiable, Equatable, Sendable {
 final class AgentStore {
     private let client: any AgentClientServing
     private let terminalActivator: any TerminalActivating
+    private let preferences: Preferences
     private var eventTask: Task<Void, Never>?
     private var eventGeneration = UUID()
     private var isRunning = false
@@ -72,9 +64,14 @@ final class AgentStore {
 
     var attentionCount: Int { attentionItems.count }
 
-    init(client: any AgentClientServing, terminalActivator: any TerminalActivating) {
+    init(
+        client: any AgentClientServing,
+        terminalActivator: any TerminalActivating,
+        preferences: Preferences = Preferences()
+    ) {
         self.client = client
         self.terminalActivator = terminalActivator
+        self.preferences = preferences
     }
 
     func start() async {
@@ -118,10 +115,11 @@ final class AgentStore {
             return
         }
 
+        let terminalBundleIdentifier = preferences.selectedTerminalBundleIdentifier
         do {
-            try await terminalActivator.activate()
+            try await terminalActivator.activate(bundleIdentifier: terminalBundleIdentifier)
         } catch {
-            transientError = "Could not activate terminal: \(error.localizedDescription)"
+            transientError = error.localizedDescription
         }
         await client.refresh()
     }

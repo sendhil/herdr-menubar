@@ -89,6 +89,10 @@ final class AgentStoreTests: XCTestCase {
             "Connected, no agents need attention"
         )
         XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 1),
+            "Connected, 1 agent needs attention"
+        )
+        XCTAssertEqual(
             MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 3),
             "Connected, 3 agents need attention"
         )
@@ -103,8 +107,27 @@ final class AgentStoreTests: XCTestCase {
         await store.select(AgentMenuItem(pane: pane("p", .blocked)))
 
         let values = await sequence.values
-        XCTAssertEqual(values, ["focus:p", "activate", "refresh"])
+        XCTAssertEqual(values, ["focus:p", "activate:com.github.wez.wezterm", "refresh"])
         XCTAssertNil(store.transientError)
+    }
+
+    func testSelectionReadsCurrentTerminalPreferenceAfterFocusSucceeds() async {
+        let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = Preferences(defaults: defaults)
+        preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
+        let activator = RecordingActivator()
+        let store = AgentStore(
+            client: FakeAgentClient(),
+            terminalActivator: activator,
+            preferences: preferences
+        )
+
+        await store.select(AgentMenuItem(pane: pane("p", .blocked)))
+
+        XCTAssertEqual(activator.activatedBundleIdentifiers, ["com.mitchellh.ghostty"])
     }
 
     func testFailedFocusDoesNotActivateOrRefreshAndShowsTransientError() async {
@@ -114,7 +137,7 @@ final class AgentStoreTests: XCTestCase {
 
         await store.select(AgentMenuItem(pane: pane("p", .blocked)))
 
-        let activationCount = await activator.activationCount
+        let activationCount = activator.activationCount
         let refreshCount = await client.refreshCount
         XCTAssertEqual(activationCount, 0)
         XCTAssertEqual(refreshCount, 0)
@@ -130,7 +153,7 @@ final class AgentStoreTests: XCTestCase {
         await store.select(AgentMenuItem(pane: pane("p", .done)))
 
         let values = await sequence.values
-        XCTAssertEqual(values, ["focus:p", "activate", "refresh"])
+        XCTAssertEqual(values, ["focus:p", "activate:com.github.wez.wezterm", "refresh"])
         XCTAssertNotNil(store.transientError)
     }
 
@@ -199,8 +222,10 @@ private actor FakeAgentClient: AgentClientServing {
     }
 }
 
-private actor RecordingActivator: TerminalActivating {
+@MainActor
+private final class RecordingActivator: TerminalActivating {
     private(set) var activationCount = 0
+    private(set) var activatedBundleIdentifiers: [String] = []
     private let error: (any Error)?
     private let sequence: ActionSequence?
 
@@ -209,9 +234,10 @@ private actor RecordingActivator: TerminalActivating {
         self.sequence = sequence
     }
 
-    func activate() async throws {
+    func activate(bundleIdentifier: String) async throws {
         activationCount += 1
-        await sequence?.append("activate")
+        activatedBundleIdentifiers.append(bundleIdentifier)
+        await sequence?.append("activate:\(bundleIdentifier)")
         if let error { throw error }
     }
 }
