@@ -68,7 +68,6 @@ actor HerdrClient {
     private let sleeper: any Sleeper
     private let requestTimeout: Duration
     private let subscriptionRebuildDebounce: Duration
-    private let logger = Logger(subsystem: "dev.herdr.menubar", category: "synchronization")
 
     private var subscriptionConnection: (any HerdrConnection)?
     private var subscriptionToken: UUID?
@@ -246,6 +245,7 @@ actor HerdrClient {
                 subscriptionToken = candidate.token
                 connected = true
                 disconnectedPublished = false
+                AppLog.synchronization.info("Connected to Herdr")
                 publish(.connected(snapshot))
                 await oldConnection?.close()
                 return
@@ -308,10 +308,10 @@ private extension HerdrClient {
                         } else if Self.refreshEvents.contains(event.event) {
                             scheduleRefresh()
                         } else {
-                            logger.debug("Ignoring unknown Herdr event: \(event.event, privacy: .public)")
+                            AppLog.synchronization.debug("Ignoring unknown Herdr event: \(event.event, privacy: .public)")
                         }
                     } catch {
-                        logger.error("Ignoring malformed Herdr event message: \(error.localizedDescription, privacy: .public)")
+                        AppLog.synchronization.error("Ignoring malformed Herdr event message: \(String(describing: type(of: error)), privacy: .public)")
                     }
                 }
             } catch {
@@ -376,7 +376,7 @@ private extension HerdrClient {
             if owns(generation), rebuildToken == token, shouldInvalidate(for: error) {
                 await invalidate(reason: description(for: error), generation: generation)
             } else if owns(generation), rebuildToken == token {
-                logger.error("Herdr subscription rebuild failed: \(error.localizedDescription, privacy: .public)")
+                AppLog.synchronization.error("Herdr subscription rebuild failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -417,7 +417,7 @@ private extension HerdrClient {
                 if owns(generation), refreshToken == token, shouldInvalidate(for: error) {
                     await invalidate(reason: description(for: error), generation: generation)
                 } else if owns(generation), refreshToken == token {
-                    logger.error("Herdr snapshot refresh failed: \(error.localizedDescription, privacy: .public)")
+                    AppLog.synchronization.error("Herdr snapshot refresh failed: \(error.localizedDescription, privacy: .public)")
                 }
                 return
             }
@@ -510,6 +510,7 @@ private extension HerdrClient {
         guard owns(generation) else { return }
         if wasConnected || !disconnectedPublished {
             disconnectedPublished = true
+            AppLog.synchronization.info("Disconnected from Herdr: \(reason, privacy: .public)")
             publish(.disconnected(reason))
         }
     }

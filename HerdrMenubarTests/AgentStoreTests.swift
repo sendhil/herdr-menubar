@@ -117,10 +117,18 @@ final class AgentStoreTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let preferences = Preferences(defaults: defaults)
-        preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
+        XCTAssertEqual(
+            preferences.selectedTerminalBundleIdentifier,
+            "com.github.wez.wezterm"
+        )
+        let client = FakeAgentClient(focusAction: {
+            await MainActor.run {
+                preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
+            }
+        })
         let activator = RecordingActivator()
         let store = AgentStore(
-            client: FakeAgentClient(),
+            client: client,
             terminalActivator: activator,
             preferences: preferences
         )
@@ -187,10 +195,16 @@ private actor FakeAgentClient: AgentClientServing {
     private(set) var stopCount = 0
     private let focusError: (any Error)?
     private let sequence: ActionSequence?
+    private let focusAction: (@Sendable () async -> Void)?
 
-    init(focusError: (any Error)? = nil, sequence: ActionSequence? = nil) {
+    init(
+        focusError: (any Error)? = nil,
+        sequence: ActionSequence? = nil,
+        focusAction: (@Sendable () async -> Void)? = nil
+    ) {
         self.focusError = focusError
         self.sequence = sequence
+        self.focusAction = focusAction
     }
 
     func events() -> AsyncStream<HerdrClientEvent> {
@@ -214,6 +228,7 @@ private actor FakeAgentClient: AgentClientServing {
     func focus(paneID: String) async throws -> PaneInfo {
         await sequence?.append("focus:\(paneID)")
         if let focusError { throw focusError }
+        await focusAction?()
         return pane(paneID, .idle)
     }
 

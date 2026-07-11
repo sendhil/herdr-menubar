@@ -24,6 +24,8 @@
 		12A00000000000000000000F /* TerminalActivationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000025 /* TerminalActivationService.swift */; };
 		12A000000000000000000010 /* PreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000026 /* PreferencesTests.swift */; };
 		12A00000000000000000002A /* SystemServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000027 /* SystemServiceTests.swift */; };
+		12A00000000000000000002B /* LoginItemService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000028 /* LoginItemService.swift */; };
+		12A00000000000000000002C /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000029 /* AppLog.swift */; };
 		723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */; };
 		7A31F428AE2B1D9232A24A46 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */; };
 		902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */; };
@@ -65,6 +67,8 @@
 		12A000000000000000000025 /* TerminalActivationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalActivationService.swift; sourceTree = "<group>"; };
 		12A000000000000000000026 /* PreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000027 /* SystemServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemServiceTests.swift; sourceTree = "<group>"; };
+		12A000000000000000000028 /* LoginItemService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemService.swift; sourceTree = "<group>"; };
+		12A000000000000000000029 /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
 		0EB06622175E7CE82E829E14 /* HerdrMenubar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HerdrMenubar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		121841B405280CF092113C53 /* HerdrMenubarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrMenubarUITests.swift; sourceTree = "<group>"; };
 		53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrMenubarApp.swift; sourceTree = "<group>"; };
@@ -131,6 +135,8 @@
 			children = (
 				12A000000000000000000024 /* Preferences.swift */,
 				12A000000000000000000025 /* TerminalActivationService.swift */,
+				12A000000000000000000028 /* LoginItemService.swift */,
+				12A000000000000000000029 /* AppLog.swift */,
 			);
 			path = System;
 			sourceTree = "<group>";
@@ -284,6 +290,8 @@
 				12A00000000000000000000D /* AgentRow.swift in Sources */,
 				12A00000000000000000000E /* Preferences.swift in Sources */,
 				12A00000000000000000000F /* TerminalActivationService.swift in Sources */,
+				12A00000000000000000002B /* LoginItemService.swift in Sources */,
+				12A00000000000000000002C /* AppLog.swift in Sources */,
 				902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

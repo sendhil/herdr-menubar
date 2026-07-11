@@ -81,10 +81,108 @@ final class SystemServiceTests: XCTestCase {
             XCTAssertEqual(error.localizedDescription, "Could not open the selected terminal.")
         }
     }
+
+    func testLoginStatusMapsEverySystemState() {
+        XCTAssertEqual(LoginItemService(backend: FakeLoginBackend(status: .enabled)).status, .enabled)
+        XCTAssertEqual(LoginItemService(backend: FakeLoginBackend(status: .requiresApproval)).status, .requiresApproval)
+        XCTAssertEqual(LoginItemService(backend: FakeLoginBackend(status: .notRegistered)).status, .disabled)
+        XCTAssertEqual(LoginItemService(backend: FakeLoginBackend(status: .notFound)).status, .unavailable)
+    }
+
+    func testLoginRegistrationAndUnregistrationUseSystemConfirmedStatus() async throws {
+        let backend = FakeLoginBackend(status: .notRegistered)
+        let service = LoginItemService(backend: backend)
+
+        try await service.setEnabled(true)
+        XCTAssertEqual(service.status, .enabled)
+        XCTAssertTrue(service.isEnabled)
+        XCTAssertEqual(backend.registerCount, 1)
+
+        try await service.setEnabled(false)
+        XCTAssertEqual(service.status, .disabled)
+        XCTAssertFalse(service.isEnabled)
+        XCTAssertEqual(backend.unregisterCount, 1)
+    }
+
+    func testLoginRegistrationFailurePreservesConfirmedDisabledState() async {
+        let backend = FakeLoginBackend(status: .notRegistered, registerError: LoginTestFailure.failed)
+        let service = LoginItemService(backend: backend)
+
+        await XCTAssertThrowsErrorAsync(try await service.setEnabled(true)) { error in
+            XCTAssertEqual(error as? LoginTestFailure, .failed)
+        }
+
+        XCTAssertEqual(service.status, .disabled)
+        XCTAssertFalse(service.isEnabled)
+        XCTAssertFalse(service.isChanging)
+        XCTAssertEqual(service.errorMessage, "Could not update Launch at Login.")
+    }
+
+    func testLoginUnregistrationFailurePreservesConfirmedEnabledState() async {
+        let backend = FakeLoginBackend(status: .enabled, unregisterError: LoginTestFailure.failed)
+        let service = LoginItemService(backend: backend)
+
+        await XCTAssertThrowsErrorAsync(try await service.setEnabled(false)) { error in
+            XCTAssertEqual(error as? LoginTestFailure, .failed)
+        }
+
+        XCTAssertEqual(service.status, .enabled)
+        XCTAssertTrue(service.isEnabled)
+        XCTAssertFalse(service.isChanging)
+    }
+
+    func testRequiresApprovalIsNotEnabledAndProvidesSystemSettingsHelp() async throws {
+        let backend = FakeLoginBackend(status: .notRegistered, statusAfterRegister: .requiresApproval)
+        let service = LoginItemService(backend: backend)
+
+        try await service.setEnabled(true)
+
+        XCTAssertFalse(service.isEnabled)
+        XCTAssertEqual(service.status, .requiresApproval)
+        XCTAssertEqual(service.helpText, "Allow in System Settings")
+    }
 }
 
 private enum OpenFailure: Error {
     case refused
+}
+
+private enum LoginTestFailure: Error, Equatable {
+    case failed
+}
+
+@MainActor
+private final class FakeLoginBackend: LoginItemBackend {
+    private(set) var status: LoginItemRegistrationStatus
+    private(set) var registerCount = 0
+    private(set) var unregisterCount = 0
+    private let registerError: (any Error)?
+    private let unregisterError: (any Error)?
+    private let statusAfterRegister: LoginItemRegistrationStatus
+
+    init(
+        status: LoginItemRegistrationStatus,
+        registerError: (any Error)? = nil,
+        unregisterError: (any Error)? = nil,
+        statusAfterRegister: LoginItemRegistrationStatus = .enabled
+    ) {
+        self.status = status
+        self.registerError = registerError
+        self.unregisterError = unregisterError
+        self.statusAfterRegister = statusAfterRegister
+    }
+
+    func register() throws {
+        registerCount += 1
+        if let registerError { throw registerError }
+        status = statusAfterRegister
+    }
+
+    func unregister() throws {
+        unregisterCount += 1
+        if let unregisterError { throw unregisterError }
+        status = .notRegistered
+    }
 }
 
 @MainActor

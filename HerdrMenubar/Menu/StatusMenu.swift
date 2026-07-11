@@ -5,6 +5,7 @@ struct StatusMenu: View {
     let store: AgentStore
     let preferences: Preferences
     let installedTerminals: [TerminalApp]
+    let loginItemService: LoginItemService
 
     var body: some View {
         if !store.attentionItems.isEmpty {
@@ -36,6 +37,23 @@ struct StatusMenu: View {
 
         terminalPicker
 
+        Toggle("Launch at Login", isOn: Binding(
+            get: { loginItemService.isEnabled },
+            set: { enabled in
+                Task { await updateLoginItem(enabled: enabled) }
+            }
+        ))
+        .disabled(loginItemService.isChanging || loginItemService.status == .unavailable)
+
+        if let helpText = loginItemService.helpText {
+            Text(helpText)
+                .foregroundStyle(.secondary)
+        }
+        if let error = loginItemService.errorMessage {
+            Text(error)
+                .foregroundStyle(.red)
+        }
+
         if case .disconnected = store.connectionState {
             Button("Retry") {
                 Task { await store.retry() }
@@ -64,6 +82,22 @@ struct StatusMenu: View {
                 Text(terminal.name)
                     .tag(terminal.bundleIdentifier)
             }
+        }
+    }
+
+    @MainActor
+    private func updateLoginItem(enabled: Bool) async {
+        do {
+            try await loginItemService.setEnabled(enabled)
+            if enabled {
+                if loginItemService.status == .enabled || loginItemService.status == .requiresApproval {
+                    preferences.launchAtLoginIntent = true
+                }
+            } else if loginItemService.status == .disabled {
+                preferences.launchAtLoginIntent = false
+            }
+        } catch {
+            // LoginItemService retains and presents the concise operation error.
         }
     }
 

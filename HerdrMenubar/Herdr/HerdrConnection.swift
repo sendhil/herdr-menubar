@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import OSLog
 
 protocol HerdrConnection: Sendable {
     func sendLine(_ data: Data) async throws
@@ -45,11 +46,14 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
             guard let self else { return }
             switch newState {
             case .ready:
+                AppLog.transport.debug("Unix socket connection ready")
                 Task { await self.state.markReady() }
                 self.receiveNext()
             case .failed(let error):
+                AppLog.transport.error("Unix socket connection failed: \(error.localizedDescription, privacy: .public)")
                 Task { await self.state.fail(.connectionFailed(error.localizedDescription)) }
             case .cancelled:
+                AppLog.transport.debug("Unix socket connection closed")
                 Task { await self.state.close() }
             default:
                 break

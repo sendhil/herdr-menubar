@@ -20,12 +20,14 @@ struct HerdrMenubarApp: App {
     @NSApplicationDelegateAdaptor(HerdrAppDelegate.self) private var appDelegate
     @State private var store: AgentStore
     @State private var preferences: Preferences
+    @State private var loginItemService: LoginItemService
     private let installedTerminals: [TerminalApp]
 
     init() {
         let client = HerdrClient()
         let preferences = Preferences()
         _preferences = State(initialValue: preferences)
+        _loginItemService = State(initialValue: LoginItemService())
         _store = State(initialValue: AgentStore(
             client: client,
             terminalActivator: TerminalActivationService(),
@@ -39,7 +41,8 @@ struct HerdrMenubarApp: App {
             StatusMenu(
                 store: store,
                 preferences: preferences,
-                installedTerminals: installedTerminals
+                installedTerminals: installedTerminals,
+                loginItemService: loginItemService
             )
         } label: {
             MenuBarIcon(

@@ -41,4 +41,16 @@ final class PreferencesTests: XCTestCase {
             "com.mitchellh.ghostty"
         )
     }
+
+    func testLaunchAtLoginIntentDefaultsOff() {
+        XCTAssertFalse(Preferences(defaults: defaults).launchAtLoginIntent)
+    }
+
+    func testLaunchAtLoginIntentPersistsInInjectedDefaults() {
+        let preferences = Preferences(defaults: defaults)
+        preferences.launchAtLoginIntent = true
+
+        XCTAssertTrue(Preferences(defaults: defaults).launchAtLoginIntent)
+        XCTAssertTrue(defaults.bool(forKey: "launchAtLoginIntent"))
+    }
 }
