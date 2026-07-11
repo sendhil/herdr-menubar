@@ -1,0 +1,120 @@
+import Foundation
+
+enum AgentStatus: String, Codable, Sendable {
+    case idle
+    case working
+    case blocked
+    case done
+    case unknown
+
+    init(from decoder: any Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = AgentStatus(rawValue: value) ?? .unknown
+    }
+}
+
+struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
+    let paneID: String
+    let terminalID: String
+    let workspaceID: String
+    let tabID: String
+    let focused: Bool
+    let label: String?
+    let agent: String?
+    let title: String?
+    let displayAgent: String?
+    let agentStatus: AgentStatus
+    let revision: UInt64
+
+    var id: String { paneID }
+
+    var displayLabel: String {
+        if let title, !title.isEmpty {
+            return title
+        }
+        if let label, !label.isEmpty {
+            return label
+        }
+        return paneID
+    }
+
+    var agentLabel: String {
+        if let displayAgent, !displayAgent.isEmpty {
+            return displayAgent
+        }
+        if let agent, !agent.isEmpty {
+            return agent
+        }
+        return "Agent"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case terminalID = "terminal_id"
+        case workspaceID = "workspace_id"
+        case tabID = "tab_id"
+        case focused
+        case label
+        case agent
+        case title
+        case displayAgent = "display_agent"
+        case agentStatus = "agent_status"
+        case revision
+    }
+}
+
+struct PaneListResult: Codable, Equatable, Sendable {
+    let type: String
+    let panes: [PaneInfo]
+}
+
+struct PaneFocusResult: Codable, Equatable, Sendable {
+    let type: String
+    let pane: PaneInfo
+}
+
+struct EventEnvelope: Codable, Equatable, Sendable {
+    let event: String
+    let data: EventData
+}
+
+struct EventData: Codable, Equatable, Sendable {
+    let paneID: String?
+    let workspaceID: String?
+    let agentStatus: AgentStatus?
+
+    private enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case workspaceID = "workspace_id"
+        case agentStatus = "agent_status"
+    }
+}
+
+struct HerdrAPIError: Codable, Error, Equatable, Sendable {
+    let code: String
+    let message: String
+}
+
+struct HerdrResponse<Result: Decodable & Sendable>: Decodable, Sendable {
+    let id: String
+    let result: Result?
+    let error: HerdrAPIError?
+}
+
+struct HerdrRequest<Params: Encodable & Sendable>: Encodable, Sendable {
+    let id: String
+    let method: String
+    let params: Params
+}
+
+struct EmptyParams: Codable, Equatable, Sendable {
+    init() {}
+}
+
+struct PaneTargetParams: Codable, Equatable, Sendable {
+    let paneID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+    }
+}

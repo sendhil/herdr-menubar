@@ -1,0 +1,495 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */; };
+		7A31F428AE2B1D9232A24A46 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */; };
+		902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */; };
+		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7F957B4A7E80403C779B4428 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6FC917FB5923306F8A330ABB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 06C84F28A441AEE68F573249;
+			remoteInfo = HerdrMenubar;
+		};
+		8A5AF2656DA5C873C86274CB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6FC917FB5923306F8A330ABB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 06C84F28A441AEE68F573249;
+			remoteInfo = HerdrMenubar;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0EB06622175E7CE82E829E14 /* HerdrMenubar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HerdrMenubar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		121841B405280CF092113C53 /* HerdrMenubarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrMenubarUITests.swift; sourceTree = "<group>"; };
+		53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrMenubarApp.swift; sourceTree = "<group>"; };
+		B1A8F550ECCFB06B9856737D /* HerdrMenubarUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
+		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		70CC1189A6D60506EC82E1E0 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0EB06622175E7CE82E829E14 /* HerdrMenubar.app */,
+				BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */,
+				B1A8F550ECCFB06B9856737D /* HerdrMenubarUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7B7F2BADAF554B3A0A94F63D /* App */ = {
+			isa = PBXGroup;
+			children = (
+				53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7D0B75EDC058A1B4BED90E45 = {
+			isa = PBXGroup;
+			children = (
+				E8E0E89542AC7CFF6A9E3570 /* HerdrMenubar */,
+				81C4C4A92CC200E54E48A4C3 /* HerdrMenubarTests */,
+				EAF73B15421E23EBCBEED006 /* HerdrMenubarUITests */,
+				70CC1189A6D60506EC82E1E0 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		81C4C4A92CC200E54E48A4C3 /* HerdrMenubarTests */ = {
+			isa = PBXGroup;
+			children = (
+				CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */,
+			);
+			path = HerdrMenubarTests;
+			sourceTree = "<group>";
+		};
+		C49263C8A1747A34F59C8057 /* Herdr */ = {
+			isa = PBXGroup;
+			children = (
+				FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */,
+			);
+			path = Herdr;
+			sourceTree = "<group>";
+		};
+		E8E0E89542AC7CFF6A9E3570 /* HerdrMenubar */ = {
+			isa = PBXGroup;
+			children = (
+				7B7F2BADAF554B3A0A94F63D /* App */,
+				C49263C8A1747A34F59C8057 /* Herdr */,
+			);
+			path = HerdrMenubar;
+			sourceTree = "<group>";
+		};
+		EAF73B15421E23EBCBEED006 /* HerdrMenubarUITests */ = {
+			isa = PBXGroup;
+			children = (
+				121841B405280CF092113C53 /* HerdrMenubarUITests.swift */,
+			);
+			path = HerdrMenubarUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		06C84F28A441AEE68F573249 /* HerdrMenubar */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 084BB4B02CC1EE7869152719 /* Build configuration list for PBXNativeTarget "HerdrMenubar" */;
+			buildPhases = (
+				DC457981E1521EB96966F01E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = HerdrMenubar;
+			productName = HerdrMenubar;
+			productReference = 0EB06622175E7CE82E829E14 /* HerdrMenubar.app */;
+			productType = "com.apple.product-type.application";
+		};
+		07253FE511ABC573A2C3FD26 /* HerdrMenubarTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B5E73B81163B479BAD837E30 /* Build configuration list for PBXNativeTarget "HerdrMenubarTests" */;
+			buildPhases = (
+				E757C085039C0A48930F6D5E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F0BBC8ECCEB369C4B3CDB3EC /* PBXTargetDependency */,
+			);
+			name = HerdrMenubarTests;
+			productName = HerdrMenubarTests;
+			productReference = BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		AE921F302682C186B1089D94 /* HerdrMenubarUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23584462537957CB7BB8577B /* Build configuration list for PBXNativeTarget "HerdrMenubarUITests" */;
+			buildPhases = (
+				30CDFB7E1178E571B437F63F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9CD23B3D9E28AE607ACC4BA3 /* PBXTargetDependency */,
+			);
+			name = HerdrMenubarUITests;
+			productName = HerdrMenubarUITests;
+			productReference = B1A8F550ECCFB06B9856737D /* HerdrMenubarUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6FC917FB5923306F8A330ABB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					AE921F302682C186B1089D94 = {
+						TestTargetID = 06C84F28A441AEE68F573249;
+					};
+				};
+			};
+			buildConfigurationList = 1FD6A346800E669B49815869 /* Build configuration list for PBXProject "HerdrMenubar" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 7D0B75EDC058A1B4BED90E45;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				06C84F28A441AEE68F573249 /* HerdrMenubar */,
+				07253FE511ABC573A2C3FD26 /* HerdrMenubarTests */,
+				AE921F302682C186B1089D94 /* HerdrMenubarUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		30CDFB7E1178E571B437F63F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DC457981E1521EB96966F01E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A31F428AE2B1D9232A24A46 /* APIModels.swift in Sources */,
+				902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E757C085039C0A48930F6D5E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		9CD23B3D9E28AE607ACC4BA3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 06C84F28A441AEE68F573249 /* HerdrMenubar */;
+			targetProxy = 8A5AF2656DA5C873C86274CB /* PBXContainerItemProxy */;
+		};
+		F0BBC8ECCEB369C4B3CDB3EC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 06C84F28A441AEE68F573249 /* HerdrMenubar */;
+			targetProxy = 7F957B4A7E80403C779B4428 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		07D20356F9FCF54C8697CB23 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = HerdrMenubar/HerdrMenubar.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HerdrMenubar/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar;
+				PRODUCT_NAME = HerdrMenubar;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		084FE3F19BCBDA3EF3470C8C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = HerdrMenubar/HerdrMenubar.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HerdrMenubar/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar;
+				PRODUCT_NAME = HerdrMenubar;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		1F1F3B024D94E904FCCBCAA1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar.uitests;
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = HerdrMenubar;
+			};
+			name = Release;
+		};
+		309331E6CB13EFA673884BCF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C484AF37F6A94AF8F32C29EE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar.uitests;
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = HerdrMenubar;
+			};
+			name = Debug;
+		};
+		C5B30AB45022F608019FF09B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HerdrMenubar.app/Contents/MacOS/HerdrMenubar";
+			};
+			name = Debug;
+		};
+		CA82646F736E0DA28C46D118 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		D62F72611BC4A3AA004FD159 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HerdrMenubar.app/Contents/MacOS/HerdrMenubar";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		084BB4B02CC1EE7869152719 /* Build configuration list for PBXNativeTarget "HerdrMenubar" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				084FE3F19BCBDA3EF3470C8C /* Debug */,
+				07D20356F9FCF54C8697CB23 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1FD6A346800E669B49815869 /* Build configuration list for PBXProject "HerdrMenubar" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA82646F736E0DA28C46D118 /* Debug */,
+				309331E6CB13EFA673884BCF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		23584462537957CB7BB8577B /* Build configuration list for PBXNativeTarget "HerdrMenubarUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C484AF37F6A94AF8F32C29EE /* Debug */,
+				1F1F3B024D94E904FCCBCAA1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B5E73B81163B479BAD837E30 /* Build configuration list for PBXNativeTarget "HerdrMenubarTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C5B30AB45022F608019FF09B /* Debug */,
+				D62F72611BC4A3AA004FD159 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6FC917FB5923306F8A330ABB /* Project object */;
+}
