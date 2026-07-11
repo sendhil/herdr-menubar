@@ -3,7 +3,7 @@ import XCTest
 @testable import HerdrMenubar
 
 final class HerdrClientTests: XCTestCase {
-    func testBootstrapUsesExactPublicSubscriptionSchemaAndPostSubscriptionSnapshot() async throws {
+    func testBootstrapReconcilesPaneAddedBetweenInitialAndPostSubscriptionLists() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
         let events = await client.events()
@@ -14,10 +14,10 @@ final class HerdrClientTests: XCTestCase {
         XCTAssertEqual(initialList.method, "pane.list")
         await initial.reply(to: initialList, result: paneListResult(ids: ["p2", "p1", "p1"]))
 
-        let subscription = await factory.connection(at: 1)
-        let subscribe = await subscription.nextSent()
-        XCTAssertEqual(subscribe.method, "events.subscribe")
-        XCTAssertEqual(try subscribe.paramsObject(), [
+        let staleSubscription = await factory.connection(at: 1)
+        let staleSubscribe = await staleSubscription.nextSent()
+        XCTAssertEqual(staleSubscribe.method, "events.subscribe")
+        XCTAssertEqual(try staleSubscribe.paramsObject(), [
             "subscriptions": [
                 ["type": "pane.created"],
                 ["type": "pane.closed"],
@@ -29,14 +29,24 @@ final class HerdrClientTests: XCTestCase {
                 ["type": "pane.agent_status_changed", "pane_id": "p2"]
             ]
         ] as NSDictionary)
-        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        await staleSubscription.reply(to: staleSubscribe, result: #"{"type":"subscription_started"}"#)
 
-        let authoritative = await factory.connection(at: 2)
-        let authoritativeList = await authoritative.nextSent()
-        XCTAssertEqual(authoritativeList.method, "pane.list")
-        await authoritative.reply(to: authoritativeList, result: paneListResult(ids: ["authoritative"]))
+        let stalePost = await factory.connection(at: 2)
+        let stalePostList = await stalePost.nextSent()
+        await stalePost.reply(to: stalePostList, result: paneListResult(ids: ["p1", "p2", "p3"]))
+
+        let replacement = await factory.connection(at: 3)
+        let replacementSubscribe = await replacement.nextSent()
+        XCTAssertEqual(replacementSubscribe.subscriptionPaneIDs, ["p1", "p2", "p3"])
+        let staleBootstrapClosed = await staleSubscription.isClosed
+        XCTAssertTrue(staleBootstrapClosed)
+        await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
+
+        let settledPost = await factory.connection(at: 4)
+        let settledPostList = await settledPost.nextSent()
+        await settledPost.reply(to: settledPostList, result: paneListResult(ids: ["p1", "p2", "p3"]))
         let connected = await events.next()
-        XCTAssertEqual(connected, .connected([pane("authoritative")]))
+        XCTAssertEqual(connected, .connected([pane("p1"), pane("p2"), pane("p3")]))
         await client.stop()
     }
 
@@ -71,6 +81,45 @@ final class HerdrClientTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         let rebuildConnectionCount = await factory.connectionCount
         XCTAssertEqual(rebuildConnectionCount, 6, "membership burst must produce one rebuild")
+        await client.stop()
+    }
+
+    func testRebuildReconcilesPaneRemovedBetweenInitialAndPostSubscriptionLists() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let oldSubscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
+        _ = await events.next()
+
+        await oldSubscription.push(#"{"event":"pane.closed","data":{}}"#)
+        let discovery = await factory.connection(at: 3)
+        let discoveryRequest = await discovery.nextSent()
+        await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["old", "removed"]))
+
+        let staleReplacement = await factory.connection(at: 4)
+        let staleSubscribe = await staleReplacement.nextSent()
+        XCTAssertEqual(staleSubscribe.subscriptionPaneIDs, ["old", "removed"])
+        await staleReplacement.reply(to: staleSubscribe, result: #"{"type":"subscription_started"}"#)
+        let stalePost = await factory.connection(at: 5)
+        let stalePostRequest = await stalePost.nextSent()
+        await stalePost.reply(to: stalePostRequest, result: paneListResult(ids: ["old"]))
+
+        let replacement = await factory.connection(at: 6)
+        let replacementSubscribe = await replacement.nextSent()
+        XCTAssertEqual(replacementSubscribe.subscriptionPaneIDs, ["old"])
+        let staleReplacementClosed = await staleReplacement.isClosed
+        let oldSubscriptionClosed = await oldSubscription.isClosed
+        XCTAssertTrue(staleReplacementClosed)
+        XCTAssertFalse(oldSubscriptionClosed)
+        await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
+        let settledPost = await factory.connection(at: 7)
+        let settledPostRequest = await settledPost.nextSent()
+        await settledPost.reply(to: settledPostRequest, result: paneListResult(ids: ["old"]))
+
+        let replacementSnapshot = await events.next()
+        XCTAssertEqual(replacementSnapshot, .snapshot([pane("old")]))
+        await waitUntil { await oldSubscription.isClosed }
         await client.stop()
     }
 

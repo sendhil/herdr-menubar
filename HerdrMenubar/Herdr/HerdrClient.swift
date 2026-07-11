@@ -224,23 +224,35 @@ actor HerdrClient {
     }
 
     private func bootstrap(generation: UUID) async throws {
-        let initialSnapshot = try await paneList()
-        try ensureOwnership(generation)
-        let candidate = try await makeSubscription(paneIDs: initialSnapshot.map(\.paneID))
-        do {
+        var snapshot = try await paneList()
+        var reconciliationAttempt = 0
+
+        while true {
             try ensureOwnership(generation)
-            let snapshot = try await paneList()
-            try ensureOwnership(generation)
-            let oldConnection = subscriptionConnection
-            subscriptionConnection = candidate.connection
-            subscriptionToken = candidate.token
-            connected = true
-            disconnectedPublished = false
-            publish(.connected(snapshot))
-            await oldConnection?.close()
-        } catch {
-            await candidate.connection.close()
-            throw error
+            let subscribedPaneIDs = Set(snapshot.map(\.paneID))
+            let candidate = try await makeSubscription(paneIDs: Array(subscribedPaneIDs))
+            do {
+                try ensureOwnership(generation)
+                snapshot = try await paneList()
+                try ensureOwnership(generation)
+                guard Set(snapshot.map(\.paneID)) == subscribedPaneIDs else {
+                    await candidate.connection.close()
+                    try await sleeper.sleep(for: backoff.delay(attempt: reconciliationAttempt))
+                    reconciliationAttempt += 1
+                    continue
+                }
+                let oldConnection = subscriptionConnection
+                subscriptionConnection = candidate.connection
+                subscriptionToken = candidate.token
+                connected = true
+                disconnectedPublished = false
+                publish(.connected(snapshot))
+                await oldConnection?.close()
+                return
+            } catch {
+                await candidate.connection.close()
+                throw error
+            }
         }
     }
 
@@ -330,21 +342,33 @@ private extension HerdrClient {
             }
         }
         do {
-            let initialSnapshot = try await paneList()
-            try ensureOwnership(generation, rebuildToken: token)
-            let candidate = try await makeSubscription(paneIDs: initialSnapshot.map(\.paneID))
-            do {
+            var snapshot = try await paneList()
+            var reconciliationAttempt = 0
+
+            while true {
                 try ensureOwnership(generation, rebuildToken: token)
-                let snapshot = try await paneList()
-                try ensureOwnership(generation, rebuildToken: token)
-                let oldConnection = subscriptionConnection
-                subscriptionConnection = candidate.connection
-                subscriptionToken = candidate.token
-                publish(.snapshot(snapshot))
-                await oldConnection?.close()
-            } catch {
-                await candidate.connection.close()
-                throw error
+                let subscribedPaneIDs = Set(snapshot.map(\.paneID))
+                let candidate = try await makeSubscription(paneIDs: Array(subscribedPaneIDs))
+                do {
+                    try ensureOwnership(generation, rebuildToken: token)
+                    snapshot = try await paneList()
+                    try ensureOwnership(generation, rebuildToken: token)
+                    guard Set(snapshot.map(\.paneID)) == subscribedPaneIDs else {
+                        await candidate.connection.close()
+                        try await sleeper.sleep(for: backoff.delay(attempt: reconciliationAttempt))
+                        reconciliationAttempt += 1
+                        continue
+                    }
+                    let oldConnection = subscriptionConnection
+                    subscriptionConnection = candidate.connection
+                    subscriptionToken = candidate.token
+                    publish(.snapshot(snapshot))
+                    await oldConnection?.close()
+                    return
+                } catch {
+                    await candidate.connection.close()
+                    throw error
+                }
             }
         } catch is CancellationError {
             return
