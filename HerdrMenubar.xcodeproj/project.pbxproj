@@ -12,6 +12,7 @@
 		12A000000000000000000003 /* JSONLineFramer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000013 /* JSONLineFramer.swift */; };
 		12A000000000000000000004 /* SocketPathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000014 /* SocketPathResolver.swift */; };
 		12A000000000000000000005 /* HerdrConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000015 /* HerdrConnection.swift */; };
+		12A000000000000000000006 /* HerdrConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000016 /* HerdrConnectionTests.swift */; };
 		723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */; };
 		7A31F428AE2B1D9232A24A46 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */; };
 		902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */; };
@@ -41,6 +42,7 @@
 		12A000000000000000000013 /* JSONLineFramer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLineFramer.swift; sourceTree = "<group>"; };
 		12A000000000000000000014 /* SocketPathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketPathResolver.swift; sourceTree = "<group>"; };
 		12A000000000000000000015 /* HerdrConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrConnection.swift; sourceTree = "<group>"; };
+		12A000000000000000000016 /* HerdrConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrConnectionTests.swift; sourceTree = "<group>"; };
 		0EB06622175E7CE82E829E14 /* HerdrMenubar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HerdrMenubar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		121841B405280CF092113C53 /* HerdrMenubarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrMenubarUITests.swift; sourceTree = "<group>"; };
 		53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrMenubarApp.swift; sourceTree = "<group>"; };
@@ -85,6 +87,7 @@
 				CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */,
 				12A000000000000000000011 /* JSONLineFramerTests.swift */,
 				12A000000000000000000012 /* SocketPathResolverTests.swift */,
+				12A000000000000000000016 /* HerdrConnectionTests.swift */,
 			);
 			path = HerdrMenubarTests;
 			sourceTree = "<group>";
@@ -228,6 +231,7 @@
 				723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */,
 				12A000000000000000000001 /* JSONLineFramerTests.swift in Sources */,
 				12A000000000000000000002 /* SocketPathResolverTests.swift in Sources */,
+				12A000000000000000000006 /* HerdrConnectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

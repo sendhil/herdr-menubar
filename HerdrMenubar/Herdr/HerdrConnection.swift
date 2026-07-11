@@ -60,6 +60,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
         do {
             try await withTaskCancellationHandler {
                 try await state.waitUntilReady()
+                try Task.checkCancellation()
             } onCancel: {
                 connection.cancel()
                 Task { await self.state.close() }
@@ -73,7 +74,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
     func sendLine(_ data: Data) async throws {
         guard !Task.isCancelled else {
             await close()
-            return
+            throw CancellationError()
         }
 
         var framedData = data
@@ -92,6 +93,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
                         }
                     })
                 }
+                try Task.checkCancellation()
             } onCancel: {
                 connection.cancel()
                 Task { await self.state.close() }
@@ -105,7 +107,9 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
     func nextLine() async throws -> Data? {
         do {
             return try await withTaskCancellationHandler {
-                try await state.nextLine()
+                let line = try await state.nextLine()
+                try Task.checkCancellation()
+                return line
             } onCancel: {
                 connection.cancel()
                 Task { await self.state.close() }
