@@ -42,6 +42,58 @@ final class AgentStoreTests: XCTestCase {
         await store.stop()
     }
 
+    func testStopClearsRowsSetsDisconnectedAndStopsClientOnce() async {
+        let client = FakeAgentClient()
+        let store = AgentStore(client: client, terminalActivator: RecordingActivator())
+        await store.start()
+        await client.send(.connected([
+            pane("blocked", .blocked),
+            pane("working", .working)
+        ]))
+        await eventually { store.attentionCount == 1 && store.workingItems.count == 1 }
+
+        await store.stop()
+        await store.stop()
+
+        XCTAssertEqual(store.connectionState, .disconnected("Disconnected from Herdr"))
+        XCTAssertTrue(store.attentionItems.isEmpty)
+        XCTAssertTrue(store.workingItems.isEmpty)
+        let stopCount = await client.stopCount
+        XCTAssertEqual(stopCount, 1)
+    }
+
+    func testEventsAfterStopDoNotRepopulateRows() async {
+        let client = FakeAgentClient()
+        let store = AgentStore(client: client, terminalActivator: RecordingActivator())
+        await store.start()
+        await store.stop()
+
+        await client.send(.connected([pane("stale", .blocked)]))
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(store.connectionState, .disconnected("Disconnected from Herdr"))
+        XCTAssertTrue(store.attentionItems.isEmpty)
+        XCTAssertTrue(store.workingItems.isEmpty)
+    }
+
+    func testMenuBarAccessibilityValuesDescribeState() {
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(
+                connectionState: .disconnected("socket unavailable"),
+                attentionCount: 3
+            ),
+            "Disconnected"
+        )
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 0),
+            "Connected, no agents need attention"
+        )
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 3),
+            "Connected, 3 agents need attention"
+        )
+    }
+
     func testSelectionFocusesBeforeActivationThenRefreshes() async {
         let sequence = ActionSequence()
         let client = FakeAgentClient(sequence: sequence)
@@ -109,6 +161,7 @@ private actor FakeAgentClient: AgentClientServing {
     private var continuation: AsyncStream<HerdrClientEvent>.Continuation?
     private(set) var retryCount = 0
     private(set) var refreshCount = 0
+    private(set) var stopCount = 0
     private let focusError: (any Error)?
     private let sequence: ActionSequence?
 
@@ -124,7 +177,7 @@ private actor FakeAgentClient: AgentClientServing {
     }
 
     func start() {}
-    func stop() { continuation?.finish() }
+    func stop() { stopCount += 1 }
 
     func retryNow() {
         retryCount += 1

@@ -3,12 +3,12 @@ import SwiftUI
 
 @MainActor
 final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
-    var client: HerdrClient?
+    var store: AgentStore?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let client else { return .terminateNow }
+        guard let store else { return .terminateNow }
         Task {
-            await client.stop()
+            await store.stop()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -19,11 +19,9 @@ final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
 struct HerdrMenubarApp: App {
     @NSApplicationDelegateAdaptor(HerdrAppDelegate.self) private var appDelegate
     @State private var store: AgentStore
-    private let client: HerdrClient
 
     init() {
         let client = HerdrClient()
-        self.client = client
         _store = State(initialValue: AgentStore(
             client: client,
             terminalActivator: DeferredTerminalActivator()
@@ -39,7 +37,7 @@ struct HerdrMenubarApp: App {
                 attentionCount: store.attentionCount
             )
             .task {
-                appDelegate.client = client
+                appDelegate.store = store
                 await store.start()
             }
         }

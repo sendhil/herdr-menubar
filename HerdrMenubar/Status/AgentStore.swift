@@ -62,6 +62,8 @@ final class AgentStore {
     private let client: any AgentClientServing
     private let terminalActivator: any TerminalActivating
     private var eventTask: Task<Void, Never>?
+    private var eventGeneration = UUID()
+    private var isRunning = false
 
     private(set) var connectionState: ConnectionState = .disconnected("Connecting to Herdr…")
     private(set) var attentionItems: [AgentMenuItem] = []
@@ -76,20 +78,29 @@ final class AgentStore {
     }
 
     func start() async {
-        guard eventTask == nil else { return }
+        guard !isRunning else { return }
+        isRunning = true
+        let generation = UUID()
+        eventGeneration = generation
         let events = await client.events()
         eventTask = Task { [weak self] in
             for await event in events {
                 guard !Task.isCancelled else { return }
-                self?.consume(event)
+                self?.consume(event, generation: generation)
             }
         }
         await client.start()
     }
 
     func stop() async {
+        guard isRunning else { return }
+        isRunning = false
+        eventGeneration = UUID()
         eventTask?.cancel()
         eventTask = nil
+        connectionState = .disconnected("Disconnected from Herdr")
+        attentionItems = []
+        workingItems = []
         await client.stop()
     }
 
@@ -126,7 +137,8 @@ final class AgentStore {
             .sorted(by: AgentMenuItem.labelOrder)
     }
 
-    private func consume(_ event: HerdrClientEvent) {
+    private func consume(_ event: HerdrClientEvent, generation: UUID) {
+        guard isRunning, eventGeneration == generation else { return }
         switch event {
         case .connected(let panes):
             connectionState = .connected
