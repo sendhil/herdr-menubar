@@ -134,16 +134,17 @@ The client follows Herdr's documented public socket path and environment overrid
 
 During bootstrap, the client:
 
-1. Opens the dedicated event connection and subscribes to relevant pane lifecycle and status events.
-2. Waits for the `subscription_started` acknowledgement.
-3. Opens a separate short-lived request connection and requests a complete `pane.list` snapshot.
-4. Publishes the snapshot only after it decodes successfully.
+1. Requests an initial `pane.list` snapshot to discover current pane IDs.
+2. Opens the dedicated event connection and subscribes to global pane lifecycle events plus one `pane.agent_status_changed` filter for each current pane ID, matching Herdr's public subscription schema.
+3. Waits for the `subscription_started` acknowledgement.
+4. Opens a separate short-lived request connection and requests a second, authoritative `pane.list` snapshot.
+5. Publishes only the post-subscription snapshot.
 
-Subscribing before the snapshot avoids a bootstrap race. Any transition after subscription either appears in the initial snapshot or invalidates it through an event and causes a follow-up refresh.
+Herdr currently scopes status subscriptions to a pane ID. When pane membership changes, the client debounces lifecycle events and replaces the subscription with filters built from a fresh pane snapshot. The replacement subscription becomes authoritative only after acknowledgement and a post-subscription snapshot, preventing membership and status races without polling. One long-lived socket carries all filters; the app does not open one subscription socket per pane.
 
 ### Event handling
 
-Events are invalidation signals rather than a second source of pane truth. Relevant status, creation, closure, focus, and lifecycle events trigger a coalesced `pane.list` refresh. Multiple events arriving in a short burst produce one refresh.
+Events are invalidation signals rather than a second source of pane truth. Relevant status and focus events trigger a coalesced `pane.list` refresh. Pane membership events trigger a debounced subscription rebuild so the filter set stays synchronized. Multiple events arriving in a short burst produce one refresh or rebuild.
 
 Using snapshots avoids reconstructing Herdr aggregation, labels, revisions, and seen semantics locally.
 

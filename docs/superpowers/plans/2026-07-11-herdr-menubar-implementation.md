@@ -345,7 +345,7 @@ git commit -m "feat: add herdr socket transport"
 
 Create an actor-backed fake connection factory that returns independently scripted connections and records decoded outbound JSON. Test:
 
-1. Bootstrap opens a subscription connection, sends `events.subscribe`, receives `subscription_started`, then opens a second connection for `pane.list` (subscription-first removes the bootstrap race).
+1. Bootstrap requests an initial `pane.list`, opens one subscription connection with global lifecycle filters plus one `pane.agent_status_changed` filter per discovered pane ID, receives `subscription_started`, then requests a second authoritative `pane.list`.
 2. A relevant event triggers a refresh.
 3. Event bursts coalesce while a refresh is outstanding.
 4. `focus(paneID:)` correlates its response ID and returns the focused pane.
@@ -360,13 +360,17 @@ func testBootstrapSubscribesBeforeTakingAuthoritativeSnapshot() async throws {
     let factory = FakeHerdrConnectionFactory()
     let client = HerdrClient(connectionFactory: factory, pathResolver: FakePathResolver(), backoff: .immediate, sleeper: ImmediateSleeper())
     await client.start()
-    let subscription = try await factory.connection(at: 0)
-    let first = try await subscription.nextSentObject()
-    XCTAssertEqual(first["method"] as? String, "events.subscribe")
-    await subscription.replySuccess(to: first, result: ["type":"subscription_started"])
-    let request = try await factory.connection(at: 1)
-    let second = try await request.nextSentObject()
-    XCTAssertEqual(second["method"] as? String, "pane.list")
+    let initialRequest = try await factory.connection(at: 0)
+    let first = try await initialRequest.nextSentObject()
+    XCTAssertEqual(first["method"] as? String, "pane.list")
+    await initialRequest.replyPaneList(to: first, panes: [pane("w1:p1", .working)])
+    let subscription = try await factory.connection(at: 1)
+    let second = try await subscription.nextSentObject()
+    XCTAssertEqual(second["method"] as? String, "events.subscribe")
+    XCTAssertEqual(second.subscriptionPaneIDs, ["w1:p1"])
+    await subscription.replySuccess(to: second, result: ["type":"subscription_started"])
+    let authoritativeRequest = try await factory.connection(at: 2)
+    XCTAssertEqual(try await authoritativeRequest.nextSentObject()["method"] as? String, "pane.list")
 }
 ```
 
@@ -392,11 +396,11 @@ private var refreshRequested = false
 
 `request(method:params:as:)` generates a UUID, opens a fresh connection, sends one request line, reads one matching response, times out after five seconds, and closes that connection on success, error, timeout, or cancellation. It rejects a response with a different ID.
 
-Open one separate subscription connection and subscribe to `pane.created`, `pane.closed`, `pane.focused`, `pane.moved`, `pane.exited`, `pane.agent_detected`, and `pane.agent_status_changed`. After the `subscription_started` acknowledgement, use a fresh ordinary connection for `pane.list` and publish `connected` only from the successful snapshot.
+Request an initial pane snapshot, then open one separate subscription connection. Encode Herdr's actual `subscriptions` array with global `pane.created`, `pane.closed`, `pane.focused`, `pane.moved`, `pane.exited`, and `pane.agent_detected` objects, plus `{ "type": "pane.agent_status_changed", "pane_id": "..." }` for every discovered pane. After the `subscription_started` acknowledgement, use a fresh ordinary connection for `pane.list` and publish `connected` only from that successful post-subscription snapshot. Debounce pane membership events and replace the subscription using the same initial-snapshot → subscribe → acknowledgement → authoritative-snapshot sequence.
 
 - [ ] **Step 4: Implement event invalidation and coalesced refresh**
 
-Decode pushed messages separately from ID-bearing responses. Relevant events call `scheduleRefresh()`. While a refresh is running, set `refreshRequested`; after it completes, perform at most one additional refresh if requested. Unknown events and malformed pushed lines are logged and ignored.
+Decode pushed messages separately from ID-bearing responses. Status and focus events call `scheduleRefresh()`. Pane creation, closure, move, exit, or detection events call a debounced `scheduleSubscriptionRebuild()`. While a refresh is running, set `refreshRequested`; after it completes, perform at most one additional refresh if requested. Unknown events and malformed pushed lines are logged and ignored.
 
 - [ ] **Step 5: Implement disconnect and reconnect**
 
