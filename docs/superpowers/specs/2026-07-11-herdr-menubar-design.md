@@ -88,7 +88,7 @@ Owns the menu-bar scene and application lifecycle. It creates the shared status 
 
 ### `HerdrClient` actor
 
-Owns socket discovery, Unix-socket connection lifecycle, newline-delimited JSON framing, request correlation, event subscription, and reconnect behavior.
+Owns socket discovery, Unix-socket connection lifecycle, newline-delimited JSON framing, request correlation, event subscription, and reconnect behavior. Herdr serves one request per ordinary connection and reserves a subscribed connection for its event stream, so the client uses a dedicated long-lived subscription connection plus a short-lived connection for each snapshot or focus request.
 
 The client speaks only Herdr's public socket API. It must tolerate additional response fields and unknown event types for forward compatibility.
 
@@ -132,13 +132,14 @@ The client follows Herdr's documented public socket path and environment overrid
 
 ### Initial connection
 
-After connecting, the client:
+During bootstrap, the client:
 
-1. Requests a complete `pane.list` snapshot.
-2. Subscribes to relevant pane lifecycle and status events.
-3. Publishes the snapshot only after it decodes successfully.
+1. Opens the dedicated event connection and subscribes to relevant pane lifecycle and status events.
+2. Waits for the `subscription_started` acknowledgement.
+3. Opens a separate short-lived request connection and requests a complete `pane.list` snapshot.
+4. Publishes the snapshot only after it decodes successfully.
 
-The implementation must avoid a bootstrap race between the initial snapshot and event subscription. The chosen request ordering must finish with a post-subscription refresh, or otherwise guarantee that a status transition during bootstrap cannot remain missed.
+Subscribing before the snapshot avoids a bootstrap race. Any transition after subscription either appears in the initial snapshot or invalidates it through an event and causes a follow-up refresh.
 
 ### Event handling
 
@@ -150,9 +151,9 @@ Using snapshots avoids reconstructing Herdr aggregation, labels, revisions, and 
 
 A closed or failed connection changes the store to disconnected while retaining the last snapshot only for internal diagnostics; stale rows are not presented as live agent state.
 
-Reconnect attempts use bounded exponential backoff with jitter. A manual Retry action resets the delay and reconnects immediately. A successful reconnect repeats the complete bootstrap sequence.
+Reconnect attempts use bounded exponential backoff with jitter. A manual Retry action resets the delay and reconnects immediately. A successful subscription reconnect repeats the complete bootstrap sequence. A failed short-lived request reports its operation failure; a socket-level failure also invalidates the live view and restarts bootstrap so the app cannot present stale state.
 
-Only one connection and one reconnect loop may be active at a time.
+Only one subscription connection and one reconnect loop may be active at a time. Short-lived request connections are bounded by refresh coalescing and user actions.
 
 ## Error handling
 
