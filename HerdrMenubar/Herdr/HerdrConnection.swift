@@ -34,7 +34,7 @@ struct NWHerdrConnectionFactory: HerdrConnectionFactory {
 final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "dev.herdr.menubar.transport")
-    private let state = ConnectionState()
+    private let state = HerdrConnectionState()
 
     fileprivate init(connection: NWConnection) {
         self.connection = connection
@@ -139,7 +139,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
     }
 }
 
-private actor ConnectionState {
+private actor HerdrConnectionState {
     private enum ReadTerminal {
         case open
         case closed
