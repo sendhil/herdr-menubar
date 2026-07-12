@@ -50,6 +50,8 @@ case "$install_dir" in
 esac
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=scripts/lib.sh
+. "$script_dir/lib.sh"
 repo_root=$(cd "$script_dir/.." && pwd)
 derived_data="${HERDR_INSTALL_DERIVED_DATA_DIR:-$repo_root/.build/InstallerDerivedData}"
 case "$derived_data" in
@@ -62,16 +64,9 @@ executable="$destination/Contents/MacOS/HerdrMenubar"
 stage="$install_dir/.Herdr Menubar.app.install.$$"
 backup="$install_dir/.Herdr Menubar.app.backup.$$"
 lock="$install_dir/.Herdr Menubar.install.lock"
-lock_owner="$lock/owner"
-lock_acquired=0
 
 mkdir -p "$install_dir"
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "Error: another install is already in progress for: $destination" >&2
-  exit 1
-fi
-printf '%s\n' "$$" > "$lock_owner"
-lock_acquired=1
+acquire_install_lock "$lock"
 
 cleanup() {
   status=$?
@@ -84,45 +79,11 @@ cleanup() {
       echo "Previous installation retained at: $backup" >&2
     fi
   fi
-  if [ "$lock_acquired" -eq 1 ] && [ -f "$lock_owner" ] && [ "$(cat "$lock_owner" 2>/dev/null || true)" = "$$" ]; then
-    rm -rf "$lock"
-  fi
+  release_install_lock
   exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
-
-owned_pids() {
-  pgrep -x HerdrMenubar 2>/dev/null | while IFS= read -r pid; do
-    case "$pid" in ''|*[!0-9]*) continue ;; esac
-    command_path=$(ps -p "$pid" -o comm= 2>/dev/null) || continue
-    command_path=${command_path#"${command_path%%[! ]*}"}
-    if [ "$command_path" = "$executable" ]; then printf '%s\n' "$pid"; fi
-  done
-}
-
-signal_owned() {
-  signal=$1
-  pids=$(owned_pids || true)
-  [ -n "$pids" ] || return 1
-  while IFS= read -r pid; do env kill "$signal" "$pid" >/dev/null 2>&1 || true; done <<EOF
-$pids
-EOF
-  return 0
-}
-
-stop_running_app() {
-  signal_owned -TERM || return 0
-  attempts=0
-  while [ "$attempts" -lt 50 ]; do
-    remaining=$(owned_pids || true)
-    [ -n "$remaining" ] || return 0
-    attempts=$((attempts + 1))
-    sleep 0.1
-  done
-  echo "HerdrMenubar did not quit after 5 seconds; stopping it forcefully." >&2
-  signal_owned -KILL || true
-}
 
 mkdir -p "$derived_data"
 rm -rf "$product"

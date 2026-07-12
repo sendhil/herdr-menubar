@@ -32,40 +32,24 @@ case "$install_dir" in
   *) install_dir="$(pwd)/$install_dir" ;;
 esac
 
+script_dir=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=scripts/lib.sh
+. "$script_dir/lib.sh"
+
 destination="$install_dir/Herdr Menubar.app"
 executable="$destination/Contents/MacOS/HerdrMenubar"
+lock="$install_dir/.Herdr Menubar.install.lock"
 
-owned_pids() {
-  pgrep -x HerdrMenubar 2>/dev/null | while IFS= read -r pid; do
-    case "$pid" in ''|*[!0-9]*) continue ;; esac
-    command_path=$(ps -p "$pid" -o comm= 2>/dev/null) || continue
-    command_path=${command_path#"${command_path%%[! ]*}"}
-    if [ "$command_path" = "$executable" ]; then printf '%s\n' "$pid"; fi
-  done
+mkdir -p "$install_dir"
+acquire_install_lock "$lock"
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  release_install_lock
+  exit "$status"
 }
-
-signal_owned() {
-  signal=$1
-  pids=$(owned_pids || true)
-  [ -n "$pids" ] || return 1
-  while IFS= read -r pid; do env kill "$signal" "$pid" >/dev/null 2>&1 || true; done <<EOF
-$pids
-EOF
-  return 0
-}
-
-stop_running_app() {
-  signal_owned -TERM || return 0
-  attempts=0
-  while [ "$attempts" -lt 50 ]; do
-    remaining=$(owned_pids || true)
-    [ -n "$remaining" ] || return 0
-    attempts=$((attempts + 1))
-    sleep 0.1
-  done
-  echo "HerdrMenubar did not quit after 5 seconds; stopping it forcefully." >&2
-  signal_owned -KILL || true
-}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
 stop_running_app
 rm -rf "$destination"
