@@ -52,6 +52,28 @@ final class HerdrConnectionTests: XCTestCase {
         }
     }
 
+    func testRepeatedConcurrentCloseResumesWaitingReadOnceAndRemainsClosed() async throws {
+        let server = try UnixSocketServer()
+        async let acceptedPeer = server.accept()
+        let connection = try await NWHerdrConnectionFactory().connect(to: server.url)
+        let peer = try await acceptedPeer
+        defer { peer.close() }
+
+        let waitingRead = Task { try await connection.nextLine() }
+        await Task.yield()
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<100 {
+                group.addTask { await connection.close() }
+            }
+        }
+
+        let waitingResult = try await waitingRead.value
+        let subsequentResult = try await connection.nextLine()
+        XCTAssertNil(waitingResult)
+        XCTAssertNil(subsequentResult)
+        await connection.close()
+    }
+
     func testCancellingWaitingReadThrowsCancellationError() async throws {
         let server = try UnixSocketServer()
         async let acceptedPeer = server.accept()

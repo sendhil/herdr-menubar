@@ -243,8 +243,10 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(activator.activatedBundleIdentifiers, ["com.mitchellh.ghostty"])
     }
 
-    func testFailedFocusDoesNotActivateOrRefreshAndShowsTransientError() async {
-        let client = FakeAgentClient(focusError: TestFailure.focus)
+    func testFailedFocusDoesNotActivateOrRefreshAndShowsExactServerMessage() async {
+        let client = FakeAgentClient(
+            focusError: HerdrAPIError(code: "pane_not_found", message: "Pane no longer exists")
+        )
         let activator = RecordingActivator()
         let store = AgentStore(client: client, terminalActivator: activator)
 
@@ -254,7 +256,15 @@ final class AgentStoreTests: XCTestCase {
         let refreshCount = await client.refreshCount
         XCTAssertEqual(activationCount, 0)
         XCTAssertEqual(refreshCount, 0)
-        XCTAssertNotNil(store.transientError)
+        XCTAssertEqual(store.transientError, "Could not focus pane: Pane no longer exists")
+    }
+
+    func testHostedXCTestEnvironmentDisablesProductionSynchronization() {
+        XCTAssertFalse(HerdrMenubarApp.shouldStartSynchronization(environment: [
+            "XCTestConfigurationFilePath": "/tmp/HerdrMenubarTests.xctestconfiguration"
+        ]))
+        XCTAssertTrue(HerdrMenubarApp.shouldStartSynchronization(environment: [:]))
+        XCTAssertTrue(HerdrMenubarApp.shouldStartSynchronization(environment: ["HERDR_SOCKET": "/tmp/herdr.sock"]))
     }
 
     func testActivationFailureAfterFocusStillRefreshesAndShowsTransientError() async {

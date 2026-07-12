@@ -25,6 +25,8 @@ final class HerdrClientTests: XCTestCase {
                 ["type": "pane.moved"],
                 ["type": "pane.exited"],
                 ["type": "pane.agent_detected"],
+                ["type": "workspace.renamed"],
+                ["type": "tab.renamed"],
                 ["type": "pane.agent_status_changed", "pane_id": "p1"],
                 ["type": "pane.agent_status_changed", "pane_id": "p2"]
             ]
@@ -162,6 +164,30 @@ final class HerdrClientTests: XCTestCase {
             return XCTFail("Expected metadata protocol failure to disconnect")
         }
         await client.stop()
+    }
+
+    func testWorkspaceTransportFailureDisconnectsAndRestartsBootstrap() async throws {
+        try await assertMetadataFailureRestartsBootstrap(method: "workspace.list", failure: .transport)
+    }
+
+    func testTabTransportFailureDisconnectsAndRestartsBootstrap() async throws {
+        try await assertMetadataFailureRestartsBootstrap(method: "tab.list", failure: .transport)
+    }
+
+    func testWorkspaceTimeoutDisconnectsAndRestartsBootstrap() async throws {
+        try await assertMetadataFailureRestartsBootstrap(method: "workspace.list", failure: .timeout)
+    }
+
+    func testTabTimeoutDisconnectsAndRestartsBootstrap() async throws {
+        try await assertMetadataFailureRestartsBootstrap(method: "tab.list", failure: .timeout)
+    }
+
+    func testMetadataClosureCancellationAndProtocolFailuresRestartBootstrap() async throws {
+        for failure in [
+            MetadataFailure.connectionClosed, .cancellation, .decoding, .idMismatch, .malformed
+        ] {
+            try await assertMetadataFailureRestartsBootstrap(method: "workspace.list", failure: failure)
+        }
     }
 
     func testOneSidedMetadataFallbackRetainsSuccessfulMetadata() async throws {
@@ -375,6 +401,14 @@ final class HerdrClientTests: XCTestCase {
 }
 
 extension HerdrClientTests {
+    func testRawWorkspaceRenamedEventTriggersMetadataSnapshotRefresh() async throws {
+        try await assertRawMetadataRenameTriggersRefresh(event: "workspace_renamed")
+    }
+
+    func testRawTabRenamedEventTriggersMetadataSnapshotRefresh() async throws {
+        try await assertRawMetadataRenameTriggersRefresh(event: "tab_renamed")
+    }
+
     func testServerWireStatusEventTriggersSnapshotRefresh() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
@@ -613,6 +647,97 @@ extension HerdrClientTests {
         XCTAssertEqual(BackoffPolicy(delays: [.seconds(15)], jitter: { -1 }).delay(attempt: 100), .seconds(12))
     }
 
+    private enum MetadataFailure: Equatable {
+        case transport
+        case timeout
+        case connectionClosed
+        case cancellation
+        case decoding
+        case idMismatch
+        case malformed
+    }
+
+    private func assertMetadataFailureRestartsBootstrap(
+        method failedMethod: String,
+        failure: MetadataFailure
+    ) async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = HerdrClient(
+            connectionFactory: factory,
+            pathResolver: FakePathResolver(),
+            backoff: .immediate,
+            sleeper: ImmediateSleeper(),
+            requestTimeout: .milliseconds(25)
+        )
+        let events = await client.events()
+        await client.start()
+
+        let initial = await factory.connection(at: 0)
+        let initialRequest = await initial.nextSent()
+        await initial.reply(to: initialRequest, result: paneListResult(ids: ["pane"]))
+        let subscription = await factory.connection(at: 1)
+        let subscribe = await subscription.nextSent()
+        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 2)
+        let paneRequest = await authoritative.nextSent()
+        await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
+
+        let first = await factory.connection(at: 3)
+        let firstRequest = await first.nextSent()
+        let second = await factory.connection(at: 4)
+        let secondRequest = await second.nextSent()
+        for (connection, request) in [(first, firstRequest), (second, secondRequest)] {
+            if request.method == failedMethod {
+                switch failure {
+                case .transport:
+                    await connection.fail(TransportError.receiveFailed("metadata socket failed"))
+                case .timeout:
+                    break
+                case .connectionClosed:
+                    await connection.finish()
+                case .cancellation:
+                    await connection.fail(CancellationError())
+                case .decoding:
+                    await connection.push("not json")
+                case .idMismatch:
+                    await connection.push(#"{"id":"wrong-id","result":{"type":"workspace_list","workspaces":[]}}"#)
+                case .malformed:
+                    await connection.push(#"{"id":"\#(request.id)"}"#)
+                }
+            } else {
+                await replyToMetadata(connection: connection, request: request)
+            }
+        }
+
+        guard case .disconnected = await events.next() else {
+            await client.stop()
+            return XCTFail("Expected \(failedMethod) \(failure) to invalidate live state")
+        }
+        let restarted = await factory.connection(at: 5)
+        let restartedRequest = await restarted.nextSent()
+        XCTAssertEqual(restartedRequest.method, "pane.list", "metadata failure must restart bootstrap")
+        await client.stop()
+    }
+
+    private func assertRawMetadataRenameTriggersRefresh(event: String) async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let subscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
+        _ = await events.next()
+
+        await subscription.push(#"{"event":"\#(event)","data":{}}"#)
+        let refresh = await factory.connection(at: 5)
+        let request = await refresh.nextSent()
+        XCTAssertEqual(request.method, "pane.list")
+        await refresh.reply(to: request, result: paneListResult(ids: ["updated"]))
+        await completeMetadata(factory: factory, startIndex: 6)
+        let refreshedEvent = await events.next()
+        XCTAssertEqual(refreshedEvent, .snapshot(clientSnapshot([pane("updated")])))
+        await client.stop()
+    }
+
     private func makeClient(factory: FakeHerdrConnectionFactory, debounce: Duration = .zero) -> HerdrClient {
         HerdrClient(
             connectionFactory: factory,
@@ -719,7 +844,13 @@ private actor FakeHerdrConnection: HerdrConnection {
         if sentWaiters.isEmpty { sent.append(request) } else { sentWaiters.removeFirst().resume(returning: request) }
     }
 
+    private var pendingReadError: (any Error)?
+
     func nextLine() async throws -> Data? {
+        if let error = pendingReadError {
+            pendingReadError = nil
+            throw error
+        }
         if !inbound.isEmpty { return inbound.removeFirst() }
         if isClosed { return nil }
         let id = UUID()
@@ -746,6 +877,15 @@ private actor FakeHerdrConnection: HerdrConnection {
     func push(_ line: String) { enqueue(Data(line.utf8)) }
     func reply(to request: RecordedRequest, result: String) { push(#"{"id":"\#(request.id)","result":\#(result)}"#) }
     func finish() { isClosed = true; enqueue(nil) }
+
+    func fail(_ error: any Error) {
+        guard let entry = readWaiters.first else {
+            pendingReadError = error
+            return
+        }
+        readWaiters.removeValue(forKey: entry.key)
+        entry.value.resume(throwing: error)
+    }
 
     private func enqueue(_ line: Data?) {
         guard let entry = readWaiters.first else { inbound.append(line); return }

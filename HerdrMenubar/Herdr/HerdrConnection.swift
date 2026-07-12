@@ -66,8 +66,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
                 try await state.waitUntilReady()
                 try Task.checkCancellation()
             } onCancel: {
-                connection.cancel()
-                Task { await self.state.close() }
+                Task { await self.close() }
             }
         } catch where Task.isCancelled {
             await close()
@@ -99,8 +98,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
                 }
                 try Task.checkCancellation()
             } onCancel: {
-                connection.cancel()
-                Task { await self.state.close() }
+                Task { await self.close() }
             }
         } catch where Task.isCancelled {
             await close()
@@ -115,8 +113,7 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
                 try Task.checkCancellation()
                 return line
             } onCancel: {
-                connection.cancel()
-                Task { await self.state.close() }
+                Task { await self.close() }
             }
         } catch where Task.isCancelled {
             await close()
@@ -125,9 +122,8 @@ final class NWHerdrConnection: HerdrConnection, @unchecked Sendable {
     }
 
     func close() async {
-        connection.stateUpdateHandler = nil
+        guard await state.beginClose() else { return }
         connection.cancel()
-        await state.close()
     }
 
     private func receiveNext() {
@@ -163,6 +159,14 @@ private actor HerdrConnectionState {
     private var readyWaiter: CheckedContinuation<Void, any Error>?
     private var startupState: StartupState = .connecting
     private var readTerminal: ReadTerminal = .open
+    private var closeStarted = false
+
+    func beginClose() -> Bool {
+        guard !closeStarted else { return false }
+        closeStarted = true
+        close()
+        return true
+    }
 
     func waitUntilReady() async throws {
         switch startupState {

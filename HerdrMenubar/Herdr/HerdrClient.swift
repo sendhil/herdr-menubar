@@ -55,11 +55,11 @@ actor HerdrClient {
         "pane_created", "pane_closed", "pane_moved", "pane_exited", "pane_agent_detected"
     ]
     private static let refreshEvents: Set<String> = [
-        "pane_focused", "pane_agent_status_changed"
+        "pane_focused", "pane_agent_status_changed", "workspace_renamed", "tab_renamed"
     ]
     private static let globalSubscriptionEvents = [
         "pane.created", "pane.closed", "pane.focused", "pane.moved", "pane.exited",
-        "pane.agent_detected"
+        "pane.agent_detected", "workspace.renamed", "tab.renamed"
     ]
 
     private let connectionFactory: any HerdrConnectionFactory
@@ -213,7 +213,9 @@ actor HerdrClient {
                     throw HerdrClientError.connectionClosed
                 }
             } catch is CancellationError {
-                break
+                guard owns(generation), !Task.isCancelled else { break }
+                await invalidate(reason: "Herdr request was cancelled", generation: generation)
+                attempt += 1
             } catch {
                 if owns(generation), !Task.isCancelled {
                     await invalidate(reason: description(for: error), generation: generation)
@@ -407,6 +409,9 @@ private extension HerdrClient {
                 }
             }
         } catch is CancellationError {
+            if owns(generation), rebuildToken == token, !Task.isCancelled {
+                await invalidate(reason: "Herdr request was cancelled", generation: generation)
+            }
             return
         } catch {
             if owns(generation), rebuildToken == token, shouldInvalidate(for: error) {
@@ -468,6 +473,14 @@ private extension HerdrClient {
                       !Task.isCancelled else { return }
                 publish(.snapshot(snapshot))
             } catch is CancellationError {
+                let isAuthoritativeRefresh = owns(generation)
+                    && refreshToken == token
+                    && rebuildToken == nil
+                    && presentationGeneration == expectedPresentationGeneration
+                    && !Task.isCancelled
+                if isAuthoritativeRefresh {
+                    await invalidate(reason: "Herdr request was cancelled", generation: generation)
+                }
                 return
             } catch {
                 let isAuthoritativeRefresh = owns(generation)
@@ -533,14 +546,8 @@ private extension HerdrClient {
     }
 
     private func metadataFailureAllowsFallback(_ error: any Error) -> Bool {
-        if error is CancellationError || error is DecodingError { return false }
-        guard let clientError = error as? HerdrClientError else { return true }
-        switch clientError {
-        case .timeout, .connectionClosed:
-            return true
-        case .responseIDMismatch, .malformedResponse, .unexpectedResponseType:
-            return false
-        }
+        guard let apiError = error as? HerdrAPIError else { return false }
+        return apiError.code == "unavailable" || apiError.code == "metadata_unavailable"
     }
 
     private func request<Params, Result>(
@@ -640,7 +647,8 @@ private extension HerdrClient {
     }
 
     private func shouldInvalidate(for error: any Error) -> Bool {
-        !(error is HerdrAPIError) && !(error is CancellationError)
+        if error is CancellationError { return !Task.isCancelled }
+        return !(error is HerdrAPIError)
     }
 
     private func description(for error: any Error) -> String {

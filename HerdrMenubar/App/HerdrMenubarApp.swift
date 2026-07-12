@@ -41,6 +41,10 @@ struct HerdrMenubarApp: App {
         installedTerminals = TerminalCatalog().installedTerminals()
     }
 
+    static func shouldStartSynchronization(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] == nil
+    }
+
     var body: some Scene {
         MenuBarExtra {
             StatusMenu(
@@ -58,7 +62,9 @@ struct HerdrMenubarApp: App {
                 appDelegate.store = store
                 appDelegate.loginItemService = loginItemService
                 loginItemService.refreshStatus()
-                await store.start()
+                if Self.shouldStartSynchronization(environment: ProcessInfo.processInfo.environment) {
+                    await store.start()
+                }
             }
         }
         .menuBarExtraStyle(.menu)

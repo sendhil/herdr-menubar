@@ -87,13 +87,14 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(envelope.data.agentStatus, .done)
     }
 
-    func testErrorResponseDecodesWithoutResult() throws {
+    func testErrorResponseDecodesWithoutResultAndUsesServerMessageAsLocalizedDescription() throws {
         let data = Data(#"{"id":"bad-1","error":{"code":"pane_not_found","message":"pane not found"}}"#.utf8)
 
         let response = try JSONDecoder().decode(HerdrResponse<PaneFocusResult>.self, from: data)
 
         XCTAssertNil(response.result)
         XCTAssertEqual(response.error, HerdrAPIError(code: "pane_not_found", message: "pane not found"))
+        XCTAssertEqual(response.error?.localizedDescription, "pane not found")
     }
 
     func testRequestsEncodeExpectedWireShape() throws {

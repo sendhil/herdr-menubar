@@ -39,6 +39,7 @@ struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
     }
 
     var agentLabel: String {
+        // The public API has no internal agent_name; Herdr's observed UI uses pane labels before detected agents.
         if let displayAgent, !displayAgent.isEmpty {
             return displayAgent
         }
@@ -151,9 +152,11 @@ struct EventData: Codable, Equatable, Sendable {
     }
 }
 
-struct HerdrAPIError: Codable, Error, Equatable, Sendable {
+struct HerdrAPIError: Codable, LocalizedError, Equatable, Sendable {
     let code: String
     let message: String
+
+    var errorDescription: String? { message }
 }
 
 struct HerdrResponse<Result: Decodable & Sendable>: Decodable, Sendable {
