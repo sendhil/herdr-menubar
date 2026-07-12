@@ -29,13 +29,13 @@ The application is a presentation client. Herdr remains authoritative for agent 
 
 ### Menu-bar icon
 
-The icon has three visual modes:
+The icon uses the B1 design: an outlined terminal window and prompt with a status light inside its top-right corner. It has three visual modes:
 
-1. **Disconnected:** dimmed when the Herdr socket is unavailable.
-2. **Connected, no attention:** normal appearance.
-3. **Needs attention:** emphasized appearance with the attention count represented as a badge where the available menu-bar rendering permits it.
+1. **Disconnected:** the terminal is dimmed and the status light is hollow.
+2. **Connected, no attention:** the terminal has normal emphasis and the status light is solid.
+3. **Needs attention:** the same recognizable terminal remains visible, the solid status light is enlarged for emphasis, and the numeric attention count appears beside it.
 
-The attention count is the number of panes whose public Herdr status is either `blocked` or `done`.
+The monochrome icon is composed from the native SF Symbol `terminal` and SwiftUI vector shapes so it remains a menu-bar template without raster assets. The attention count is the number of panes whose public Herdr status is either `blocked` or `done`.
 
 ### Menu layout
 
