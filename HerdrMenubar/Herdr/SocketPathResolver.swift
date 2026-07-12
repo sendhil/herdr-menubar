@@ -19,7 +19,13 @@ struct SocketPathResolver: SocketPathResolving {
             return URL(fileURLWithPath: override)
         }
 
-        let root = homeDirectory.appending(path: ".config/herdr", directoryHint: .isDirectory)
+        let configDirectory: URL
+        if let xdgConfigHome = environment["XDG_CONFIG_HOME"], !xdgConfigHome.isEmpty {
+            configDirectory = URL(fileURLWithPath: xdgConfigHome, isDirectory: true)
+        } else {
+            configDirectory = homeDirectory.appending(path: ".config", directoryHint: .isDirectory)
+        }
+        let root = configDirectory.appending(path: "herdr", directoryHint: .isDirectory)
         if let session = environment["HERDR_SESSION"], !session.isEmpty {
             return root.appending(path: "sessions/\(session)/herdr.sock")
         }

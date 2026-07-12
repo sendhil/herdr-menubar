@@ -4,53 +4,56 @@ import XCTest
 
 @MainActor
 final class PreferencesTests: XCTestCase {
-    private var suiteName: String!
-    private var defaults: UserDefaults!
-
-    override func setUp() {
-        super.setUp()
-        suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-    }
-
-    override func tearDown() {
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        suiteName = nil
-        super.tearDown()
-    }
-
     func testTerminalDefaultsToWezTerm() {
-        XCTAssertEqual(
-            Preferences(defaults: defaults).selectedTerminalBundleIdentifier,
-            "com.github.wez.wezterm"
-        )
+        withDefaults { defaults in
+            XCTAssertEqual(
+                Preferences(defaults: defaults).selectedTerminalBundleIdentifier,
+                "com.github.wez.wezterm"
+            )
+        }
     }
 
     func testSelectedTerminalPersistsInInjectedDefaults() {
-        let preferences = Preferences(defaults: defaults)
-        preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
+        withDefaults { defaults in
+            let preferences = Preferences(defaults: defaults)
+            preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
 
-        XCTAssertEqual(
-            Preferences(defaults: defaults).selectedTerminalBundleIdentifier,
-            "com.mitchellh.ghostty"
-        )
-        XCTAssertEqual(
-            defaults.string(forKey: "selectedTerminalBundleIdentifier"),
-            "com.mitchellh.ghostty"
-        )
+            XCTAssertEqual(
+                Preferences(defaults: defaults).selectedTerminalBundleIdentifier,
+                "com.mitchellh.ghostty"
+            )
+            XCTAssertEqual(
+                defaults.string(forKey: "selectedTerminalBundleIdentifier"),
+                "com.mitchellh.ghostty"
+            )
+        }
     }
 
     func testLaunchAtLoginIntentDefaultsOff() {
-        XCTAssertFalse(Preferences(defaults: defaults).launchAtLoginIntent)
+        withDefaults { defaults in
+            XCTAssertFalse(Preferences(defaults: defaults).launchAtLoginIntent)
+        }
     }
 
     func testLaunchAtLoginIntentPersistsInInjectedDefaults() {
-        let preferences = Preferences(defaults: defaults)
-        preferences.launchAtLoginIntent = true
+        withDefaults { defaults in
+            let preferences = Preferences(defaults: defaults)
+            preferences.launchAtLoginIntent = true
 
-        XCTAssertTrue(Preferences(defaults: defaults).launchAtLoginIntent)
-        XCTAssertTrue(defaults.bool(forKey: "launchAtLoginIntent"))
+            XCTAssertTrue(Preferences(defaults: defaults).launchAtLoginIntent)
+            XCTAssertTrue(defaults.bool(forKey: "launchAtLoginIntent"))
+        }
+    }
+
+    private func withDefaults(_ body: @MainActor (UserDefaults) -> Void) {
+        let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Could not create isolated user defaults")
+            return
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        body(defaults)
     }
 }

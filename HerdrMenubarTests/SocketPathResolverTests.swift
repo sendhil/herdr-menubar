@@ -24,6 +24,33 @@ final class SocketPathResolverTests: XCTestCase {
         XCTAssertEqual(result.path, "/Users/me/.config/herdr/sessions/work/herdr.sock")
     }
 
+    func testXDGConfigHomeUsesHerdrSocket() {
+        let result = resolver.resolve(
+            environment: ["XDG_CONFIG_HOME": "/custom/config"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(result.path, "/custom/config/herdr/herdr.sock")
+    }
+
+    func testNamedSessionUsesXDGConfigHome() {
+        let result = resolver.resolve(
+            environment: ["XDG_CONFIG_HOME": "/custom/config", "HERDR_SESSION": "work"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(result.path, "/custom/config/herdr/sessions/work/herdr.sock")
+    }
+
+    func testEmptyXDGConfigHomeFallsBackToHome() {
+        let result = resolver.resolve(
+            environment: ["XDG_CONFIG_HOME": ""],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(result.path, "/Users/me/.config/herdr/herdr.sock")
+    }
+
     func testDefaultUsesPublicHerdrSocket() {
         let result = resolver.resolve(environment: [:], homeDirectory: home)
 

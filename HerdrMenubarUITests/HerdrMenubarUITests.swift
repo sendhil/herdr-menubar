@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class HerdrMenubarUITests: XCTestCase {
     func testApplicationLaunches() {
         let app = XCUIApplication()
