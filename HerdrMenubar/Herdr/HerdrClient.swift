@@ -77,6 +77,7 @@ actor HerdrClient {
     private var refreshRequested = false
     private var rebuildTask: Task<Void, Never>?
     private var rebuildToken: UUID?
+    private var presentationGeneration: UInt64 = 0
     private var eventContinuations: [UUID: AsyncStream<HerdrClientEvent>.Continuation] = [:]
     private var running = false
     private var connected = false
@@ -328,15 +329,25 @@ private extension HerdrClient {
         rebuildTask?.cancel()
         let token = UUID()
         rebuildToken = token
+        presentationGeneration &+= 1
+        let rebuildPresentationGeneration = presentationGeneration
         rebuildTask = Task { [weak self, subscriptionRebuildDebounce] in
             do {
                 try await Task.sleep(for: subscriptionRebuildDebounce)
-                await self?.runSubscriptionRebuild(generation: generation, token: token)
+                await self?.runSubscriptionRebuild(
+                    generation: generation,
+                    token: token,
+                    presentationGeneration: rebuildPresentationGeneration
+                )
             } catch {}
         }
     }
 
-    private func runSubscriptionRebuild(generation: UUID, token: UUID) async {
+    private func runSubscriptionRebuild(
+        generation: UUID,
+        token: UUID,
+        presentationGeneration expectedPresentationGeneration: UInt64
+    ) async {
         defer {
             if rebuildToken == token {
                 rebuildTask = nil
@@ -348,13 +359,25 @@ private extension HerdrClient {
             var reconciliationAttempt = 0
 
             while true {
-                try ensureOwnership(generation, rebuildToken: token)
+                try ensureOwnership(
+                    generation,
+                    rebuildToken: token,
+                    presentationGeneration: expectedPresentationGeneration
+                )
                 let subscribedPaneIDs = Set(snapshot.map(\.paneID))
                 let candidate = try await makeSubscription(paneIDs: Array(subscribedPaneIDs))
                 do {
-                    try ensureOwnership(generation, rebuildToken: token)
+                    try ensureOwnership(
+                        generation,
+                        rebuildToken: token,
+                        presentationGeneration: expectedPresentationGeneration
+                    )
                     snapshot = try await paneList()
-                    try ensureOwnership(generation, rebuildToken: token)
+                    try ensureOwnership(
+                        generation,
+                        rebuildToken: token,
+                        presentationGeneration: expectedPresentationGeneration
+                    )
                     guard Set(snapshot.map(\.paneID)) == subscribedPaneIDs else {
                         await candidate.connection.close()
                         try await sleeper.sleep(for: backoff.delay(attempt: reconciliationAttempt))
@@ -362,10 +385,15 @@ private extension HerdrClient {
                         continue
                     }
                     let presentation = try await presentationSnapshot(panes: snapshot)
-                    try ensureOwnership(generation, rebuildToken: token)
+                    try ensureOwnership(
+                        generation,
+                        rebuildToken: token,
+                        presentationGeneration: expectedPresentationGeneration
+                    )
                     let oldConnection = subscriptionConnection
                     subscriptionConnection = candidate.connection
                     subscriptionToken = candidate.token
+                    presentationGeneration &+= 1
                     publish(.snapshot(presentation))
                     await oldConnection?.close()
                     return
@@ -393,35 +421,58 @@ private extension HerdrClient {
         }
         let token = UUID()
         let generation = lifecycleGeneration
+        let refreshPresentationGeneration = presentationGeneration
         refreshToken = token
         refreshTask = Task { [weak self] in
-            await self?.runRefreshes(generation: generation, token: token)
+            await self?.runRefreshes(
+                generation: generation,
+                token: token,
+                presentationGeneration: refreshPresentationGeneration
+            )
         }
     }
 
-    private func runRefreshes(generation: UUID, token: UUID) async {
+    private func runRefreshes(
+        generation: UUID,
+        token: UUID,
+        presentationGeneration expectedPresentationGeneration: UInt64
+    ) async {
         defer {
             if refreshToken == token {
+                let shouldRefresh = refreshRequested && owns(generation) && connected
                 refreshTask = nil
                 refreshToken = nil
                 refreshRequested = false
+                if shouldRefresh { scheduleRefresh() }
             }
         }
 
         repeat {
-            guard owns(generation), refreshToken == token, !Task.isCancelled else { return }
+            guard owns(generation),
+                  refreshToken == token,
+                  presentationGeneration == expectedPresentationGeneration,
+                  !Task.isCancelled else { return }
             refreshRequested = false
             do {
                 let panes = try await paneList()
                 let snapshot = try await presentationSnapshot(panes: panes)
-                guard owns(generation), connected, refreshToken == token, !Task.isCancelled else { return }
+                guard owns(generation),
+                      connected,
+                      refreshToken == token,
+                      rebuildToken == nil,
+                      presentationGeneration == expectedPresentationGeneration,
+                      !Task.isCancelled else { return }
                 publish(.snapshot(snapshot))
             } catch is CancellationError {
                 return
             } catch {
-                if owns(generation), refreshToken == token, shouldInvalidate(for: error) {
+                let isAuthoritativeRefresh = owns(generation)
+                    && refreshToken == token
+                    && rebuildToken == nil
+                    && presentationGeneration == expectedPresentationGeneration
+                if isAuthoritativeRefresh, shouldInvalidate(for: error) {
                     await invalidate(reason: description(for: error), generation: generation)
-                } else if owns(generation), refreshToken == token {
+                } else if isAuthoritativeRefresh {
                     AppLog.synchronization.error("Herdr snapshot refresh failed: \(error.localizedDescription, privacy: .private)")
                 }
                 return
@@ -440,9 +491,9 @@ private extension HerdrClient {
     }
 
     private func presentationSnapshot(panes: [PaneInfo]) async throws -> PresentationSnapshot {
-        let workspaces = try await workspaceListWithFallback()
-        let tabs = try await tabListWithFallback()
-        return PresentationSnapshot(panes: panes, workspaces: workspaces, tabs: tabs)
+        async let workspaces = workspaceListWithFallback()
+        async let tabs = tabListWithFallback()
+        return try await PresentationSnapshot(panes: panes, workspaces: workspaces, tabs: tabs)
     }
 
     private func workspaceListWithFallback() async throws -> [WorkspaceInfo] {
@@ -573,9 +624,15 @@ private extension HerdrClient {
         running && lifecycleGeneration == generation
     }
 
-    private func ensureOwnership(_ generation: UUID, rebuildToken expectedToken: UUID? = nil) throws {
+    private func ensureOwnership(
+        _ generation: UUID,
+        rebuildToken expectedToken: UUID? = nil,
+        presentationGeneration expectedPresentationGeneration: UInt64? = nil
+    ) throws {
         guard owns(generation), !Task.isCancelled else { throw CancellationError() }
         if let expectedToken, rebuildToken != expectedToken { throw CancellationError() }
+        if let expectedPresentationGeneration,
+           presentationGeneration != expectedPresentationGeneration { throw CancellationError() }
     }
 
     private func shouldInvalidate(for error: any Error) -> Bool {

@@ -67,24 +67,32 @@ final class HerdrClientTests: XCTestCase {
         let paneRequest = await authoritative.nextSent()
         await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
 
-        let workspaceConnection = await factory.connection(at: 3)
-        let workspaceRequest = await workspaceConnection.nextSent()
-        XCTAssertEqual(workspaceRequest.method, "workspace.list")
-        XCTAssertEqual(try workspaceRequest.paramsObject(), [:] as NSDictionary)
+        let firstMetadataConnection = await factory.connection(at: 3)
+        let firstMetadataRequest = await firstMetadataConnection.nextSent()
+        let secondMetadataConnection = await factory.connection(at: 4)
+        let secondMetadataRequest = await secondMetadataConnection.nextSent()
+        XCTAssertEqual(Set([firstMetadataRequest.method, secondMetadataRequest.method]), ["workspace.list", "tab.list"])
+        XCTAssertEqual(try firstMetadataRequest.paramsObject(), [:] as NSDictionary)
+        XCTAssertEqual(try secondMetadataRequest.paramsObject(), [:] as NSDictionary)
         let workspaceResult = #"""
         {"type":"workspace_list","workspaces":[{
           "workspace_id":"workspace","number":1,"label":"Herdr Menubar","focused":true,
           "pane_count":1,"tab_count":1,"active_tab_id":"tab","agent_status":"working"
         }]}
         """#
-        await workspaceConnection.reply(to: workspaceRequest, result: workspaceResult)
-
-        let tabConnection = await factory.connection(at: 4)
-        let tabRequest = await tabConnection.nextSent()
-        XCTAssertEqual(tabRequest.method, "tab.list")
-        XCTAssertEqual(try tabRequest.paramsObject(), [:] as NSDictionary)
         let tabResult = #"{"type":"tab_list","tabs":[{"tab_id":"tab","workspace_id":"workspace","number":1,"label":"server","focused":true,"pane_count":1,"agent_status":"working"}]}"#
-        await tabConnection.reply(to: tabRequest, result: tabResult)
+        await replyToMetadata(
+            connection: firstMetadataConnection,
+            request: firstMetadataRequest,
+            workspaces: workspaceResult,
+            tabs: tabResult
+        )
+        await replyToMetadata(
+            connection: secondMetadataConnection,
+            request: secondMetadataRequest,
+            workspaces: workspaceResult,
+            tabs: tabResult
+        )
 
         guard case .connected(let snapshot) = await events.next() else {
             return XCTFail("Expected connected presentation snapshot")
@@ -138,16 +146,63 @@ final class HerdrClientTests: XCTestCase {
         let authoritative = await factory.connection(at: 2)
         let paneRequest = await authoritative.nextSent()
         await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
-        let workspaceConnection = await factory.connection(at: 3)
-        let workspaceRequest = await workspaceConnection.nextSent()
-        await workspaceConnection.reply(
-            to: workspaceRequest,
-            result: #"{"type":"wrong_type","workspaces":[]}"#
+        let firstMetadataConnection = await factory.connection(at: 3)
+        let firstMetadataRequest = await firstMetadataConnection.nextSent()
+        let secondMetadataConnection = await factory.connection(at: 4)
+        let secondMetadataRequest = await secondMetadataConnection.nextSent()
+        await firstMetadataConnection.reply(
+            to: firstMetadataRequest,
+            result: firstMetadataRequest.method == "workspace.list"
+                ? #"{"type":"wrong_type","workspaces":[]}"#
+                : #"{"type":"wrong_type","tabs":[]}"#
         )
+        await replyToMetadata(connection: secondMetadataConnection, request: secondMetadataRequest)
 
         guard case .disconnected = await events.next() else {
             return XCTFail("Expected metadata protocol failure to disconnect")
         }
+        await client.stop()
+    }
+
+    func testOneSidedMetadataFallbackRetainsSuccessfulMetadata() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+
+        let initial = await factory.connection(at: 0)
+        let initialRequest = await initial.nextSent()
+        await initial.reply(to: initialRequest, result: paneListResult(ids: ["pane"]))
+        let subscription = await factory.connection(at: 1)
+        let subscribe = await subscription.nextSent()
+        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 2)
+        let paneRequest = await authoritative.nextSent()
+        await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
+
+        let firstMetadataConnection = await factory.connection(at: 3)
+        let firstMetadataRequest = await firstMetadataConnection.nextSent()
+        let secondMetadataConnection = await factory.connection(at: 4)
+        let secondMetadataRequest = await secondMetadataConnection.nextSent()
+        let tabResult = #"{"type":"tab_list","tabs":[{"tab_id":"tab","workspace_id":"workspace","number":1,"label":"retained","focused":true,"pane_count":1,"agent_status":"working"}]}"#
+        for (connection, request) in [
+            (firstMetadataConnection, firstMetadataRequest),
+            (secondMetadataConnection, secondMetadataRequest)
+        ] {
+            if request.method == "workspace.list" {
+                await connection.push(
+                    #"{"id":"\#(request.id)","error":{"code":"unavailable","message":"metadata unavailable"}}"#
+                )
+            } else {
+                await connection.reply(to: request, result: tabResult)
+            }
+        }
+
+        guard case .connected(let snapshot) = await events.next() else {
+            return XCTFail("Expected connected presentation snapshot")
+        }
+        XCTAssertEqual(snapshot.workspaces, [])
+        XCTAssertEqual(snapshot.tabs.map(\.label), ["retained"])
         await client.stop()
     }
 
@@ -183,6 +238,57 @@ final class HerdrClientTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         let rebuildConnectionCount = await factory.connectionCount
         XCTAssertEqual(rebuildConnectionCount, 10, "membership burst must produce one rebuild")
+        await client.stop()
+    }
+
+    func testRebuildSupersedesRefreshThatCapturedOldMembership() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let oldSubscription = await completeBootstrap(
+            factory: factory,
+            discovered: ["old"],
+            authoritative: ["old"]
+        )
+        _ = await events.next()
+
+        await oldSubscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"old"}}"#)
+        let oldRefresh = await factory.connection(at: 5)
+        let oldRefreshRequest = await oldRefresh.nextSent()
+        await oldRefresh.reply(to: oldRefreshRequest, result: paneListResult(ids: ["old"]))
+        let oldMetadataOne = await factory.connection(at: 6)
+        let oldMetadataRequestOne = await oldMetadataOne.nextSent()
+        let oldMetadataTwo = await factory.connection(at: 7)
+        let oldMetadataRequestTwo = await oldMetadataTwo.nextSent()
+
+        await oldSubscription.push(#"{"event":"pane.created","data":{}}"#)
+        let discovery = await factory.connection(at: 8)
+        let discoveryRequest = await discovery.nextSent()
+        await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["new"]))
+        let replacement = await factory.connection(at: 9)
+        let replacementSubscribe = await replacement.nextSent()
+        await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 10)
+        let authoritativeRequest = await authoritative.nextSent()
+        await authoritative.reply(to: authoritativeRequest, result: paneListResult(ids: ["new"]))
+        await completeMetadata(factory: factory, startIndex: 11)
+        let rebuiltEvent = await events.next()
+        XCTAssertEqual(rebuiltEvent, .snapshot(clientSnapshot([pane("new")])))
+
+        await replyToMetadata(connection: oldMetadataOne, request: oldMetadataRequestOne)
+        await replyToMetadata(connection: oldMetadataTwo, request: oldMetadataRequestTwo)
+        await replacement.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"new"}}"#)
+        let newRefresh = await factory.connection(at: 13)
+        let newRefreshRequest = await newRefresh.nextSent()
+        await newRefresh.reply(to: newRefreshRequest, result: paneListResult(ids: ["fresh"]))
+        await completeMetadata(factory: factory, startIndex: 14)
+        let postRebuildEvent = await events.next()
+        XCTAssertEqual(
+            postRebuildEvent,
+            .snapshot(clientSnapshot([pane("fresh")])),
+            "the held old-membership refresh must never publish after the rebuild"
+        )
         await client.stop()
     }
 
@@ -226,6 +332,9 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+}
+
+extension HerdrClientTests {
     func testStatusEventRefreshesAndBurstCoalesces() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
@@ -590,14 +699,36 @@ private func completeMetadata(
     workspaces: String = #"{"type":"workspace_list","workspaces":[]}"#,
     tabs: String = #"{"type":"tab_list","tabs":[]}"#
 ) async {
-    let workspaceConnection = await factory.connection(at: startIndex)
-    let workspaceRequest = await workspaceConnection.nextSent()
-    assert(workspaceRequest.method == "workspace.list")
-    await workspaceConnection.reply(to: workspaceRequest, result: workspaces)
-    let tabConnection = await factory.connection(at: startIndex + 1)
-    let tabRequest = await tabConnection.nextSent()
-    assert(tabRequest.method == "tab.list")
-    await tabConnection.reply(to: tabRequest, result: tabs)
+    let firstConnection = await factory.connection(at: startIndex)
+    let firstRequest = await firstConnection.nextSent()
+    let secondConnection = await factory.connection(at: startIndex + 1)
+    let secondRequest = await secondConnection.nextSent()
+    assert(Set([firstRequest.method, secondRequest.method]) == ["workspace.list", "tab.list"])
+    await replyToMetadata(
+        connection: firstConnection,
+        request: firstRequest,
+        workspaces: workspaces,
+        tabs: tabs
+    )
+    await replyToMetadata(
+        connection: secondConnection,
+        request: secondRequest,
+        workspaces: workspaces,
+        tabs: tabs
+    )
+}
+
+private func replyToMetadata(
+    connection: FakeHerdrConnection,
+    request: RecordedRequest,
+    workspaces: String = #"{"type":"workspace_list","workspaces":[]}"#,
+    tabs: String = #"{"type":"tab_list","tabs":[]}"#
+) async {
+    switch request.method {
+    case "workspace.list": await connection.reply(to: request, result: workspaces)
+    case "tab.list": await connection.reply(to: request, result: tabs)
+    default: assertionFailure("Unexpected metadata request: \(request.method)")
+    }
 }
 
 private func clientSnapshot(_ panes: [PaneInfo]) -> PresentationSnapshot {
