@@ -292,6 +292,46 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+    func testStatusEventDuringRebuildQueuesPostRebuildRefresh() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let oldSubscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
+        _ = await events.next()
+
+        await oldSubscription.push(#"{"event":"pane.created","data":{}}"#)
+        let discovery = await factory.connection(at: 5)
+        let discoveryRequest = await discovery.nextSent()
+        await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["stale"]))
+        let replacement = await factory.connection(at: 6)
+        let replacementSubscribe = await replacement.nextSent()
+        await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 7)
+        let authoritativeRequest = await authoritative.nextSent()
+
+        await oldSubscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"old"}}"#)
+        await authoritative.reply(to: authoritativeRequest, result: paneListResult(ids: ["stale"]))
+        await completeMetadata(factory: factory, startIndex: 8)
+        let rebuiltEvent = await events.next()
+        XCTAssertEqual(rebuiltEvent, .snapshot(clientSnapshot([pane("stale")])))
+
+        let refresh = await factory.connection(at: 10)
+        let refreshRequest = await refresh.nextSent()
+        await refresh.reply(to: refreshRequest, result: paneListResult(ids: ["latest"]))
+        await completeMetadata(factory: factory, startIndex: 11)
+        let refreshedEvent = await events.next()
+        XCTAssertEqual(
+            refreshedEvent,
+            .snapshot(clientSnapshot([pane("latest")])),
+            "the status event received during rebuild must refresh the rebuilt presentation"
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        let connectionCount = await factory.connectionCount
+        XCTAssertEqual(connectionCount, 13, "the queued status event must start exactly one refresh")
+        await client.stop()
+    }
+
     func testRebuildReconcilesPaneRemovedBetweenInitialAndPostSubscriptionLists() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)

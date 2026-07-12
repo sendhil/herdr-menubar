@@ -352,6 +352,9 @@ private extension HerdrClient {
             if rebuildToken == token {
                 rebuildTask = nil
                 rebuildToken = nil
+                if refreshRequested, owns(generation), connected {
+                    scheduleRefresh()
+                }
             }
         }
         do {
@@ -415,7 +418,7 @@ private extension HerdrClient {
 
     private func scheduleRefresh() {
         guard running, connected else { return }
-        if refreshTask != nil {
+        if rebuildToken != nil || refreshTask != nil {
             refreshRequested = true
             return
         }
