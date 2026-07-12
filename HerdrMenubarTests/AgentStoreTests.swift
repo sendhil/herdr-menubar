@@ -44,6 +44,39 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(store.attentionItems.map(\.secondaryLabel), ["done · Claude", "done · Claude"])
     }
 
+    func testVisibleLabelsIncludeAgentContextWithoutDuplicateSuffixes() {
+        let labeledAgentPane = PaneInfo(
+            paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",
+            focused: false, label: "test-agent", agent: "pi", title: nil, displayAgent: nil,
+            agentStatus: .idle, revision: 1
+        )
+        let singleTabItem = AgentMenuItem(
+            pane: labeledAgentPane,
+            workspace: workspace("bin", label: "bin", tabCount: 1),
+            tab: tab("bin:tab", workspaceID: "bin", label: "shell")
+        )
+        let multiTabItem = AgentMenuItem(
+            pane: labeledAgentPane,
+            workspace: workspace("workspace", label: "workspace", tabCount: 2),
+            tab: tab("workspace:test", workspaceID: "workspace", label: "tab"),
+            workspaceIsMultiTab: true
+        )
+        let duplicateItem = AgentMenuItem(
+            pane: labeledAgentPane,
+            workspace: workspace("bin", label: "test-agent", tabCount: 1)
+        )
+        let fallbackPane = PaneInfo(
+            paneID: "pane-42", terminalID: "terminal", workspaceID: "missing", tabID: "missing:tab",
+            focused: false, label: nil, agent: "pi", title: nil, displayAgent: "test-agent",
+            agentStatus: .idle, revision: 1
+        )
+
+        XCTAssertEqual(singleTabItem.visibleLabel, "bin · test-agent")
+        XCTAssertEqual(multiTabItem.visibleLabel, "workspace · tab · test-agent")
+        XCTAssertEqual(duplicateItem.visibleLabel, "test-agent")
+        XCTAssertEqual(AgentMenuItem(pane: fallbackPane).visibleLabel, "pane-42 · test-agent")
+    }
+
     func testSecondaryLabelPrefersHerdrPaneLabelOverDetectedAgent() {
         let pane = PaneInfo(
             paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",

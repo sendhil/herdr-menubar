@@ -53,7 +53,7 @@ The menu uses a grouped-detail layout:
    - Retry when disconnected.
    - Quit.
 
-Each agent row mirrors Herdr's agent panel labeling. Its primary label is the workspace display name, with ` · <tab name>` appended when the workspace has multiple tabs. Its secondary context is `<status> · <agent>`. The pane ID remains an internal focus target and is used as visible fallback only when workspace metadata is unavailable. Because native macOS menu rows may suppress secondary text, the primary workspace/tab label must remain independently useful. Idle and unknown panes are omitted.
+Each agent row mirrors Herdr's agent panel labeling. Its visible native-menu label is the workspace display name, with `· <tab name>` appended when the workspace has multiple tabs, followed by `· <agent>` unless that would duplicate the primary label. Its secondary context is `<status> · <agent>`. The pane ID remains an internal focus target and is used as visible fallback only when workspace metadata is unavailable. Because native macOS menu rows may suppress secondary text, the single-row visible label includes the useful agent context. Idle and unknown panes are omitted.
 
 ### Selecting an agent
 

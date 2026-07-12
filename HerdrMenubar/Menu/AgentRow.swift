@@ -16,7 +16,7 @@ struct AgentRow: View {
             HStack {
                 Image(systemName: statusImage)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(item.displayLabel)
+                    Text(item.visibleLabel)
                     Text(item.secondaryLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)

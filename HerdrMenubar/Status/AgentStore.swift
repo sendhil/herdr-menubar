@@ -46,6 +46,11 @@ struct AgentMenuItem: Identifiable, Equatable, Sendable {
         status = pane.agentStatus
     }
 
+    var visibleLabel: String {
+        guard displayLabel != agentLabel else { return displayLabel }
+        return "\(displayLabel) · \(agentLabel)"
+    }
+
     var secondaryLabel: String {
         "\(status.rawValue) · \(agentLabel)"
     }
