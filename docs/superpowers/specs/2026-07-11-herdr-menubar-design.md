@@ -53,7 +53,7 @@ The menu uses a grouped-detail layout:
    - Retry when disconnected.
    - Quit.
 
-Each agent row shows a useful pane or workspace label, the agent display name, and its semantic status. Idle and unknown panes are omitted.
+Each agent row mirrors Herdr's agent panel labeling. Its primary label is the workspace display name, with ` · <tab name>` appended when the workspace has multiple tabs. Its secondary context is `<status> · <agent>`. The pane ID remains an internal focus target and is used as visible fallback only when workspace metadata is unavailable. Because native macOS menu rows may suppress secondary text, the primary workspace/tab label must remain independently useful. Idle and unknown panes are omitted.
 
 ### Selecting an agent
 
@@ -144,7 +144,9 @@ Herdr currently scopes status subscriptions to a pane ID. When pane membership c
 
 ### Event handling
 
-Events are invalidation signals rather than a second source of pane truth. Relevant status and focus events trigger a coalesced `pane.list` refresh. Pane membership events trigger a debounced subscription rebuild so the filter set stays synchronized. Multiple events arriving in a short burst produce one refresh or rebuild.
+Events are invalidation signals rather than a second source of pane truth. Relevant status and focus events trigger a coalesced snapshot refresh. Pane membership events trigger a debounced subscription rebuild so the filter set stays synchronized. Multiple events arriving in a short burst produce one refresh or rebuild.
+
+A complete presentation snapshot combines `pane.list`, `workspace.list`, and `tab.list` responses. Workspace and tab metadata are joined to panes by their public IDs to reproduce Herdr's own agent-panel labels. If metadata is briefly unavailable, pane title/label and finally pane ID provide fallbacks.
 
 Using snapshots avoids reconstructing Herdr aggregation, labels, revisions, and seen semantics locally.
 

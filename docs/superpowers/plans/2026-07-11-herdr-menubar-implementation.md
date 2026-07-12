@@ -762,3 +762,57 @@ git commit -m "fix: address final menubar review"
 ```
 
 If no changes were required, do not create an empty commit.
+
+---
+
+### Task 8: Mirror Herdr agent-panel labels
+
+**Files:**
+- Modify: `HerdrMenubar/Herdr/APIModels.swift`
+- Modify: `HerdrMenubar/Herdr/HerdrClient.swift`
+- Modify: `HerdrMenubar/Status/AgentStore.swift`
+- Modify: `HerdrMenubar/Menu/AgentRow.swift`
+- Modify: `HerdrMenubarTests/APIModelsTests.swift`
+- Modify: `HerdrMenubarTests/HerdrClientTests.swift`
+- Modify: `HerdrMenubarTests/AgentStoreTests.swift`
+
+**Interfaces:**
+- Produces presentation snapshots joining panes with `workspace.list` and `tab.list` metadata.
+- Produces Herdr-compatible primary labels: workspace, or `workspace · tab` for multi-tab workspaces.
+- Keeps pane IDs only as focus targets and final visible fallbacks.
+
+- [ ] **Step 1: Add failing metadata decoding and label tests**
+
+Test public `workspace_list` and `tab_list` response decoding. Test single-tab `dotfiles-mac`, multi-tab `Herdr Menubar · server`, metadata fallback to pane title/label, and final fallback to pane ID. Assert secondary context is `done · Pi`.
+
+- [ ] **Step 2: Verify focused tests fail**
+
+```bash
+xcodebuild test -project HerdrMenubar.xcodeproj -scheme HerdrMenubar -destination 'platform=macOS' -only-testing:HerdrMenubarTests/APIModelsTests -only-testing:HerdrMenubarTests/AgentStoreTests
+```
+
+Expected: failures because workspace/tab response models and joined labels do not exist.
+
+- [ ] **Step 3: Implement public metadata models and snapshot join**
+
+Decode `workspace.list` and `tab.list` using Herdr's public response fields. During each authoritative refresh, collect panes, workspaces, and tabs, then join by `workspace_id` and `tab_id`. A workspace is multi-tab when its metadata reports more than one tab or the snapshot contains multiple distinct tab IDs for that workspace.
+
+- [ ] **Step 4: Render Herdr-compatible labels**
+
+Primary label order: joined workspace display label with optional tab suffix; pane title; pane label; pane ID. Secondary context order: lowercase semantic status, ` · `, effective display agent. Keep the primary label sufficient on its own because native `.menu` may suppress secondary text.
+
+- [ ] **Step 5: Validate without UI tests**
+
+```bash
+xcodebuild test -project HerdrMenubar.xcodeproj -scheme HerdrMenubar -destination 'platform=macOS' -only-testing:HerdrMenubarTests
+xcodebuild build -project HerdrMenubar.xcodeproj -scheme HerdrMenubar -destination 'platform=macOS'
+```
+
+Expected: all unit tests pass and build succeeds. Relaunch the ordinary app process and visually confirm workspace labels replace public pane IDs.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add HerdrMenubar HerdrMenubarTests HerdrMenubar.xcodeproj docs/superpowers/specs/2026-07-11-herdr-menubar-design.md
+git commit -m "feat: mirror herdr agent labels"
+```
