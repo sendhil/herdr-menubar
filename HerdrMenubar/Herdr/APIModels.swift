@@ -42,6 +42,9 @@ struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
         if let displayAgent, !displayAgent.isEmpty {
             return displayAgent
         }
+        if let label, !label.isEmpty {
+            return label
+        }
         if let agent, !agent.isEmpty {
             return agent
         }

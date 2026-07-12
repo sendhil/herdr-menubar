@@ -44,6 +44,30 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(store.attentionItems.map(\.secondaryLabel), ["done · Claude", "done · Claude"])
     }
 
+    func testSecondaryLabelPrefersHerdrPaneLabelOverDetectedAgent() {
+        let pane = PaneInfo(
+            paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",
+            focused: false, label: "test-agent", agent: "pi", title: nil, displayAgent: nil,
+            agentStatus: .idle, revision: 1
+        )
+
+        let item = AgentMenuItem(pane: pane)
+
+        XCTAssertEqual(item.secondaryLabel, "idle · test-agent")
+    }
+
+    func testSecondaryLabelStillPrefersDisplayAgentOverPaneLabel() {
+        let pane = PaneInfo(
+            paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",
+            focused: false, label: "test-agent", agent: "pi", title: nil, displayAgent: "Pi Display",
+            agentStatus: .idle, revision: 1
+        )
+
+        let item = AgentMenuItem(pane: pane)
+
+        XCTAssertEqual(item.secondaryLabel, "idle · Pi Display")
+    }
+
     func testJoinedLabelFallsBackThroughPaneTitleLabelAndID() {
         let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
         let panes = [
