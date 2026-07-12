@@ -52,10 +52,10 @@ struct BackoffPolicy: Sendable {
 
 actor HerdrClient {
     private static let lifecycleEvents: Set<String> = [
-        "pane.created", "pane.closed", "pane.moved", "pane.exited", "pane.agent_detected"
+        "pane_created", "pane_closed", "pane_moved", "pane_exited", "pane_agent_detected"
     ]
     private static let refreshEvents: Set<String> = [
-        "pane.focused", "pane.agent_status_changed"
+        "pane_focused", "pane_agent_status_changed"
     ]
     private static let globalSubscriptionEvents = [
         "pane.created", "pane.closed", "pane.focused", "pane.moved", "pane.exited",
@@ -306,9 +306,10 @@ private extension HerdrClient {
                     }
                     do {
                         let event = try JSONDecoder().decode(EventEnvelope.self, from: line)
-                        if Self.lifecycleEvents.contains(event.event) {
+                        let eventName = event.event.replacingOccurrences(of: ".", with: "_")
+                        if Self.lifecycleEvents.contains(eventName) {
                             scheduleSubscriptionRebuild(generation: generation)
-                        } else if Self.refreshEvents.contains(event.event) {
+                        } else if Self.refreshEvents.contains(eventName) {
                             scheduleRefresh()
                         } else {
                             AppLog.synchronization.debug("Ignoring unknown Herdr event: \(event.event, privacy: .private)")

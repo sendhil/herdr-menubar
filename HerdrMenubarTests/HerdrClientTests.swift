@@ -375,6 +375,60 @@ final class HerdrClientTests: XCTestCase {
 }
 
 extension HerdrClientTests {
+    func testServerWireStatusEventTriggersSnapshotRefresh() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let subscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
+        _ = await events.next()
+
+        await subscription.push(#"{"event":"pane_agent_status_changed","data":{"pane_id":"old"}}"#)
+        try await Task.sleep(for: .milliseconds(50))
+        guard await factory.connectionCount == 6 else {
+            await client.stop()
+            return XCTFail("server-compatible status event must start a pane snapshot refresh")
+        }
+        let refresh = await factory.connection(at: 5)
+        let request = await refresh.nextSent()
+        await refresh.reply(to: request, result: paneListResult(ids: ["updated"]))
+        await completeMetadata(factory: factory, startIndex: 6)
+        let refreshedEvent = await events.next()
+        XCTAssertEqual(refreshedEvent, .snapshot(clientSnapshot([pane("updated")])))
+        await client.stop()
+    }
+
+    func testServerWireLifecycleEventTriggersSubscriptionRebuild() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let subscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
+        _ = await events.next()
+
+        await subscription.push(#"{"event":"pane_created","data":{}}"#)
+        try await Task.sleep(for: .milliseconds(50))
+        guard await factory.connectionCount == 6 else {
+            await client.stop()
+            return XCTFail("server-compatible lifecycle event must start a subscription rebuild")
+        }
+        let discovery = await factory.connection(at: 5)
+        let discoveryRequest = await discovery.nextSent()
+        await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["new", "old"]))
+        let replacement = await factory.connection(at: 6)
+        let subscribe = await replacement.nextSent()
+        XCTAssertEqual(subscribe.subscriptionPaneIDs, ["new", "old"])
+        await replacement.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 7)
+        let authoritativeRequest = await authoritative.nextSent()
+        await authoritative.reply(to: authoritativeRequest, result: paneListResult(ids: ["new", "old"]))
+        await completeMetadata(factory: factory, startIndex: 8)
+        let rebuiltEvent = await events.next()
+        XCTAssertEqual(rebuiltEvent, .snapshot(clientSnapshot([pane("new"), pane("old")])))
+        await waitUntil { await subscription.isClosed }
+        await client.stop()
+    }
+
     func testStatusEventRefreshesAndBurstCoalesces() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
