@@ -211,6 +211,10 @@ Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynam
 - Menu presentation intentionally uses native macOS menu behavior rather than a custom dashboard or popover.
 - Terminal activation uses a user-selected terminal because Herdr's public API does not currently identify the macOS application hosting an attached client.
 
-## License
+## License and disclaimer
 
-No license has been selected for this standalone project yet.
+Herdr Menubar is available under the [MIT License](LICENSE).
+
+The project is provided **as is**, without warranty of any kind. If you clone, modify, install, or redistribute it, you are responsible for reviewing the code and scripts, validating them in your environment, and maintaining your copy. Compatibility with future macOS, Xcode, terminal, or Herdr releases is not guaranteed, and no support, uptime, data-safety, or fitness-for-purpose commitment is implied.
+
+Herdr is a separate project with its own license and maintainers. References to Herdr and supported terminal applications describe interoperability and do not imply endorsement or affiliation.
