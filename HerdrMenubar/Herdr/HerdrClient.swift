@@ -414,10 +414,8 @@ private extension HerdrClient {
             }
             return
         } catch {
-            if owns(generation), rebuildToken == token, shouldInvalidate(for: error) {
+            if owns(generation), rebuildToken == token {
                 await invalidate(reason: description(for: error), generation: generation)
-            } else if owns(generation), rebuildToken == token {
-                AppLog.synchronization.error("Herdr subscription rebuild failed: \(error.localizedDescription, privacy: .private)")
             }
         }
     }

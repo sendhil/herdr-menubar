@@ -232,6 +232,71 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+}
+
+extension HerdrClientTests {
+    func testRebuildAPIErrorInvalidatesAndRebootstrapsAuthoritativeMembership() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+        let oldSubscription = await completeBootstrap(factory: factory, discovered: ["A"], authoritative: ["A"])
+        let initialConnected = await events.next()
+        XCTAssertEqual(initialConnected, .connected(clientSnapshot([pane("A")])))
+
+        await oldSubscription.push(#"{"event":"pane_created","data":{"pane_id":"B"}}"#)
+        let discovery = await factory.connection(at: 5)
+        let discoveryRequest = await discovery.nextSent()
+        await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["A", "B"]))
+        let failedReplacement = await factory.connection(at: 6)
+        let failedSubscribe = await failedReplacement.nextSent()
+        XCTAssertEqual(failedSubscribe.subscriptionPaneIDs, ["A", "B"])
+        await failedReplacement.push(
+            #"{"id":"\#(failedSubscribe.id)","error":{"code":"unavailable","message":"subscription unavailable"}}"#
+        )
+
+        _ = await factory.connection(at: 7)
+        let oldSubscriptionClosed = await oldSubscription.isClosed
+        guard oldSubscriptionClosed else {
+            await client.stop()
+            return XCTFail("Authoritative rebuild API failure must close stale membership")
+        }
+        guard case .disconnected = await events.next() else {
+            await client.stop()
+            return XCTFail("Authoritative rebuild API failure must publish disconnected state")
+        }
+
+        let replacement = await completeBootstrap(
+            factory: factory,
+            startIndex: 7,
+            discovered: ["A", "B"],
+            authoritative: ["A", "B"]
+        )
+        let replacementSubscribe = await replacement.firstRecordedRequest
+        XCTAssertEqual(replacementSubscribe?.subscriptionPaneIDs, ["A", "B"])
+        let replacementConnected = await events.next()
+        XCTAssertEqual(
+            replacementConnected,
+            .connected(clientSnapshot([pane("A"), pane("B")]))
+        )
+
+        await replacement.push(#"{"event":"pane_agent_status_changed","data":{"pane_id":"B"}}"#)
+        let refresh = await factory.connection(at: 12)
+        let refreshRequest = await refresh.nextSent()
+        await refresh.reply(
+            to: refreshRequest,
+            result: paneListResult(panes: [paneJSON("A"), paneJSON("B", status: "idle")])
+        )
+        await completeMetadata(factory: factory, startIndex: 13)
+        let refreshed = await events.next()
+        XCTAssertEqual(
+            refreshed,
+            .snapshot(clientSnapshot([pane("A"), pane("B", status: .idle)])),
+            "B status events must refresh after the replacement subscription becomes authoritative"
+        )
+        await client.stop()
+    }
+
     func testMembershipBurstDebouncesAndKeepsOldSubscriptionUntilReplacementIsAuthoritative() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory, debounce: .milliseconds(20))
@@ -713,9 +778,24 @@ extension HerdrClientTests {
             await client.stop()
             return XCTFail("Expected \(failedMethod) \(failure) to invalidate live state")
         }
-        let restarted = await factory.connection(at: 5)
-        let restartedRequest = await restarted.nextSent()
-        XCTAssertEqual(restartedRequest.method, "pane.list", "metadata failure must restart bootstrap")
+        let replacement = await completeBootstrap(
+            factory: factory,
+            startIndex: 5,
+            discovered: ["fresh"],
+            authoritative: ["fresh"]
+        )
+        let replacementSubscribe = await replacement.firstRecordedRequest
+        XCTAssertEqual(
+            replacementSubscribe?.subscriptionPaneIDs,
+            ["fresh"],
+            "metadata failure must install a usable replacement subscription"
+        )
+        let reconnected = await events.next()
+        XCTAssertEqual(
+            reconnected,
+            .connected(clientSnapshot([pane("fresh")])),
+            "metadata failure recovery must publish a fresh authoritative connected snapshot"
+        )
         await client.stop()
     }
 
@@ -765,233 +845,5 @@ extension HerdrClientTests {
         await post.reply(to: postRequest, result: paneListResult(ids: authoritative))
         await completeMetadata(factory: factory, startIndex: startIndex + 3)
         return subscription
-    }
-}
-
-private struct FakePathResolver: SocketPathResolving {
-    func resolve(environment: [String: String], homeDirectory: URL) -> URL {
-        URL(fileURLWithPath: "/tmp/fake-herdr.sock")
-    }
-}
-
-private actor FakeHerdrConnectionFactory: HerdrConnectionFactory {
-    private var connections: [FakeHerdrConnection] = []
-    private var waiters: [Int: [CheckedContinuation<FakeHerdrConnection, Never>]] = [:]
-    private let sendDelays: [Duration]
-
-    init(sendDelays: [Duration] = []) { self.sendDelays = sendDelays }
-    var connectionCount: Int { connections.count }
-
-    func connect(to socketURL: URL) async throws -> any HerdrConnection {
-        let index = connections.count
-        let connection = FakeHerdrConnection(sendDelay: sendDelays.indices.contains(index) ? sendDelays[index] : .zero)
-        connections.append(connection)
-        for waiter in waiters.removeValue(forKey: index) ?? [] { waiter.resume(returning: connection) }
-        return connection
-    }
-
-    func connection(at index: Int) async -> FakeHerdrConnection {
-        if connections.indices.contains(index) { return connections[index] }
-        return await withCheckedContinuation { waiters[index, default: []].append($0) }
-    }
-}
-
-private struct RecordedRequest: Sendable {
-    let id: String
-    let method: String
-    let data: Data
-
-    var paneID: String? {
-        (try? paramsObject()["pane_id"] as? String) ?? nil
-    }
-
-    var subscriptionPaneIDs: [String] {
-        guard let subscriptions = try? paramsObject()["subscriptions"] as? [[String: String]] else { return [] }
-        return subscriptions.compactMap { $0["pane_id"] }.sorted()
-    }
-
-    func paramsObject() throws -> NSDictionary {
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let params = object["params"] as? NSDictionary else {
-            throw FakeConnectionError.malformedRequest
-        }
-        return params
-    }
-}
-
-private enum FakeConnectionError: Error {
-    case malformedRequest
-}
-
-private actor FakeHerdrConnection: HerdrConnection {
-    private var sent: [RecordedRequest] = []
-    private var sentWaiters: [CheckedContinuation<RecordedRequest, Never>] = []
-    private var inbound: [Data?] = []
-    private var readWaiters: [UUID: CheckedContinuation<Data?, any Error>] = [:]
-    private(set) var isClosed = false
-    private let sendDelay: Duration
-
-    init(sendDelay: Duration) { self.sendDelay = sendDelay }
-
-    func sendLine(_ data: Data) async throws {
-        if sendDelay > .zero { try await Task.sleep(for: sendDelay) }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = object["id"] as? String,
-              let method = object["method"] as? String else {
-            throw FakeConnectionError.malformedRequest
-        }
-        let request = RecordedRequest(id: id, method: method, data: data)
-        if sentWaiters.isEmpty { sent.append(request) } else { sentWaiters.removeFirst().resume(returning: request) }
-    }
-
-    private var pendingReadError: (any Error)?
-
-    func nextLine() async throws -> Data? {
-        if let error = pendingReadError {
-            pendingReadError = nil
-            throw error
-        }
-        if !inbound.isEmpty { return inbound.removeFirst() }
-        if isClosed { return nil }
-        let id = UUID()
-        return try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            return try await withCheckedThrowingContinuation { readWaiters[id] = $0 }
-        } onCancel: {
-            Task { await self.cancelRead(id) }
-        }
-    }
-
-    func close() async {
-        guard !isClosed else { return }
-        isClosed = true
-        for waiter in readWaiters.values { waiter.resume(returning: nil) }
-        readWaiters.removeAll()
-    }
-
-    func nextSent() async -> RecordedRequest {
-        if !sent.isEmpty { return sent.removeFirst() }
-        return await withCheckedContinuation { sentWaiters.append($0) }
-    }
-
-    func push(_ line: String) { enqueue(Data(line.utf8)) }
-    func reply(to request: RecordedRequest, result: String) { push(#"{"id":"\#(request.id)","result":\#(result)}"#) }
-    func finish() { isClosed = true; enqueue(nil) }
-
-    func fail(_ error: any Error) {
-        guard let entry = readWaiters.first else {
-            pendingReadError = error
-            return
-        }
-        readWaiters.removeValue(forKey: entry.key)
-        entry.value.resume(throwing: error)
-    }
-
-    private func enqueue(_ line: Data?) {
-        guard let entry = readWaiters.first else { inbound.append(line); return }
-        readWaiters.removeValue(forKey: entry.key)
-        entry.value.resume(returning: line)
-    }
-
-    private func cancelRead(_ id: UUID) {
-        guard let waiter = readWaiters.removeValue(forKey: id) else { return }
-        waiter.resume(throwing: CancellationError())
-    }
-}
-
-private struct ImmediateSleeper: Sleeper {
-    func sleep(for duration: Duration) async throws { try Task.checkCancellation() }
-}
-
-private actor ControlledSleeper: Sleeper {
-    private var waits: [(UUID, CheckedContinuation<Void, any Error>)] = []
-
-    func sleep(for duration: Duration) async throws {
-        let id = UUID()
-        try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            try await withCheckedThrowingContinuation { waits.append((id, $0)) }
-        } onCancel: {
-            Task { await self.cancel(id) }
-        }
-    }
-
-    func releaseFirst() async {
-        while waits.isEmpty { await Task.yield() }
-        waits.removeFirst().1.resume()
-    }
-
-    private func cancel(_ id: UUID) {
-        guard let index = waits.firstIndex(where: { $0.0 == id }) else { return }
-        waits.remove(at: index).1.resume(throwing: CancellationError())
-    }
-}
-
-private func completeMetadata(
-    factory: FakeHerdrConnectionFactory,
-    startIndex: Int,
-    workspaces: String = #"{"type":"workspace_list","workspaces":[]}"#,
-    tabs: String = #"{"type":"tab_list","tabs":[]}"#
-) async {
-    let firstConnection = await factory.connection(at: startIndex)
-    let firstRequest = await firstConnection.nextSent()
-    let secondConnection = await factory.connection(at: startIndex + 1)
-    let secondRequest = await secondConnection.nextSent()
-    assert(Set([firstRequest.method, secondRequest.method]) == ["workspace.list", "tab.list"])
-    await replyToMetadata(
-        connection: firstConnection,
-        request: firstRequest,
-        workspaces: workspaces,
-        tabs: tabs
-    )
-    await replyToMetadata(
-        connection: secondConnection,
-        request: secondRequest,
-        workspaces: workspaces,
-        tabs: tabs
-    )
-}
-
-private func replyToMetadata(
-    connection: FakeHerdrConnection,
-    request: RecordedRequest,
-    workspaces: String = #"{"type":"workspace_list","workspaces":[]}"#,
-    tabs: String = #"{"type":"tab_list","tabs":[]}"#
-) async {
-    switch request.method {
-    case "workspace.list": await connection.reply(to: request, result: workspaces)
-    case "tab.list": await connection.reply(to: request, result: tabs)
-    default: assertionFailure("Unexpected metadata request: \(request.method)")
-    }
-}
-
-private func clientSnapshot(_ panes: [PaneInfo]) -> PresentationSnapshot {
-    PresentationSnapshot(panes: panes, workspaces: [], tabs: [])
-}
-
-private func pane(_ id: String) -> PaneInfo {
-    PaneInfo(paneID: id, terminalID: "terminal", workspaceID: "workspace", tabID: "tab", focused: false, label: nil, agent: nil, title: nil, displayAgent: nil, agentStatus: .working, revision: 1)
-}
-
-private func paneJSON(_ id: String) -> String {
-    #"{"pane_id":"\#(id)","terminal_id":"terminal","workspace_id":"workspace","tab_id":"tab","focused":false,"agent_status":"working","revision":1}"#
-}
-
-private func paneListResult(ids: [String]) -> String {
-    #"{"type":"pane_list","panes":[\#(ids.map(paneJSON).joined(separator: ","))]}"#
-}
-
-private func paneFocusResult(id: String) -> String {
-    #"{"type":"pane_info","pane":\#(paneJSON(id))}"#
-}
-
-private func waitUntil(_ condition: @escaping @Sendable () async -> Bool) async {
-    while !(await condition()) { await Task.yield() }
-}
-
-private extension AsyncStream<HerdrClientEvent> {
-    func next() async -> HerdrClientEvent? {
-        var iterator = makeAsyncIterator()
-        return await iterator.next()
     }
 }
