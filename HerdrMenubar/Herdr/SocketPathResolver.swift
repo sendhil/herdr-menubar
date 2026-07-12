@@ -26,7 +26,7 @@ struct SocketPathResolver: SocketPathResolving {
             configDirectory = homeDirectory.appending(path: ".config", directoryHint: .isDirectory)
         }
         let root = configDirectory.appending(path: "herdr", directoryHint: .isDirectory)
-        if let session = environment["HERDR_SESSION"], !session.isEmpty {
+        if let session = environment["HERDR_SESSION"], !session.isEmpty, session != "default" {
             return root.appending(path: "sessions/\(session)/herdr.sock")
         }
         return root.appending(path: "herdr.sock")

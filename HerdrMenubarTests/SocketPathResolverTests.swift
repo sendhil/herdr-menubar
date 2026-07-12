@@ -57,6 +57,33 @@ final class SocketPathResolverTests: XCTestCase {
         XCTAssertEqual(result.path, "/Users/me/.config/herdr/herdr.sock")
     }
 
+    func testDefaultSessionAliasUsesPublicHerdrSocket() {
+        let result = resolver.resolve(
+            environment: ["HERDR_SESSION": "default"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(result.path, "/Users/me/.config/herdr/herdr.sock")
+    }
+
+    func testDefaultSessionAliasUsesXDGPublicHerdrSocket() {
+        let result = resolver.resolve(
+            environment: ["XDG_CONFIG_HOME": "/custom/config", "HERDR_SESSION": "default"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(result.path, "/custom/config/herdr/herdr.sock")
+    }
+
+    func testExplicitSocketPathTakesPrecedenceOverDefaultSessionAlias() {
+        let result = resolver.resolve(
+            environment: ["HERDR_SOCKET_PATH": "/tmp/custom.sock", "HERDR_SESSION": "default"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(result.path, "/tmp/custom.sock")
+    }
+
     func testEmptyOverridesAreIgnored() {
         let result = resolver.resolve(
             environment: ["HERDR_SOCKET_PATH": "", "HERDR_SESSION": ""],
