@@ -36,10 +36,34 @@ Selecting a row sends `pane.focus` to Herdr. For completed work, Herdr owns the 
 
 - A current macOS release supported by the project deployment target.
 - A running Herdr server or session.
-- Xcode 26 or newer for local development.
+- Xcode 26 or newer, including the macOS SDK and command-line tools. After installing Xcode, select it in **Xcode > Settings > Locations**, or with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
 - One of the recognized terminal applications for click-through activation. WezTerm is the default.
 
-The initial version is intended for local Xcode builds. Signing, notarization, packaged releases, and Homebrew distribution are not currently included.
+No Homebrew packages or third-party build tools are required. Signing, notarization, packaged releases, and Homebrew distribution are not currently included.
+
+## Quick Install
+
+Clone the repository, then run this command from the checkout:
+
+```bash
+./scripts/install.sh
+```
+
+The script makes a Release build using repository-local derived data under `.build/`, installs it as `~/Applications/Herdr Menubar.app`, safely replaces a previous installation, and launches it. It can be invoked from any working directory. To install without launching, use `./scripts/install.sh --no-launch`; `--install-dir DIR` selects a different applications directory.
+
+To update or reinstall, pull the desired source revision and run `./scripts/install.sh` again. The script stops the running app before replacing it, then relaunches the new build.
+
+To uninstall:
+
+```bash
+./scripts/uninstall.sh
+```
+
+This stops Herdr Menubar and removes `~/Applications/Herdr Menubar.app`. Preferences and the Launch at Login system registration are managed separately by macOS; disable **Launch at Login** from the app menu before uninstalling if it was enabled.
+
+Installation does not automatically enable Launch at Login. Use **Launch at Login** in the Herdr Menubar menu if desired.
+
+This is a local, unsigned Xcode build rather than a signed and notarized release. macOS Gatekeeper may ask you to confirm opening it. Signing and notarized release distribution remain future work; do not bypass organizational security policy to run the app.
 
 ## Build and run
 
@@ -181,8 +205,8 @@ Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynam
 
 ## Current limitations
 
-- Local Xcode build workflow only.
-- No signed or notarized release artifacts.
+- Local source build and install workflow only.
+- No signed or notarized release artifacts; distributable releases remain future work.
 - No automatic updater or package-manager installation.
 - Menu presentation intentionally uses native macOS menu behavior rather than a custom dashboard or popover.
 - Terminal activation uses a user-selected terminal because Herdr's public API does not currently identify the macOS application hosting an attached client.
