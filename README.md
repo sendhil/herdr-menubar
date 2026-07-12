@@ -63,7 +63,7 @@ This stops Herdr Menubar and removes `~/Applications/Herdr Menubar.app`. Prefere
 
 Installation does not automatically enable Launch at Login. Use **Launch at Login** in the Herdr Menubar menu if desired.
 
-This is a local, unsigned Xcode build rather than a signed and notarized release. macOS Gatekeeper may ask you to confirm opening it. Signing and notarized release distribution remain future work; do not bypass organizational security policy to run the app.
+This local Release build is ad-hoc signed by Xcode; it is not Developer ID signed or notarized. macOS Gatekeeper may ask you to confirm opening it. Developer ID signing and notarized release distribution remain future work; do not bypass organizational security policy to run the app.
 
 ## Build and run
 
@@ -206,7 +206,7 @@ Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynam
 ## Current limitations
 
 - Local source build and install workflow only.
-- No signed or notarized release artifacts; distributable releases remain future work.
+- No Developer ID signed or notarized release artifacts; local builds are ad-hoc signed and distributable releases remain future work.
 - No automatic updater or package-manager installation.
 - Menu presentation intentionally uses native macOS menu behavior rather than a custom dashboard or popover.
 - Terminal activation uses a user-selected terminal because Herdr's public API does not currently identify the macOS application hosting an attached client.
