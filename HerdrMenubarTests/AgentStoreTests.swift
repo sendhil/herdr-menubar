@@ -6,7 +6,7 @@ final class AgentStoreTests: XCTestCase {
     func testGroupsAndDeterministicallySortsAgentRows() {
         let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
 
-        store.apply(snapshot: [
+        store.apply(snapshot: snapshot([
             pane("done-z", .done, title: "Zulu"),
             pane("blocked-z", .blocked, title: "zulu"),
             pane("blocked-a2", .blocked, title: "Alpha"),
@@ -15,7 +15,7 @@ final class AgentStoreTests: XCTestCase {
             pane("working-a", .working, title: "alpha"),
             pane("idle", .idle),
             pane("unknown", .unknown)
-        ])
+        ]))
 
         XCTAssertEqual(store.attentionItems.map(\.paneID), ["blocked-a1", "blocked-a2", "blocked-z", "done-z"])
         XCTAssertEqual(store.attentionItems.map(\.status), [.blocked, .blocked, .blocked, .done])
@@ -23,11 +23,59 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(store.attentionCount, 4)
     }
 
+    func testJoinedLabelsMatchHerdrForSingleAndMultiTabWorkspaces() {
+        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
+        let panes = [
+            pane("single", .done, workspaceID: "dotfiles", tabID: "dotfiles:tab"),
+            pane("multi", .done, workspaceID: "menubar", tabID: "menubar:server")
+        ]
+        let workspaces = [
+            workspace("dotfiles", label: "dotfiles-mac", tabCount: 1),
+            workspace("menubar", label: "Herdr Menubar", tabCount: 2)
+        ]
+        let tabs = [
+            tab("dotfiles:tab", workspaceID: "dotfiles", label: "shell"),
+            tab("menubar:server", workspaceID: "menubar", label: "server")
+        ]
+
+        store.apply(snapshot: PresentationSnapshot(panes: panes, workspaces: workspaces, tabs: tabs))
+
+        XCTAssertEqual(store.attentionItems.map(\.displayLabel), ["dotfiles-mac", "Herdr Menubar · server"])
+        XCTAssertEqual(store.attentionItems.map(\.secondaryLabel), ["done · Claude", "done · Claude"])
+    }
+
+    func testJoinedLabelFallsBackThroughPaneTitleLabelAndID() {
+        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
+        let panes = [
+            pane("title", .done, title: "Pane title", workspaceID: "missing", tabID: "missing:tab"),
+            pane("label", .done, label: "Pane label", workspaceID: "missing", tabID: "missing:tab"),
+            pane("final-id", .done, workspaceID: "missing", tabID: "missing:tab")
+        ]
+
+        store.apply(snapshot: PresentationSnapshot(panes: panes, workspaces: [], tabs: []))
+
+        XCTAssertEqual(store.attentionItems.map(\.displayLabel), ["final-id", "Pane label", "Pane title"])
+    }
+
+    func testDistinctSnapshotTabsMakeWorkspaceMultiTabWhenCountIsStale() {
+        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
+        let panes = [pane("server", .working, workspaceID: "w", tabID: "t2")]
+        let snapshot = PresentationSnapshot(
+            panes: panes,
+            workspaces: [workspace("w", label: "Herdr Menubar", tabCount: 1)],
+            tabs: [tab("t1", workspaceID: "w", label: "shell"), tab("t2", workspaceID: "w", label: "server")]
+        )
+
+        store.apply(snapshot: snapshot)
+
+        XCTAssertEqual(store.workingItems.first?.displayLabel, "Herdr Menubar · server")
+    }
+
     func testDisconnectedEventClearsVisibleRowsAndRetryDelegatesToClient() async {
         let client = FakeAgentClient()
         let store = AgentStore(client: client, terminalActivator: RecordingActivator())
         await store.start()
-        await client.send(.connected([pane("blocked", .blocked)]))
+        await client.send(.connected(snapshot([pane("blocked", .blocked)])))
         await eventually { store.attentionCount == 1 }
 
         await client.send(.disconnected("socket unavailable"))
@@ -46,10 +94,10 @@ final class AgentStoreTests: XCTestCase {
         let client = FakeAgentClient()
         let store = AgentStore(client: client, terminalActivator: RecordingActivator())
         await store.start()
-        await client.send(.connected([
+        await client.send(.connected(snapshot([
             pane("blocked", .blocked),
             pane("working", .working)
-        ]))
+        ])))
         await eventually { store.attentionCount == 1 && store.workingItems.count == 1 }
 
         await store.stop()
@@ -68,7 +116,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await store.stop()
 
-        await client.send(.connected([pane("stale", .blocked)]))
+        await client.send(.connected(snapshot([pane("stale", .blocked)])))
         for _ in 0..<10 { await Task.yield() }
 
         XCTAssertEqual(store.connectionState, .disconnected("Disconnected from Herdr"))
@@ -257,18 +305,54 @@ private final class RecordingActivator: TerminalActivating {
     }
 }
 
-private func pane(_ id: String, _ status: AgentStatus, title: String? = nil) -> PaneInfo {
+private func snapshot(_ panes: [PaneInfo]) -> PresentationSnapshot {
+    PresentationSnapshot(panes: panes, workspaces: [], tabs: [])
+}
+
+private func pane(
+    _ id: String,
+    _ status: AgentStatus,
+    title: String? = nil,
+    label: String? = nil,
+    workspaceID: String = "workspace",
+    tabID: String = "tab"
+) -> PaneInfo {
     PaneInfo(
         paneID: id,
         terminalID: "terminal-\(id)",
-        workspaceID: "workspace",
-        tabID: "tab",
+        workspaceID: workspaceID,
+        tabID: tabID,
         focused: false,
-        label: nil,
+        label: label,
         agent: "claude",
         title: title,
         displayAgent: "Claude",
         agentStatus: status,
         revision: 1
+    )
+}
+
+private func workspace(_ id: String, label: String, tabCount: Int) -> WorkspaceInfo {
+    WorkspaceInfo(
+        workspaceID: id,
+        number: 1,
+        label: label,
+        focused: false,
+        paneCount: 1,
+        tabCount: tabCount,
+        activeTabID: "\(id):tab",
+        agentStatus: .working
+    )
+}
+
+private func tab(_ id: String, workspaceID: String, label: String) -> TabInfo {
+    TabInfo(
+        tabID: id,
+        workspaceID: workspaceID,
+        number: 1,
+        label: label,
+        focused: false,
+        paneCount: 1,
+        agentStatus: .working
     )
 }

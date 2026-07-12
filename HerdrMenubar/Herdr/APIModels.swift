@@ -73,6 +73,64 @@ struct PaneFocusResult: Codable, Equatable, Sendable {
     let pane: PaneInfo
 }
 
+struct WorkspaceInfo: Codable, Equatable, Sendable {
+    let workspaceID: String
+    let number: Int
+    let label: String
+    let focused: Bool
+    let paneCount: Int
+    let tabCount: Int
+    let activeTabID: String
+    let agentStatus: AgentStatus
+
+    private enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
+        case number
+        case label
+        case focused
+        case paneCount = "pane_count"
+        case tabCount = "tab_count"
+        case activeTabID = "active_tab_id"
+        case agentStatus = "agent_status"
+    }
+}
+
+struct WorkspaceListResult: Codable, Equatable, Sendable {
+    let type: String
+    let workspaces: [WorkspaceInfo]
+}
+
+struct TabInfo: Codable, Equatable, Sendable {
+    let tabID: String
+    let workspaceID: String
+    let number: Int
+    let label: String
+    let focused: Bool
+    let paneCount: Int
+    let agentStatus: AgentStatus
+
+    private enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+        case workspaceID = "workspace_id"
+        case number
+        case label
+        case focused
+        case paneCount = "pane_count"
+        case agentStatus = "agent_status"
+    }
+}
+
+struct TabListResult: Codable, Equatable, Sendable {
+    let type: String
+    let tabs: [TabInfo]
+}
+
+struct PresentationSnapshot: Equatable, Sendable {
+    let panes: [PaneInfo]
+    let workspaces: [WorkspaceInfo]
+    let tabs: [TabInfo]
+}
+
 struct EventEnvelope: Codable, Equatable, Sendable {
     let event: String
     let data: EventData
@@ -116,5 +174,17 @@ struct PaneTargetParams: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
+    }
+}
+
+struct TabListParams: Codable, Equatable, Sendable {
+    let workspaceID: String?
+
+    init(workspaceID: String? = nil) {
+        self.workspaceID = workspaceID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
     }
 }

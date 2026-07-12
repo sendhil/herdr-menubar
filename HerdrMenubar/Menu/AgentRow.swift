@@ -17,7 +17,7 @@ struct AgentRow: View {
                 Image(systemName: statusImage)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.displayLabel)
-                    Text("\(item.agentLabel) · \(statusLabel)")
+                    Text(item.secondaryLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -35,13 +35,4 @@ struct AgentRow: View {
         }
     }
 
-    private var statusLabel: String {
-        switch item.status {
-        case .blocked: "Blocked"
-        case .done: "Done"
-        case .working: "Working"
-        case .idle: "Idle"
-        case .unknown: "Unknown"
-        }
-    }
 }

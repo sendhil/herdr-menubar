@@ -26,11 +26,28 @@ struct AgentMenuItem: Identifiable, Equatable, Sendable {
 
     var id: String { paneID }
 
-    init(pane: PaneInfo) {
+    init(
+        pane: PaneInfo,
+        workspace: WorkspaceInfo? = nil,
+        tab: TabInfo? = nil,
+        workspaceIsMultiTab: Bool = false
+    ) {
         paneID = pane.paneID
-        displayLabel = pane.displayLabel
+        if let workspace, !workspace.label.isEmpty {
+            if workspaceIsMultiTab, let tab, !tab.label.isEmpty {
+                displayLabel = "\(workspace.label) · \(tab.label)"
+            } else {
+                displayLabel = workspace.label
+            }
+        } else {
+            displayLabel = pane.displayLabel
+        }
         agentLabel = pane.agentLabel
         status = pane.agentStatus
+    }
+
+    var secondaryLabel: String {
+        "\(status.rawValue) · \(agentLabel)"
     }
 
     static func attentionOrder(_ lhs: Self, _ rhs: Self) -> Bool {
@@ -127,27 +144,46 @@ final class AgentStore {
         await client.refresh()
     }
 
-    func apply(snapshot panes: [PaneInfo]) {
-        attentionItems = panes
-            .filter { $0.agentStatus == .blocked || $0.agentStatus == .done }
-            .map(AgentMenuItem.init)
+    func apply(snapshot: PresentationSnapshot) {
+        let workspacesByID = Dictionary(uniqueKeysWithValues: snapshot.workspaces.map { ($0.workspaceID, $0) })
+        let tabsByID = Dictionary(uniqueKeysWithValues: snapshot.tabs.map { ($0.tabID, $0) })
+        var tabIDsByWorkspace: [String: Set<String>] = [:]
+        for tab in snapshot.tabs {
+            tabIDsByWorkspace[tab.workspaceID, default: []].insert(tab.tabID)
+        }
+        for pane in snapshot.panes {
+            tabIDsByWorkspace[pane.workspaceID, default: []].insert(pane.tabID)
+        }
+
+        let items = snapshot.panes.map { pane in
+            let workspace = workspacesByID[pane.workspaceID]
+            let isMultiTab = (workspace?.tabCount ?? 0) > 1
+                || (tabIDsByWorkspace[pane.workspaceID]?.count ?? 0) > 1
+            return AgentMenuItem(
+                pane: pane,
+                workspace: workspace,
+                tab: tabsByID[pane.tabID],
+                workspaceIsMultiTab: isMultiTab
+            )
+        }
+        attentionItems = items
+            .filter { $0.status == .blocked || $0.status == .done }
             .sorted(by: AgentMenuItem.attentionOrder)
-        workingItems = panes
-            .filter { $0.agentStatus == .working }
-            .map(AgentMenuItem.init)
+        workingItems = items
+            .filter { $0.status == .working }
             .sorted(by: AgentMenuItem.labelOrder)
     }
 
     private func consume(_ event: HerdrClientEvent, generation: UUID) {
         guard isRunning, eventGeneration == generation else { return }
         switch event {
-        case .connected(let panes):
+        case .connected(let snapshot):
             connectionState = .connected
             transientError = nil
-            apply(snapshot: panes)
-        case .snapshot(let panes):
+            apply(snapshot: snapshot)
+        case .snapshot(let snapshot):
             guard connectionState == .connected else { return }
-            apply(snapshot: panes)
+            apply(snapshot: snapshot)
         case .disconnected(let message):
             connectionState = .disconnected(message)
             attentionItems = []

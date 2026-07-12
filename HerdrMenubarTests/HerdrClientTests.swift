@@ -45,8 +45,109 @@ final class HerdrClientTests: XCTestCase {
         let settledPost = await factory.connection(at: 4)
         let settledPostList = await settledPost.nextSent()
         await settledPost.reply(to: settledPostList, result: paneListResult(ids: ["p1", "p2", "p3"]))
+        await completeMetadata(factory: factory, startIndex: 5)
         let connected = await events.next()
-        XCTAssertEqual(connected, .connected([pane("p1"), pane("p2"), pane("p3")]))
+        XCTAssertEqual(connected, .connected(clientSnapshot([pane("p1"), pane("p2"), pane("p3")])))
+        await client.stop()
+    }
+
+    func testConnectedSnapshotCarriesMetadataWithExactWireRequests() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+
+        let initial = await factory.connection(at: 0)
+        let initialRequest = await initial.nextSent()
+        await initial.reply(to: initialRequest, result: paneListResult(ids: ["pane"]))
+        let subscription = await factory.connection(at: 1)
+        let subscribe = await subscription.nextSent()
+        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 2)
+        let paneRequest = await authoritative.nextSent()
+        await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
+
+        let workspaceConnection = await factory.connection(at: 3)
+        let workspaceRequest = await workspaceConnection.nextSent()
+        XCTAssertEqual(workspaceRequest.method, "workspace.list")
+        XCTAssertEqual(try workspaceRequest.paramsObject(), [:] as NSDictionary)
+        let workspaceResult = #"""
+        {"type":"workspace_list","workspaces":[{
+          "workspace_id":"workspace","number":1,"label":"Herdr Menubar","focused":true,
+          "pane_count":1,"tab_count":1,"active_tab_id":"tab","agent_status":"working"
+        }]}
+        """#
+        await workspaceConnection.reply(to: workspaceRequest, result: workspaceResult)
+
+        let tabConnection = await factory.connection(at: 4)
+        let tabRequest = await tabConnection.nextSent()
+        XCTAssertEqual(tabRequest.method, "tab.list")
+        XCTAssertEqual(try tabRequest.paramsObject(), [:] as NSDictionary)
+        let tabResult = #"{"type":"tab_list","tabs":[{"tab_id":"tab","workspace_id":"workspace","number":1,"label":"server","focused":true,"pane_count":1,"agent_status":"working"}]}"#
+        await tabConnection.reply(to: tabRequest, result: tabResult)
+
+        guard case .connected(let snapshot) = await events.next() else {
+            return XCTFail("Expected connected presentation snapshot")
+        }
+        XCTAssertEqual(snapshot.panes, [pane("pane")])
+        XCTAssertEqual(snapshot.workspaces.map(\.label), ["Herdr Menubar"])
+        XCTAssertEqual(snapshot.tabs.map(\.label), ["server"])
+        await client.stop()
+    }
+
+    func testMetadataAPIErrorsPublishPaneSnapshotUsingDesignedFallback() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+
+        let initial = await factory.connection(at: 0)
+        let initialRequest = await initial.nextSent()
+        await initial.reply(to: initialRequest, result: paneListResult(ids: ["pane"]))
+        let subscription = await factory.connection(at: 1)
+        let subscribe = await subscription.nextSent()
+        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 2)
+        let paneRequest = await authoritative.nextSent()
+        await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
+        for index in 3 ... 4 {
+            let connection = await factory.connection(at: index)
+            let request = await connection.nextSent()
+            await connection.push(
+                #"{"id":"\#(request.id)","error":{"code":"unavailable","message":"metadata unavailable"}}"#
+            )
+        }
+
+        let connected = await events.next()
+        XCTAssertEqual(connected, .connected(clientSnapshot([pane("pane")])))
+        await client.stop()
+    }
+
+    func testMetadataProtocolFailureDisconnectsInsteadOfPublishingFallback() async throws {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let events = await client.events()
+        await client.start()
+
+        let initial = await factory.connection(at: 0)
+        let initialRequest = await initial.nextSent()
+        await initial.reply(to: initialRequest, result: paneListResult(ids: ["pane"]))
+        let subscription = await factory.connection(at: 1)
+        let subscribe = await subscription.nextSent()
+        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
+        let authoritative = await factory.connection(at: 2)
+        let paneRequest = await authoritative.nextSent()
+        await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
+        let workspaceConnection = await factory.connection(at: 3)
+        let workspaceRequest = await workspaceConnection.nextSent()
+        await workspaceConnection.reply(
+            to: workspaceRequest,
+            result: #"{"type":"wrong_type","workspaces":[]}"#
+        )
+
+        guard case .disconnected = await events.next() else {
+            return XCTFail("Expected metadata protocol failure to disconnect")
+        }
         await client.stop()
     }
 
@@ -62,25 +163,26 @@ final class HerdrClientTests: XCTestCase {
         await oldSubscription.push(#"{"event":"pane.moved","data":{}}"#)
         await oldSubscription.push(#"{"event":"pane.closed","data":{}}"#)
 
-        let discovery = await factory.connection(at: 3)
+        let discovery = await factory.connection(at: 5)
         let discoveryRequest = await discovery.nextSent()
         await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["new", "old"]))
-        let replacement = await factory.connection(at: 4)
+        let replacement = await factory.connection(at: 6)
         let replacementSubscribe = await replacement.nextSent()
         XCTAssertEqual(replacementSubscribe.subscriptionPaneIDs, ["new", "old"])
         await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
 
-        let postSubscription = await factory.connection(at: 5)
+        let postSubscription = await factory.connection(at: 7)
         let postRequest = await postSubscription.nextSent()
         let oldClosedBeforeAuthoritativeSnapshot = await oldSubscription.isClosed
         XCTAssertFalse(oldClosedBeforeAuthoritativeSnapshot)
         await postSubscription.reply(to: postRequest, result: paneListResult(ids: ["new", "old"]))
+        await completeMetadata(factory: factory, startIndex: 8)
         let replacementSnapshot = await events.next()
-        XCTAssertEqual(replacementSnapshot, .snapshot([pane("new"), pane("old")]))
+        XCTAssertEqual(replacementSnapshot, .snapshot(clientSnapshot([pane("new"), pane("old")])))
         await waitUntil { await oldSubscription.isClosed }
         try await Task.sleep(for: .milliseconds(30))
         let rebuildConnectionCount = await factory.connectionCount
-        XCTAssertEqual(rebuildConnectionCount, 6, "membership burst must produce one rebuild")
+        XCTAssertEqual(rebuildConnectionCount, 10, "membership burst must produce one rebuild")
         await client.stop()
     }
 
@@ -93,19 +195,19 @@ final class HerdrClientTests: XCTestCase {
         _ = await events.next()
 
         await oldSubscription.push(#"{"event":"pane.closed","data":{}}"#)
-        let discovery = await factory.connection(at: 3)
+        let discovery = await factory.connection(at: 5)
         let discoveryRequest = await discovery.nextSent()
         await discovery.reply(to: discoveryRequest, result: paneListResult(ids: ["old", "removed"]))
 
-        let staleReplacement = await factory.connection(at: 4)
+        let staleReplacement = await factory.connection(at: 6)
         let staleSubscribe = await staleReplacement.nextSent()
         XCTAssertEqual(staleSubscribe.subscriptionPaneIDs, ["old", "removed"])
         await staleReplacement.reply(to: staleSubscribe, result: #"{"type":"subscription_started"}"#)
-        let stalePost = await factory.connection(at: 5)
+        let stalePost = await factory.connection(at: 7)
         let stalePostRequest = await stalePost.nextSent()
         await stalePost.reply(to: stalePostRequest, result: paneListResult(ids: ["old"]))
 
-        let replacement = await factory.connection(at: 6)
+        let replacement = await factory.connection(at: 8)
         let replacementSubscribe = await replacement.nextSent()
         XCTAssertEqual(replacementSubscribe.subscriptionPaneIDs, ["old"])
         let staleReplacementClosed = await staleReplacement.isClosed
@@ -113,12 +215,13 @@ final class HerdrClientTests: XCTestCase {
         XCTAssertTrue(staleReplacementClosed)
         XCTAssertFalse(oldSubscriptionClosed)
         await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
-        let settledPost = await factory.connection(at: 7)
+        let settledPost = await factory.connection(at: 9)
         let settledPostRequest = await settledPost.nextSent()
         await settledPost.reply(to: settledPostRequest, result: paneListResult(ids: ["old"]))
+        await completeMetadata(factory: factory, startIndex: 10)
 
         let replacementSnapshot = await events.next()
-        XCTAssertEqual(replacementSnapshot, .snapshot([pane("old")]))
+        XCTAssertEqual(replacementSnapshot, .snapshot(clientSnapshot([pane("old")])))
         await waitUntil { await oldSubscription.isClosed }
         await client.stop()
     }
@@ -132,21 +235,23 @@ final class HerdrClientTests: XCTestCase {
         _ = await events.next()
 
         await subscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"old"}}"#)
-        let firstConnection = await factory.connection(at: 3)
+        let firstConnection = await factory.connection(at: 5)
         let first = await firstConnection.nextSent()
         await subscription.push(#"{"event":"pane.focused","data":{}}"#)
         await subscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"old"}}"#)
         await firstConnection.reply(to: first, result: paneListResult(ids: ["one"]))
+        await completeMetadata(factory: factory, startIndex: 6)
         let firstEvent = await events.next()
-        XCTAssertEqual(firstEvent, .snapshot([pane("one")]))
-        let secondConnection = await factory.connection(at: 4)
+        XCTAssertEqual(firstEvent, .snapshot(clientSnapshot([pane("one")])))
+        let secondConnection = await factory.connection(at: 8)
         let second = await secondConnection.nextSent()
         await secondConnection.reply(to: second, result: paneListResult(ids: ["two"]))
+        await completeMetadata(factory: factory, startIndex: 9)
         let secondEvent = await events.next()
-        XCTAssertEqual(secondEvent, .snapshot([pane("two")]))
+        XCTAssertEqual(secondEvent, .snapshot(clientSnapshot([pane("two")])))
         try await Task.sleep(for: .milliseconds(20))
         let coalescedConnectionCount = await factory.connectionCount
-        XCTAssertEqual(coalescedConnectionCount, 5)
+        XCTAssertEqual(coalescedConnectionCount, 11)
         await client.stop()
     }
 
@@ -166,7 +271,7 @@ final class HerdrClientTests: XCTestCase {
         let events = await client.events()
         _ = await completeBootstrap(factory: factory, startIndex: 1, discovered: ["new"], authoritative: ["new"])
         let newConnected = await events.next()
-        XCTAssertEqual(newConnected, .connected([pane("new")]))
+        XCTAssertEqual(newConnected, .connected(clientSnapshot([pane("new")])))
         await client.stop()
     }
 
@@ -189,10 +294,11 @@ final class HerdrClientTests: XCTestCase {
         let authoritative = await factory.connection(at: 3)
         let list = await authoritative.nextSent()
         await authoritative.reply(to: list, result: paneListResult(ids: ["new"]))
+        await completeMetadata(factory: factory, startIndex: 4)
         let newConnected = await events.next()
-        XCTAssertEqual(newConnected, .connected([pane("new")]))
+        XCTAssertEqual(newConnected, .connected(clientSnapshot([pane("new")])))
         let retryConnectionCount = await factory.connectionCount
-        XCTAssertEqual(retryConnectionCount, 4)
+        XCTAssertEqual(retryConnectionCount, 6)
         await client.stop()
     }
 
@@ -210,23 +316,24 @@ final class HerdrClientTests: XCTestCase {
         let oldSubscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
         _ = await events.next()
         await oldSubscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"old"}}"#)
-        let staleRefresh = await factory.connection(at: 3)
+        let staleRefresh = await factory.connection(at: 5)
         let staleRequest = await staleRefresh.nextSent()
 
         await oldSubscription.finish()
         guard case .disconnected = await events.next() else { return XCTFail("Expected disconnect") }
         await sleeper.releaseFirst()
-        let newSubscription = await completeBootstrap(factory: factory, startIndex: 4, discovered: ["new"], authoritative: ["new"])
+        let newSubscription = await completeBootstrap(factory: factory, startIndex: 6, discovered: ["new"], authoritative: ["new"])
         let newConnected = await events.next()
-        XCTAssertEqual(newConnected, .connected([pane("new")]))
+        XCTAssertEqual(newConnected, .connected(clientSnapshot([pane("new")])))
         await staleRefresh.reply(to: staleRequest, result: paneListResult(ids: ["stale"]))
 
         await newSubscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"new"}}"#)
-        let newRefresh = await factory.connection(at: 7)
+        let newRefresh = await factory.connection(at: 11)
         let newRequest = await newRefresh.nextSent()
         await newRefresh.reply(to: newRequest, result: paneListResult(ids: ["fresh"]))
+        await completeMetadata(factory: factory, startIndex: 12)
         let freshEvent = await events.next()
-        XCTAssertEqual(freshEvent, .snapshot([pane("fresh")]))
+        XCTAssertEqual(freshEvent, .snapshot(clientSnapshot([pane("fresh")])))
         await client.stop()
     }
 
@@ -259,7 +366,7 @@ final class HerdrClientTests: XCTestCase {
         _ = await completeBootstrap(factory: factory, discovered: [], authoritative: [])
 
         let focusTask = Task { try await client.focus(paneID: "focused") }
-        let focusConnection = await factory.connection(at: 3)
+        let focusConnection = await factory.connection(at: 5)
         let focus = await focusConnection.nextSent()
         XCTAssertEqual(focus.paneID, "focused")
         await focusConnection.reply(to: focus, result: paneFocusResult(id: "focused"))
@@ -267,7 +374,7 @@ final class HerdrClientTests: XCTestCase {
         XCTAssertEqual(focusedPane, pane("focused"))
 
         let errorTask = Task { try await client.focus(paneID: "missing") }
-        let errorConnection = await factory.connection(at: 4)
+        let errorConnection = await factory.connection(at: 6)
         let request = await errorConnection.nextSent()
         await errorConnection.push(#"{"id":"\#(request.id)","error":{"code":"not_found","message":"Missing pane"}}"#)
         do {
@@ -289,11 +396,12 @@ final class HerdrClientTests: XCTestCase {
         await subscription.push("not json")
         await subscription.push(#"{"event":"future.event","data":{}}"#)
         await subscription.push(#"{"event":"pane.focused","data":{}}"#)
-        let refresh = await factory.connection(at: 3)
+        let refresh = await factory.connection(at: 5)
         let request = await refresh.nextSent()
         await refresh.reply(to: request, result: paneListResult(ids: ["live"]))
+        await completeMetadata(factory: factory, startIndex: 6)
         let liveEvent = await events.next()
-        XCTAssertEqual(liveEvent, .snapshot([pane("live")]))
+        XCTAssertEqual(liveEvent, .snapshot(clientSnapshot([pane("live")])))
         await client.stop()
     }
 
@@ -327,6 +435,7 @@ final class HerdrClientTests: XCTestCase {
         let post = await factory.connection(at: startIndex + 2)
         let postRequest = await post.nextSent()
         await post.reply(to: postRequest, result: paneListResult(ids: authoritative))
+        await completeMetadata(factory: factory, startIndex: startIndex + 3)
         return subscription
     }
 }
@@ -473,6 +582,26 @@ private actor ControlledSleeper: Sleeper {
         guard let index = waits.firstIndex(where: { $0.0 == id }) else { return }
         waits.remove(at: index).1.resume(throwing: CancellationError())
     }
+}
+
+private func completeMetadata(
+    factory: FakeHerdrConnectionFactory,
+    startIndex: Int,
+    workspaces: String = #"{"type":"workspace_list","workspaces":[]}"#,
+    tabs: String = #"{"type":"tab_list","tabs":[]}"#
+) async {
+    let workspaceConnection = await factory.connection(at: startIndex)
+    let workspaceRequest = await workspaceConnection.nextSent()
+    assert(workspaceRequest.method == "workspace.list")
+    await workspaceConnection.reply(to: workspaceRequest, result: workspaces)
+    let tabConnection = await factory.connection(at: startIndex + 1)
+    let tabRequest = await tabConnection.nextSent()
+    assert(tabRequest.method == "tab.list")
+    await tabConnection.reply(to: tabRequest, result: tabs)
+}
+
+private func clientSnapshot(_ panes: [PaneInfo]) -> PresentationSnapshot {
+    PresentationSnapshot(panes: panes, workspaces: [], tabs: [])
 }
 
 private func pane(_ id: String) -> PaneInfo {

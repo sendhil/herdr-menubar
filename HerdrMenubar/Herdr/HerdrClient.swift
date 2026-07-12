@@ -2,8 +2,8 @@ import Foundation
 import OSLog
 
 enum HerdrClientEvent: Equatable, Sendable {
-    case connected([PaneInfo])
-    case snapshot([PaneInfo])
+    case connected(PresentationSnapshot)
+    case snapshot(PresentationSnapshot)
     case disconnected(String)
 }
 
@@ -243,10 +243,12 @@ actor HerdrClient {
                 let oldConnection = subscriptionConnection
                 subscriptionConnection = candidate.connection
                 subscriptionToken = candidate.token
+                let presentation = try await presentationSnapshot(panes: snapshot)
+                try ensureOwnership(generation)
                 connected = true
                 disconnectedPublished = false
                 AppLog.synchronization.info("Connected to Herdr")
-                publish(.connected(snapshot))
+                publish(.connected(presentation))
                 await oldConnection?.close()
                 return
             } catch {
@@ -359,10 +361,12 @@ private extension HerdrClient {
                         reconciliationAttempt += 1
                         continue
                     }
+                    let presentation = try await presentationSnapshot(panes: snapshot)
+                    try ensureOwnership(generation, rebuildToken: token)
                     let oldConnection = subscriptionConnection
                     subscriptionConnection = candidate.connection
                     subscriptionToken = candidate.token
-                    publish(.snapshot(snapshot))
+                    publish(.snapshot(presentation))
                     await oldConnection?.close()
                     return
                 } catch {
@@ -408,7 +412,8 @@ private extension HerdrClient {
             guard owns(generation), refreshToken == token, !Task.isCancelled else { return }
             refreshRequested = false
             do {
-                let snapshot = try await paneList()
+                let panes = try await paneList()
+                let snapshot = try await presentationSnapshot(panes: panes)
                 guard owns(generation), connected, refreshToken == token, !Task.isCancelled else { return }
                 publish(.snapshot(snapshot))
             } catch is CancellationError {
@@ -432,6 +437,55 @@ private extension HerdrClient {
             throw HerdrClientError.unexpectedResponseType(expected: "pane_list", actual: result.type)
         }
         return result.panes
+    }
+
+    private func presentationSnapshot(panes: [PaneInfo]) async throws -> PresentationSnapshot {
+        let workspaces = try await workspaceListWithFallback()
+        let tabs = try await tabListWithFallback()
+        return PresentationSnapshot(panes: panes, workspaces: workspaces, tabs: tabs)
+    }
+
+    private func workspaceListWithFallback() async throws -> [WorkspaceInfo] {
+        do {
+            let result: WorkspaceListResult = try await request(
+                method: "workspace.list", params: EmptyParams(), as: WorkspaceListResult.self
+            )
+            guard result.type == "workspace_list" else {
+                throw HerdrClientError.unexpectedResponseType(expected: "workspace_list", actual: result.type)
+            }
+            return result.workspaces
+        } catch {
+            guard metadataFailureAllowsFallback(error) else { throw error }
+            AppLog.synchronization.error("Herdr workspace metadata unavailable; using pane fallbacks")
+            return []
+        }
+    }
+
+    private func tabListWithFallback() async throws -> [TabInfo] {
+        do {
+            let result: TabListResult = try await request(
+                method: "tab.list", params: TabListParams(), as: TabListResult.self
+            )
+            guard result.type == "tab_list" else {
+                throw HerdrClientError.unexpectedResponseType(expected: "tab_list", actual: result.type)
+            }
+            return result.tabs
+        } catch {
+            guard metadataFailureAllowsFallback(error) else { throw error }
+            AppLog.synchronization.error("Herdr tab metadata unavailable; using pane fallbacks")
+            return []
+        }
+    }
+
+    private func metadataFailureAllowsFallback(_ error: any Error) -> Bool {
+        if error is CancellationError || error is DecodingError { return false }
+        guard let clientError = error as? HerdrClientError else { return true }
+        switch clientError {
+        case .timeout, .connectionClosed:
+            return true
+        case .responseIDMismatch, .malformedResponse, .unexpectedResponseType:
+            return false
+        }
     }
 
     private func request<Params, Result>(
