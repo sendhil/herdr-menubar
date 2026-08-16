@@ -4,6 +4,49 @@ import XCTest
 @testable import HerdrMenubar
 
 final class MultiSessionIntegrationTests: XCTestCase {
+    func testAttentionObserverBoundsMissingCompletionAndFinishReleasesPausedReconcile() async throws {
+        let observer = IntegrationObservingAttentionCoordinator(
+            wrapping: IntegrationAttentionCoordinator()
+        )
+        let start = ContinuousClock.now
+        do {
+            try await observer.waitForReconcileCompletion(
+                for: .named("missing"),
+                after: 0,
+                timeout: .milliseconds(20)
+            )
+            XCTFail("Expected a bounded missing-completion error")
+        } catch let error as IntegrationAttentionObserverError {
+            XCTAssertEqual(error, .timedOut(.reconcile))
+        }
+        XCTAssertLessThan(start.duration(to: .now), .seconds(1))
+
+        let session = SessionDescriptor(
+            id: .named("paused"),
+            socketURL: URL(fileURLWithPath: "/tmp/observer-paused.sock")
+        )
+        await observer.pauseNextReconcile(for: session.id)
+        let reconcile = Task {
+            await observer.reconcile(
+                session: session,
+                items: [],
+                policy: NotificationDeliveryPolicy(
+                    notificationsEnabled: true,
+                    soundEnabled: false
+                )
+            )
+        }
+        try await observer.waitUntilReconcileIsPaused(
+            for: session.id,
+            timeout: .seconds(1)
+        )
+
+        await observer.finish()
+        try await withIntegrationWatchdog(operation: .reconcile, timeout: .seconds(1)) {
+            await reconcile.value
+        }
+    }
+
     func testTwoServersDeliverDistinctAttentionTransitionsAndRouteNotificationClickExactly() async throws {
         let root = try makeTemporaryHerdrRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -48,8 +91,10 @@ final class MultiSessionIntegrationTests: XCTestCase {
                 preferences: preferencesFixture.preferences
             )
         }
-        defer {
-            Task { @MainActor in preferencesFixture.remove() }
+        addTeardownBlock {
+            await coordinator.finish()
+            await store.stop()
+            await MainActor.run { preferencesFixture.remove() }
         }
 
         await store.start()
@@ -130,11 +175,15 @@ final class MultiSessionIntegrationTests: XCTestCase {
                     && store.unavailableSessions.isEmpty
             }
         }
-        await coordinator.waitUntilReconcileIsPaused(for: .named("work"))
-        await coordinator.resumePausedReconcile(for: .named("work"))
-        await coordinator.waitForReconcileCompletion(
+        try await coordinator.waitUntilReconcileIsPaused(
             for: .named("work"),
-            after: reconnectBaseline
+            timeout: .seconds(1)
+        )
+        await coordinator.resumePausedReconcile(for: .named("work"))
+        try await coordinator.waitForReconcileCompletion(
+            for: .named("work"),
+            after: reconnectBaseline,
+            timeout: .seconds(1)
         )
         let reconnectDeliveryCount = await notifications.deliveries.count
         XCTAssertEqual(reconnectDeliveryCount, 3)
@@ -151,7 +200,11 @@ final class MultiSessionIntegrationTests: XCTestCase {
                     && !store.attentionSections.contains { $0.id == .named("work") }
             }
         }
-        await coordinator.waitForRemoveCompletion(for: .named("work"), after: removalBaseline)
+        try await coordinator.waitForRemoveCompletion(
+            for: .named("work"),
+            after: removalBaseline,
+            timeout: .seconds(1)
+        )
         let recreationBaseline = await coordinator.reconcileCompletionCount(for: .named("work"))
         await coordinator.pauseNextReconcile(for: .named("work"))
         let recreatedNamedServer = try FakeHerdrServer(
@@ -163,15 +216,20 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await eventually {
             await MainActor.run { store.attentionSections.contains { $0.id == .named("work") } }
         }
-        await coordinator.waitUntilReconcileIsPaused(for: .named("work"))
-        await coordinator.resumePausedReconcile(for: .named("work"))
-        await coordinator.waitForReconcileCompletion(
+        try await coordinator.waitUntilReconcileIsPaused(
             for: .named("work"),
-            after: recreationBaseline
+            timeout: .seconds(1)
+        )
+        await coordinator.resumePausedReconcile(for: .named("work"))
+        try await coordinator.waitForReconcileCompletion(
+            for: .named("work"),
+            after: recreationBaseline,
+            timeout: .seconds(1)
         )
         let recreatedDeliveryCount = await notifications.deliveries.count
         XCTAssertEqual(recreatedDeliveryCount, 3)
 
+        await coordinator.finish()
         await store.stop()
         await MainActor.run { preferencesFixture.remove() }
     }
@@ -481,10 +539,48 @@ private actor IntegrationAttentionCoordinator: AttentionNotificationCoordinating
     func reset() {}
 }
 
+private enum IntegrationAttentionObserverOperation: Equatable, Sendable {
+    case reconcile
+    case remove
+    case pause
+}
+
+private enum IntegrationAttentionObserverError: Error, Equatable, Sendable {
+    case timedOut(IntegrationAttentionObserverOperation)
+    case finished
+}
+
+private func withIntegrationWatchdog(
+    operation: IntegrationAttentionObserverOperation,
+    timeout: Duration,
+    work: @escaping @Sendable () async throws -> Void
+) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { try await work() }
+        group.addTask {
+            try await Task.sleep(for: timeout)
+            throw IntegrationAttentionObserverError.timedOut(operation)
+        }
+        defer { group.cancelAll() }
+        _ = try await group.next()
+    }
+}
+
 private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoordinating {
     private struct Waiter {
+        let id: UUID
         let threshold: Int
-        let continuation: CheckedContinuation<Void, Never>
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private struct Pause {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private struct PauseArrivalWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
     }
 
     private let wrapped: any AttentionNotificationCoordinating
@@ -493,8 +589,9 @@ private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoo
     private var reconcileWaiters: [SessionID: [Waiter]] = [:]
     private var removeWaiters: [SessionID: [Waiter]] = [:]
     private var reconcilePauses: Set<SessionID> = []
-    private var pausedReconciles: [SessionID: CheckedContinuation<Void, Never>] = [:]
-    private var pauseArrivalWaiters: [SessionID: [CheckedContinuation<Void, Never>]] = [:]
+    private var pausedReconciles: [SessionID: Pause] = [:]
+    private var pauseArrivalWaiters: [SessionID: [PauseArrivalWaiter]] = [:]
+    private var isFinished = false
 
     init(wrapping wrapped: any AttentionNotificationCoordinating) {
         self.wrapped = wrapped
@@ -506,11 +603,10 @@ private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoo
         policy: NotificationDeliveryPolicy
     ) async {
         if reconcilePauses.remove(session.id) != nil {
-            await withCheckedContinuation { continuation in
-                pausedReconciles[session.id] = continuation
-                for waiter in pauseArrivalWaiters.removeValue(forKey: session.id) ?? [] {
-                    waiter.resume()
-                }
+            do {
+                try await waitForPauseRelease(for: session.id)
+            } catch {
+                return
             }
         }
         await wrapped.reconcile(session: session, items: items, policy: policy)
@@ -530,6 +626,32 @@ private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoo
         await wrapped.reset()
     }
 
+    func finish() {
+        guard !isFinished else { return }
+        isFinished = true
+        reconcilePauses.removeAll()
+
+        let pauses = pausedReconciles.values
+        pausedReconciles.removeAll()
+        for pause in pauses {
+            pause.continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+        }
+
+        let completionWaiters = reconcileWaiters.values.flatMap { $0 }
+            + removeWaiters.values.flatMap { $0 }
+        reconcileWaiters.removeAll()
+        removeWaiters.removeAll()
+        for waiter in completionWaiters {
+            waiter.continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+        }
+
+        let arrivalWaiters = pauseArrivalWaiters.values.flatMap { $0 }
+        pauseArrivalWaiters.removeAll()
+        for waiter in arrivalWaiters {
+            waiter.continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+        }
+    }
+
     func reconcileCompletionCount(for sessionID: SessionID) -> Int {
         reconcileCompletions[sessionID, default: 0]
     }
@@ -538,39 +660,176 @@ private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoo
         removeCompletions[sessionID, default: 0]
     }
 
-    func waitForReconcileCompletion(for sessionID: SessionID, after count: Int) async {
-        guard reconcileCompletions[sessionID, default: 0] <= count else { return }
-        await withCheckedContinuation { continuation in
-            reconcileWaiters[sessionID, default: []].append(Waiter(
-                threshold: count,
-                continuation: continuation
-            ))
+    func waitForReconcileCompletion(
+        for sessionID: SessionID,
+        after count: Int,
+        timeout: Duration
+    ) async throws {
+        let observer = self
+        try await withIntegrationWatchdog(operation: .reconcile, timeout: timeout) {
+            try await observer.awaitReconcileCompletion(for: sessionID, after: count)
         }
     }
 
-    func waitForRemoveCompletion(for sessionID: SessionID, after count: Int) async {
-        guard removeCompletions[sessionID, default: 0] <= count else { return }
-        await withCheckedContinuation { continuation in
-            removeWaiters[sessionID, default: []].append(Waiter(
-                threshold: count,
-                continuation: continuation
-            ))
+    func waitForRemoveCompletion(
+        for sessionID: SessionID,
+        after count: Int,
+        timeout: Duration
+    ) async throws {
+        let observer = self
+        try await withIntegrationWatchdog(operation: .remove, timeout: timeout) {
+            try await observer.awaitRemoveCompletion(for: sessionID, after: count)
         }
     }
 
     func pauseNextReconcile(for sessionID: SessionID) {
+        guard !isFinished else { return }
         reconcilePauses.insert(sessionID)
     }
 
-    func waitUntilReconcileIsPaused(for sessionID: SessionID) async {
-        guard pausedReconciles[sessionID] == nil else { return }
-        await withCheckedContinuation { continuation in
-            pauseArrivalWaiters[sessionID, default: []].append(continuation)
+    func waitUntilReconcileIsPaused(
+        for sessionID: SessionID,
+        timeout: Duration
+    ) async throws {
+        let observer = self
+        try await withIntegrationWatchdog(operation: .pause, timeout: timeout) {
+            try await observer.awaitReconcilePause(for: sessionID)
         }
     }
 
     func resumePausedReconcile(for sessionID: SessionID) {
-        pausedReconciles.removeValue(forKey: sessionID)?.resume()
+        pausedReconciles.removeValue(forKey: sessionID)?.continuation.resume()
+    }
+
+    private func awaitReconcileCompletion(for sessionID: SessionID, after count: Int) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if reconcileCompletions[sessionID, default: 0] > count {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    reconcileWaiters[sessionID, default: []].append(Waiter(
+                        id: waiterID,
+                        threshold: count,
+                        continuation: continuation
+                    ))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelReconcileWaiter(id: waiterID, sessionID: sessionID) }
+        }
+    }
+
+    private func awaitRemoveCompletion(for sessionID: SessionID, after count: Int) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if removeCompletions[sessionID, default: 0] > count {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    removeWaiters[sessionID, default: []].append(Waiter(
+                        id: waiterID,
+                        threshold: count,
+                        continuation: continuation
+                    ))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelRemoveWaiter(id: waiterID, sessionID: sessionID) }
+        }
+    }
+
+    private func awaitReconcilePause(for sessionID: SessionID) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if pausedReconciles[sessionID] != nil {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    pauseArrivalWaiters[sessionID, default: []].append(PauseArrivalWaiter(
+                        id: waiterID,
+                        continuation: continuation
+                    ))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelPauseArrivalWaiter(id: waiterID, sessionID: sessionID) }
+        }
+    }
+
+    private func waitForPauseRelease(for sessionID: SessionID) async throws {
+        let pauseID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    pausedReconciles[sessionID] = Pause(id: pauseID, continuation: continuation)
+                    let arrivals = pauseArrivalWaiters.removeValue(forKey: sessionID) ?? []
+                    for arrival in arrivals {
+                        arrival.continuation.resume()
+                    }
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelPause(id: pauseID, sessionID: sessionID) }
+        }
+    }
+
+    private func cancelReconcileWaiter(id: UUID, sessionID: SessionID) {
+        cancelWaiter(id: id, sessionID: sessionID, waiters: &reconcileWaiters)
+    }
+
+    private func cancelRemoveWaiter(id: UUID, sessionID: SessionID) {
+        cancelWaiter(id: id, sessionID: sessionID, waiters: &removeWaiters)
+    }
+
+    private func cancelWaiter(
+        id: UUID,
+        sessionID: SessionID,
+        waiters: inout [SessionID: [Waiter]]
+    ) {
+        guard var sessionWaiters = waiters[sessionID],
+              let index = sessionWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = sessionWaiters.remove(at: index)
+        waiters[sessionID] = sessionWaiters.isEmpty ? nil : sessionWaiters
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func cancelPauseArrivalWaiter(id: UUID, sessionID: SessionID) {
+        guard var waiters = pauseArrivalWaiters[sessionID],
+              let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        pauseArrivalWaiters[sessionID] = waiters.isEmpty ? nil : waiters
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func cancelPause(id: UUID, sessionID: SessionID) {
+        guard let pause = pausedReconciles[sessionID], pause.id == id else { return }
+        pausedReconciles.removeValue(forKey: sessionID)
+        pause.continuation.resume(throwing: CancellationError())
     }
 
     private func recordCompletion(
