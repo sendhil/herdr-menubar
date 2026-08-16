@@ -29,12 +29,16 @@ struct HerdrMenubarApp: App {
     private let installedTerminals: [TerminalApp]
 
     init() {
-        let client = HerdrClient()
+        let discovery = SessionDiscovery()
+        let supervisor = SessionSupervisor(
+            discovery: discovery,
+            clientFactory: LiveSessionClientFactory()
+        )
         let preferences = Preferences()
         _preferences = State(initialValue: preferences)
         _loginItemService = State(initialValue: LoginItemService())
         _store = State(initialValue: AgentStore(
-            client: client,
+            supervisor: supervisor,
             terminalActivator: TerminalActivationService(),
             preferences: preferences
         ))

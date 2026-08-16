@@ -30,6 +30,17 @@ enum SessionSupervisorEvent: Equatable, Sendable {
     case removed(SessionID)
 }
 
+protocol SessionSupervising: Sendable {
+    func events() async -> AsyncStream<SessionSupervisorEvent>
+    func start() async
+    func stop() async
+    func retryUnavailable() async
+    func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo
+    func refresh(sessionID: SessionID) async
+}
+
+extension SessionSupervisor: SessionSupervising {}
+
 enum SessionSupervisorError: LocalizedError, Equatable, Sendable {
     case sessionUnavailable(String)
 

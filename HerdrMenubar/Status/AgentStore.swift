@@ -2,36 +2,37 @@ import Foundation
 import Observation
 import OSLog
 
-protocol AgentClientServing: Sendable {
-    func events() async -> AsyncStream<HerdrClientEvent>
-    func start() async
-    func stop() async
-    func retryNow() async
-    func refresh() async
-    func focus(paneID: String) async throws -> PaneInfo
+enum ConnectionState: Equatable, Sendable {
+    case searching
+    case noSessions
+    case connecting
+    case connected
 }
 
-extension HerdrClient: AgentClientServing {}
-
-enum ConnectionState: Equatable, Sendable {
-    case connected
-    case disconnected(String)
+struct AgentMenuItemID: Hashable, Sendable {
+    let sessionID: SessionID
+    let paneID: String
 }
 
 struct AgentMenuItem: Identifiable, Equatable, Sendable {
+    let sessionID: SessionID
+    let sessionName: String
     let paneID: String
     let displayLabel: String
     let agentLabel: String
     let status: AgentStatus
 
-    var id: String { paneID }
+    var id: AgentMenuItemID { AgentMenuItemID(sessionID: sessionID, paneID: paneID) }
 
     init(
+        session: SessionDescriptor,
         pane: PaneInfo,
         workspace: WorkspaceInfo? = nil,
         tab: TabInfo? = nil,
         workspaceIsMultiTab: Bool = false
     ) {
+        sessionID = session.id
+        sessionName = session.displayName
         paneID = pane.paneID
         if let workspace, !workspace.label.isEmpty {
             if workspaceIsMultiTab, let tab, !tab.label.isEmpty {
@@ -47,13 +48,10 @@ struct AgentMenuItem: Identifiable, Equatable, Sendable {
     }
 
     var visibleLabel: String {
-        guard displayLabel != agentLabel else { return displayLabel }
-        return "\(displayLabel) · \(agentLabel)"
+        displayLabel == agentLabel ? displayLabel : "\(displayLabel) · \(agentLabel)"
     }
 
-    var secondaryLabel: String {
-        "\(status.rawValue) · \(agentLabel)"
-    }
+    var secondaryLabel: String { "\(status.rawValue) · \(agentLabel)" }
 
     static func attentionOrder(_ lhs: Self, _ rhs: Self) -> Bool {
         let lhsRank = lhs.status == .blocked ? 0 : 1
@@ -71,28 +69,65 @@ struct AgentMenuItem: Identifiable, Equatable, Sendable {
     }
 }
 
+struct SessionMenuSection: Identifiable, Equatable, Sendable {
+    let session: SessionDescriptor
+    let items: [AgentMenuItem]
+    var id: SessionID { session.id }
+}
+
+struct UnavailableSession: Identifiable, Equatable, Sendable {
+    let session: SessionDescriptor
+    let message: String
+    var id: SessionID { session.id }
+}
+
+private struct SessionPresentationState {
+    var descriptor: SessionDescriptor
+    var isConnected = false
+    var unavailableMessage: String?
+    var attentionItems: [AgentMenuItem] = []
+    var workingItems: [AgentMenuItem] = []
+}
+
 @Observable @MainActor
 final class AgentStore {
-    private let client: any AgentClientServing
+    private let supervisor: any SessionSupervising
     private let terminalActivator: any TerminalActivating
     private let preferences: Preferences
     private var eventTask: Task<Void, Never>?
     private var eventGeneration = UUID()
     private var isRunning = false
+    private var hasCompletedDiscovery = false
+    private var sessions: [SessionID: SessionPresentationState] = [:]
 
-    private(set) var connectionState: ConnectionState = .disconnected("Connecting to Herdr…")
-    private(set) var attentionItems: [AgentMenuItem] = []
-    private(set) var workingItems: [AgentMenuItem] = []
+    private(set) var connectionState: ConnectionState = .searching
     private(set) var transientError: String?
 
-    var attentionCount: Int { attentionItems.count }
+    var attentionSections: [SessionMenuSection] {
+        sections(keyPath: \.attentionItems)
+    }
+
+    var workingSections: [SessionMenuSection] {
+        sections(keyPath: \.workingItems)
+    }
+
+    var unavailableSessions: [UnavailableSession] {
+        sessions.values.compactMap { state in
+            state.unavailableMessage.map { UnavailableSession(session: state.descriptor, message: $0) }
+        }
+        .sorted { Self.sessionOrder($0.session, $1.session) }
+    }
+
+    var attentionCount: Int {
+        sessions.values.reduce(into: 0) { $0 += $1.attentionItems.count }
+    }
 
     init(
-        client: any AgentClientServing,
+        supervisor: any SessionSupervising,
         terminalActivator: any TerminalActivating,
         preferences: Preferences = Preferences()
     ) {
-        self.client = client
+        self.supervisor = supervisor
         self.terminalActivator = terminalActivator
         self.preferences = preferences
     }
@@ -102,54 +137,107 @@ final class AgentStore {
         isRunning = true
         let generation = UUID()
         eventGeneration = generation
-        let events = await client.events()
+        let events = await supervisor.events()
         eventTask = Task { [weak self] in
             for await event in events {
                 guard !Task.isCancelled else { return }
                 self?.consume(event, generation: generation)
             }
         }
-        await client.start()
+        await supervisor.start()
     }
 
     func stop() async {
         guard isRunning else { return }
         isRunning = false
         eventGeneration = UUID()
-        eventTask?.cancel()
+        let task = eventTask
         eventTask = nil
-        connectionState = .disconnected("Disconnected from Herdr")
-        attentionItems = []
-        workingItems = []
-        await client.stop()
+        task?.cancel()
+        await task?.value
+        await supervisor.stop()
+        hasCompletedDiscovery = false
+        sessions.removeAll()
+        connectionState = .searching
     }
 
     func retry() async {
         transientError = nil
-        await client.retryNow()
+        await supervisor.retryUnavailable()
     }
 
     func select(_ item: AgentMenuItem) async {
         transientError = nil
         do {
-            _ = try await client.focus(paneID: item.paneID)
+            _ = try await supervisor.focus(sessionID: item.sessionID, paneID: item.paneID)
         } catch {
-            AppLog.systemActions.error("Pane focus failed: \(error.localizedDescription, privacy: .private)")
-            transientError = "Could not focus pane: \(error.localizedDescription)"
+            AppLog.systemActions.error("Pane focus failed in \(item.sessionName, privacy: .public): \(error.localizedDescription, privacy: .private)")
+            transientError = "Could not focus pane in \(item.sessionName): \(error.localizedDescription)"
             return
         }
 
-        let terminalBundleIdentifier = preferences.selectedTerminalBundleIdentifier
         do {
-            try await terminalActivator.activate(bundleIdentifier: terminalBundleIdentifier)
+            try await terminalActivator.activate(
+                bundleIdentifier: preferences.selectedTerminalBundleIdentifier
+            )
         } catch {
             AppLog.systemActions.error("Terminal activation failed: \(error.localizedDescription, privacy: .private)")
             transientError = error.localizedDescription
         }
-        await client.refresh()
+        await supervisor.refresh(sessionID: item.sessionID)
+    }
+}
+
+private extension AgentStore {
+    func consume(_ event: SessionSupervisorEvent, generation: UUID) {
+        guard isRunning, eventGeneration == generation else { return }
+        switch event {
+        case .discoverySnapshot(let descriptors):
+            hasCompletedDiscovery = true
+            for descriptor in descriptors where sessions[descriptor.id] == nil {
+                sessions[descriptor.id] = SessionPresentationState(descriptor: descriptor)
+            }
+        case .connected(let descriptor, let snapshot):
+            var state = sessions[descriptor.id] ?? SessionPresentationState(descriptor: descriptor)
+            state.descriptor = descriptor
+            state.isConnected = true
+            state.unavailableMessage = nil
+            (state.attentionItems, state.workingItems) = makeItems(snapshot: snapshot, session: descriptor)
+            sessions[descriptor.id] = state
+            transientError = nil
+        case .snapshot(let id, let snapshot):
+            guard var state = sessions[id], state.isConnected else { return }
+            (state.attentionItems, state.workingItems) = makeItems(snapshot: snapshot, session: state.descriptor)
+            sessions[id] = state
+        case .unavailable(let id, let message):
+            guard var state = sessions[id] else { return }
+            state.isConnected = false
+            state.unavailableMessage = message
+            state.attentionItems = []
+            state.workingItems = []
+            sessions[id] = state
+        case .removed(let id):
+            sessions.removeValue(forKey: id)
+        }
+        deriveConnectionState()
     }
 
-    func apply(snapshot: PresentationSnapshot) {
+    func deriveConnectionState() {
+        if sessions.values.contains(where: \.isConnected) {
+            connectionState = .connected
+        } else if !hasCompletedDiscovery {
+            connectionState = .searching
+        } else if sessions.isEmpty {
+            connectionState = .noSessions
+        } else {
+            connectionState = .connecting
+        }
+    }
+
+    func makeItems(
+        snapshot: PresentationSnapshot,
+        session: SessionDescriptor
+    ) -> (attention: [AgentMenuItem], working: [AgentMenuItem]) {
         let workspacesByID = Dictionary(uniqueKeysWithValues: snapshot.workspaces.map { ($0.workspaceID, $0) })
         let tabsByID = Dictionary(uniqueKeysWithValues: snapshot.tabs.map { ($0.tabID, $0) })
         var tabIDsByWorkspace: [String: Set<String>] = [:]
@@ -165,34 +253,41 @@ final class AgentStore {
             let isMultiTab = (workspace?.tabCount ?? 0) > 1
                 || (tabIDsByWorkspace[pane.workspaceID]?.count ?? 0) > 1
             return AgentMenuItem(
+                session: session,
                 pane: pane,
                 workspace: workspace,
                 tab: tabsByID[pane.tabID],
                 workspaceIsMultiTab: isMultiTab
             )
         }
-        attentionItems = items
-            .filter { $0.status == .blocked || $0.status == .done }
-            .sorted(by: AgentMenuItem.attentionOrder)
-        workingItems = items
-            .filter { $0.status == .working }
-            .sorted(by: AgentMenuItem.labelOrder)
+        return (
+            items.filter { $0.status == .blocked || $0.status == .done }
+                .sorted(by: AgentMenuItem.attentionOrder),
+            items.filter { $0.status == .working }
+                .sorted(by: AgentMenuItem.labelOrder)
+        )
     }
 
-    private func consume(_ event: HerdrClientEvent, generation: UUID) {
-        guard isRunning, eventGeneration == generation else { return }
-        switch event {
-        case .connected(let snapshot):
-            connectionState = .connected
-            transientError = nil
-            apply(snapshot: snapshot)
-        case .snapshot(let snapshot):
-            guard connectionState == .connected else { return }
-            apply(snapshot: snapshot)
-        case .disconnected(let message):
-            connectionState = .disconnected(message)
-            attentionItems = []
-            workingItems = []
+    func sections(
+        keyPath: KeyPath<SessionPresentationState, [AgentMenuItem]>
+    ) -> [SessionMenuSection] {
+        sessions.values.compactMap { state in
+            let items = state[keyPath: keyPath]
+            return items.isEmpty ? nil : SessionMenuSection(session: state.descriptor, items: items)
+        }
+        .sorted { Self.sessionOrder($0.session, $1.session) }
+    }
+
+    static func sessionOrder(_ lhs: SessionDescriptor, _ rhs: SessionDescriptor) -> Bool {
+        switch (lhs.id, rhs.id) {
+        case (.default, .default): return false
+        case (.default, _): return true
+        case (_, .default): return false
+        case (.named(let lhsName), .named(let rhsName)):
+            let locale = Locale(identifier: "en_US_POSIX")
+            let lhsFolded = lhsName.folding(options: [.caseInsensitive], locale: locale)
+            let rhsFolded = rhsName.folding(options: [.caseInsensitive], locale: locale)
+            return lhsFolded == rhsFolded ? lhsName < rhsName : lhsFolded < rhsFolded
         }
     }
 }

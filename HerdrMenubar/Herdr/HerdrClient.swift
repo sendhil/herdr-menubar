@@ -100,14 +100,6 @@ actor HerdrClient {
         self.subscriptionRebuildDebounce = subscriptionRebuildDebounce
     }
 
-    init() {
-        let root = SessionDiscovery.configurationRoot(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
-        )
-        self.init(socketURL: root.appending(path: "herdr.sock"))
-    }
-
     func events() -> AsyncStream<HerdrClientEvent> {
         let id = UUID()
         let (stream, continuation) = AsyncStream<HerdrClientEvent>.makeStream()

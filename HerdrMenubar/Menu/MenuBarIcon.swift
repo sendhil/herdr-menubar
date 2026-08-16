@@ -20,7 +20,7 @@ struct MenuBarIconPresentation: Equatable, Sendable {
 
     init(connectionState: ConnectionState, attentionCount: Int) {
         switch connectionState {
-        case .disconnected:
+        case .searching, .noSessions, .connecting:
             mode = .disconnected
             lightStyle = .hollow
             opacity = 0.55
@@ -48,8 +48,12 @@ struct MenuBarIcon: View {
         attentionCount: Int
     ) -> String {
         switch connectionState {
-        case .disconnected:
-            return "Disconnected"
+        case .searching:
+            return "Searching for Herdr sessions"
+        case .noSessions:
+            return "No Herdr sessions running"
+        case .connecting:
+            return "Connecting to Herdr sessions"
         case .connected where attentionCount == 0:
             return "Connected, no agents need attention"
         case .connected where attentionCount == 1:

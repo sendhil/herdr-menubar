@@ -8,27 +8,41 @@ struct StatusMenu: View {
     let loginItemService: LoginItemService
 
     var body: some View {
-        if !store.attentionItems.isEmpty {
+        if !store.attentionSections.isEmpty {
             sectionLabel("Needs Attention")
-            ForEach(store.attentionItems) { item in
-                AgentRow(item: item) {
-                    Task { await store.select(item) }
+            ForEach(store.attentionSections) { section in
+                sessionLabel(section.session.displayName)
+                ForEach(section.items) { item in
+                    AgentRow(item: item) {
+                        Task { await store.select(item) }
+                    }
                 }
             }
             Divider()
         }
 
-        if !store.workingItems.isEmpty {
+        if !store.workingSections.isEmpty {
             sectionLabel("Working")
-            ForEach(store.workingItems) { item in
-                AgentRow(item: item, quieter: true) {
-                    Task { await store.select(item) }
+            ForEach(store.workingSections) { section in
+                sessionLabel(section.session.displayName)
+                ForEach(section.items) { item in
+                    AgentRow(item: item, quieter: true) {
+                        Task { await store.select(item) }
+                    }
                 }
             }
             Divider()
         }
 
         connectionStatus
+
+        if !store.unavailableSessions.isEmpty {
+            sectionLabel("Reconnecting")
+            ForEach(store.unavailableSessions) { unavailable in
+                Text(unavailable.session.displayName)
+                    .foregroundStyle(.secondary)
+            }
+        }
 
         if let error = store.transientError {
             Text(error)
@@ -54,8 +68,8 @@ struct StatusMenu: View {
                 .foregroundStyle(.red)
         }
 
-        if case .disconnected = store.connectionState {
-            Button("Retry") {
+        if !store.unavailableSessions.isEmpty {
+            Button("Retry Unavailable Sessions") {
                 Task { await store.retry() }
             }
         }
@@ -124,16 +138,20 @@ struct StatusMenu: View {
     @ViewBuilder
     private var connectionStatus: some View {
         switch store.connectionState {
+        case .searching:
+            Text("Searching for Herdr sessions…")
+                .foregroundStyle(.secondary)
+        case .noSessions:
+            Text("No Herdr sessions running")
+                .foregroundStyle(.secondary)
+        case .connecting:
+            Text("Connecting to Herdr sessions…")
+                .foregroundStyle(.secondary)
         case .connected:
-            if store.attentionItems.isEmpty, store.workingItems.isEmpty {
+            if store.attentionSections.isEmpty, store.workingSections.isEmpty {
                 Text("No active agents")
                     .foregroundStyle(.secondary)
             }
-        case .disconnected(let message):
-            Text("Disconnected")
-                .font(.headline)
-            Text(message)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -141,5 +159,12 @@ struct StatusMenu: View {
         Text(title.uppercased())
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    private func sessionLabel(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .opacity(0.8)
     }
 }

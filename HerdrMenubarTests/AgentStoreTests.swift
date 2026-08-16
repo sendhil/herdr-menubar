@@ -1,30 +1,217 @@
+import Foundation
 import XCTest
 @testable import HerdrMenubar
 
 @MainActor
 final class AgentStoreTests: XCTestCase {
-    func testGroupsAndDeterministicallySortsAgentRows() {
-        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
+    func testIdenticalPaneIDsInTwoSessionsProduceDistinctCompositeIDs() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
 
-        store.apply(snapshot: snapshot([
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("same", .done)])))
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("same", .working)])))
+        await eventually { store.attentionCount == 1 && store.workingSections.count == 1 }
+
+        let items = store.attentionSections.flatMap(\.items) + store.workingSections.flatMap(\.items)
+        XCTAssertEqual(Set(items.map(\.id)), [
+            AgentMenuItemID(sessionID: .default, paneID: "same"),
+            AgentMenuItemID(sessionID: .named("work"), paneID: "same")
+        ])
+        await store.stop()
+    }
+
+    func testAggregatesAttentionAndGroupsStatusThenSession() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([
+            pane("work-done", .done), pane("work-active", .working)
+        ])))
+        await supervisor.send(.connected(defaultDescriptor, snapshot([
+            pane("default-blocked", .blocked), pane("default-active", .working)
+        ])))
+        await eventually { store.attentionCount == 2 && store.workingSections.count == 2 }
+
+        XCTAssertEqual(store.attentionSections.map(\.id), [.default, .named("work")])
+        XCTAssertEqual(store.attentionSections.map { $0.items.map(\.paneID) }, [["default-blocked"], ["work-done"]])
+        XCTAssertEqual(store.workingSections.map(\.id), [.default, .named("work")])
+        XCTAssertEqual(store.attentionCount, 2)
+        await store.stop()
+    }
+
+    func testSortsDefaultBeforeNamedSessionsAndRowsWithinSession() async {
+        let alpha = descriptor("alpha")
+        let zulu = descriptor("Zulu")
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.connected(zulu, snapshot([pane("done", .done, title: "A")])))
+        await supervisor.send(.connected(alpha, snapshot([
             pane("done-z", .done, title: "Zulu"),
             pane("blocked-z", .blocked, title: "zulu"),
             pane("blocked-a2", .blocked, title: "Alpha"),
-            pane("blocked-a1", .blocked, title: "alpha"),
-            pane("working-z", .working, title: "Zulu"),
-            pane("working-a", .working, title: "alpha"),
-            pane("idle", .idle),
-            pane("unknown", .unknown)
-        ]))
+            pane("blocked-a1", .blocked, title: "alpha")
+        ])))
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("default", .done)])))
+        await eventually { store.attentionCount == 6 }
 
-        XCTAssertEqual(store.attentionItems.map(\.paneID), ["blocked-a1", "blocked-a2", "blocked-z", "done-z"])
-        XCTAssertEqual(store.attentionItems.map(\.status), [.blocked, .blocked, .blocked, .done])
-        XCTAssertEqual(store.workingItems.map(\.paneID), ["working-a", "working-z"])
-        XCTAssertEqual(store.attentionCount, 4)
+        XCTAssertEqual(store.attentionSections.map(\.id), [.default, .named("alpha"), .named("Zulu")])
+        XCTAssertEqual(
+            store.attentionSections.first { $0.id == .named("alpha") }?.items.map(\.paneID),
+            ["blocked-a1", "blocked-a2", "blocked-z", "done-z"]
+        )
+        await store.stop()
     }
 
-    func testJoinedLabelsMatchHerdrForSingleAndMultiTabWorkspaces() {
-        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
+    func testCaseFoldEquivalentSessionNamesUseStableSessionIDTieBreaker() async {
+        let upper = descriptor("Alpha")
+        let lower = descriptor("alpha")
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.connected(lower, snapshot([pane("lower", .done)])))
+        await supervisor.send(.connected(upper, snapshot([pane("upper", .done)])))
+        await eventually { store.attentionCount == 2 }
+
+        XCTAssertEqual(store.attentionSections.map(\.id), [.named("Alpha"), .named("alpha")])
+        await store.stop()
+    }
+
+    func testUnavailableClearsOnlyOwningSessionAndKeepsAggregateConnected() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("default", .done)])))
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("work", .done)])))
+        await eventually { store.attentionCount == 2 }
+
+        await supervisor.send(.unavailable(.named("work"), "socket unavailable"))
+        await eventually { store.attentionCount == 1 && store.unavailableSessions.count == 1 }
+
+        XCTAssertEqual(store.connectionState, .connected)
+        XCTAssertEqual(store.attentionSections.map(\.id), [.default])
+        XCTAssertEqual(store.unavailableSessions, [UnavailableSession(session: workDescriptor, message: "socket unavailable")])
+        await store.stop()
+    }
+
+    func testEmptyDiscoveryAndConnectingStatesAreDistinct() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        XCTAssertEqual(store.connectionState, .searching)
+        await store.start()
+
+        await supervisor.send(.discoverySnapshot([]))
+        await eventually { store.connectionState == .noSessions }
+        await supervisor.send(.discoverySnapshot([workDescriptor]))
+        await eventually { store.connectionState == .connecting }
+        await store.stop()
+    }
+
+    func testGraceEntryRemainsUntilRemovedEvent() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("work", .done)])))
+        await eventually { store.attentionCount == 1 }
+        await supervisor.send(.unavailable(.named("work"), "Session socket unavailable"))
+        await eventually { store.unavailableSessions.count == 1 }
+
+        await supervisor.send(.discoverySnapshot([]))
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(store.unavailableSessions.map(\.id), [.named("work")])
+
+        await supervisor.send(.removed(.named("work")))
+        await eventually { store.unavailableSessions.isEmpty && store.connectionState == .noSessions }
+        await store.stop()
+    }
+
+    func testSelectionFocusesAndRefreshesOwningSessionOnly() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let activator = RecordingActivator(sequence: sequence)
+        let store = AgentStore(supervisor: supervisor, terminalActivator: activator)
+        let item = AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked))
+
+        await store.select(item)
+
+        let actions = await sequence.values
+        let focusRequests = await supervisor.focusRequests
+        let refreshRequests = await supervisor.refreshRequests
+        XCTAssertEqual(actions, [
+            "focus:work:p", "activate:com.github.wez.wezterm", "refresh:work"
+        ])
+        XCTAssertEqual(focusRequests, [FocusRequest(sessionID: .named("work"), paneID: "p")])
+        XCTAssertEqual(refreshRequests, [.named("work")])
+    }
+
+    func testFocusFailureIncludesSessionDisplayNameAndDoesNotActivate() async {
+        let supervisor = FakeSessionSupervisor(
+            focusError: HerdrAPIError(code: "pane_not_found", message: "Pane no longer exists")
+        )
+        let activator = RecordingActivator()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: activator)
+
+        await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked)))
+
+        XCTAssertEqual(activator.activationCount, 0)
+        let refreshRequests = await supervisor.refreshRequests
+        XCTAssertEqual(refreshRequests, [])
+        XCTAssertEqual(store.transientError, "Could not focus pane in work: Pane no longer exists")
+    }
+
+    func testRetryDelegatesToUnavailableSessions() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.discoverySnapshot([workDescriptor]))
+        await supervisor.send(.unavailable(.named("work"), "socket unavailable"))
+        await eventually { store.unavailableSessions.count == 1 }
+
+        await store.retry()
+
+        let retryCount = await supervisor.retryCount
+        XCTAssertEqual(retryCount, 1)
+        XCTAssertNil(store.transientError)
+        await store.stop()
+    }
+
+    func testStopCancelsConsumerAndRejectsLateEvents() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await store.stop()
+        for _ in 0..<10 {
+            if await supervisor.streamTerminated { break }
+            await Task.yield()
+        }
+        let streamTerminated = await supervisor.streamTerminated
+        XCTAssertTrue(streamTerminated)
+
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("stale", .blocked)])))
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(store.connectionState, .searching)
+        XCTAssertTrue(store.attentionSections.isEmpty)
+        let stopCount = await supervisor.stopCount
+        XCTAssertEqual(stopCount, 1)
+    }
+
+    func testStoreSubscribesToSupervisorEventsBeforeStartingIt() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+
+        await store.start()
+
+        let actions = await supervisor.lifecycleActions
+        XCTAssertEqual(actions, ["events", "start"])
+        await store.stop()
+    }
+
+    func testJoinedLabelsMatchHerdrForSingleAndMultiTabWorkspaces() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
         let panes = [
             pane("single", .done, workspaceID: "dotfiles", tabID: "dotfiles:tab"),
             pane("multi", .done, workspaceID: "menubar", tabID: "menubar:server")
@@ -37,11 +224,14 @@ final class AgentStoreTests: XCTestCase {
             tab("dotfiles:tab", workspaceID: "dotfiles", label: "shell"),
             tab("menubar:server", workspaceID: "menubar", label: "server")
         ]
+        await supervisor.send(.connected(defaultDescriptor, PresentationSnapshot(
+            panes: panes, workspaces: workspaces, tabs: tabs
+        )))
+        await eventually { store.attentionCount == 2 }
 
-        store.apply(snapshot: PresentationSnapshot(panes: panes, workspaces: workspaces, tabs: tabs))
-
-        XCTAssertEqual(store.attentionItems.map(\.displayLabel), ["dotfiles-mac", "Herdr Menubar · server"])
-        XCTAssertEqual(store.attentionItems.map(\.secondaryLabel), ["done · Claude", "done · Claude"])
+        XCTAssertEqual(store.attentionSections[0].items.map(\.displayLabel), ["dotfiles-mac", "Herdr Menubar · server"])
+        XCTAssertEqual(store.attentionSections[0].items.map(\.secondaryLabel), ["done · Claude", "done · Claude"])
+        await store.stop()
     }
 
     func testVisibleLabelsIncludeAgentContextWithoutDuplicateSuffixes() {
@@ -51,18 +241,18 @@ final class AgentStoreTests: XCTestCase {
             agentStatus: .idle, revision: 1
         )
         let singleTabItem = AgentMenuItem(
-            pane: labeledAgentPane,
+            session: defaultDescriptor, pane: labeledAgentPane,
             workspace: workspace("bin", label: "bin", tabCount: 1),
             tab: tab("bin:tab", workspaceID: "bin", label: "shell")
         )
         let multiTabItem = AgentMenuItem(
-            pane: labeledAgentPane,
+            session: defaultDescriptor, pane: labeledAgentPane,
             workspace: workspace("workspace", label: "workspace", tabCount: 2),
             tab: tab("workspace:test", workspaceID: "workspace", label: "tab"),
             workspaceIsMultiTab: true
         )
         let duplicateItem = AgentMenuItem(
-            pane: labeledAgentPane,
+            session: defaultDescriptor, pane: labeledAgentPane,
             workspace: workspace("bin", label: "test-agent", tabCount: 1)
         )
         let fallbackPane = PaneInfo(
@@ -74,146 +264,48 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(singleTabItem.visibleLabel, "bin · test-agent")
         XCTAssertEqual(multiTabItem.visibleLabel, "workspace · tab · test-agent")
         XCTAssertEqual(duplicateItem.visibleLabel, "test-agent")
-        XCTAssertEqual(AgentMenuItem(pane: fallbackPane).visibleLabel, "pane-42 · test-agent")
+        XCTAssertEqual(AgentMenuItem(session: defaultDescriptor, pane: fallbackPane).visibleLabel, "pane-42 · test-agent")
     }
 
-    func testSecondaryLabelPrefersHerdrPaneLabelOverDetectedAgent() {
-        let pane = PaneInfo(
-            paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",
-            focused: false, label: "test-agent", agent: "pi", title: nil, displayAgent: nil,
-            agentStatus: .idle, revision: 1
+    func testSecondaryLabelsPreservePaneAndDisplayAgentPreference() {
+        let paneLabel = PaneInfo(
+            paneID: "p1", terminalID: "t", workspaceID: "w", tabID: "tab", focused: false,
+            label: "test-agent", agent: "pi", title: nil, displayAgent: nil, agentStatus: .idle, revision: 1
         )
-
-        let item = AgentMenuItem(pane: pane)
-
-        XCTAssertEqual(item.secondaryLabel, "idle · test-agent")
-    }
-
-    func testSecondaryLabelStillPrefersDisplayAgentOverPaneLabel() {
-        let pane = PaneInfo(
-            paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",
-            focused: false, label: "test-agent", agent: "pi", title: nil, displayAgent: "Pi Display",
-            agentStatus: .idle, revision: 1
+        let displayAgent = PaneInfo(
+            paneID: "p2", terminalID: "t", workspaceID: "w", tabID: "tab", focused: false,
+            label: "test-agent", agent: "pi", title: nil, displayAgent: "Pi Display", agentStatus: .idle, revision: 1
         )
-
-        let item = AgentMenuItem(pane: pane)
-
-        XCTAssertEqual(item.secondaryLabel, "idle · Pi Display")
+        XCTAssertEqual(AgentMenuItem(session: defaultDescriptor, pane: paneLabel).secondaryLabel, "idle · test-agent")
+        XCTAssertEqual(AgentMenuItem(session: defaultDescriptor, pane: displayAgent).secondaryLabel, "idle · Pi Display")
     }
 
-    func testJoinedLabelFallsBackThroughPaneTitleLabelAndID() {
-        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
-        let panes = [
+    func testJoinedLabelFallsBackThroughPaneTitleLabelAndID() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        await supervisor.send(.connected(defaultDescriptor, PresentationSnapshot(panes: [
             pane("title", .done, title: "Pane title", workspaceID: "missing", tabID: "missing:tab"),
             pane("label", .done, label: "Pane label", workspaceID: "missing", tabID: "missing:tab"),
             pane("final-id", .done, workspaceID: "missing", tabID: "missing:tab")
-        ]
-
-        store.apply(snapshot: PresentationSnapshot(panes: panes, workspaces: [], tabs: []))
-
-        XCTAssertEqual(store.attentionItems.map(\.displayLabel), ["final-id", "Pane label", "Pane title"])
+        ], workspaces: [], tabs: [])))
+        await eventually { store.attentionCount == 3 }
+        XCTAssertEqual(store.attentionSections[0].items.map(\.displayLabel), ["final-id", "Pane label", "Pane title"])
+        await store.stop()
     }
 
-    func testDistinctSnapshotTabsMakeWorkspaceMultiTabWhenCountIsStale() {
-        let store = AgentStore(client: FakeAgentClient(), terminalActivator: RecordingActivator())
-        let panes = [pane("server", .working, workspaceID: "w", tabID: "t2")]
-        let snapshot = PresentationSnapshot(
-            panes: panes,
+    func testDistinctSnapshotTabsMakeWorkspaceMultiTabWhenCountIsStale() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        let value = PresentationSnapshot(
+            panes: [pane("server", .working, workspaceID: "w", tabID: "t2")],
             workspaces: [workspace("w", label: "Herdr Menubar", tabCount: 1)],
             tabs: [tab("t1", workspaceID: "w", label: "shell"), tab("t2", workspaceID: "w", label: "server")]
         )
-
-        store.apply(snapshot: snapshot)
-
-        XCTAssertEqual(store.workingItems.first?.displayLabel, "Herdr Menubar · server")
-    }
-
-    func testDisconnectedEventClearsVisibleRowsAndRetryDelegatesToClient() async {
-        let client = FakeAgentClient()
-        let store = AgentStore(client: client, terminalActivator: RecordingActivator())
-        await store.start()
-        await client.send(.connected(snapshot([pane("blocked", .blocked)])))
-        await eventually { store.attentionCount == 1 }
-
-        await client.send(.disconnected("socket unavailable"))
-        await eventually { store.connectionState == .disconnected("socket unavailable") }
-        XCTAssertTrue(store.attentionItems.isEmpty)
-        XCTAssertTrue(store.workingItems.isEmpty)
-
-        await store.retry()
-        let retryCount = await client.retryCount
-        XCTAssertEqual(retryCount, 1)
-        XCTAssertNil(store.transientError)
+        await supervisor.send(.connected(defaultDescriptor, value))
+        await eventually { store.workingSections.first?.items.first?.displayLabel == "Herdr Menubar · server" }
         await store.stop()
-    }
-
-    func testStopClearsRowsSetsDisconnectedAndStopsClientOnce() async {
-        let client = FakeAgentClient()
-        let store = AgentStore(client: client, terminalActivator: RecordingActivator())
-        await store.start()
-        await client.send(.connected(snapshot([
-            pane("blocked", .blocked),
-            pane("working", .working)
-        ])))
-        await eventually { store.attentionCount == 1 && store.workingItems.count == 1 }
-
-        await store.stop()
-        await store.stop()
-
-        XCTAssertEqual(store.connectionState, .disconnected("Disconnected from Herdr"))
-        XCTAssertTrue(store.attentionItems.isEmpty)
-        XCTAssertTrue(store.workingItems.isEmpty)
-        let stopCount = await client.stopCount
-        XCTAssertEqual(stopCount, 1)
-    }
-
-    func testEventsAfterStopDoNotRepopulateRows() async {
-        let client = FakeAgentClient()
-        let store = AgentStore(client: client, terminalActivator: RecordingActivator())
-        await store.start()
-        await store.stop()
-
-        await client.send(.connected(snapshot([pane("stale", .blocked)])))
-        for _ in 0..<10 { await Task.yield() }
-
-        XCTAssertEqual(store.connectionState, .disconnected("Disconnected from Herdr"))
-        XCTAssertTrue(store.attentionItems.isEmpty)
-        XCTAssertTrue(store.workingItems.isEmpty)
-    }
-
-    func testMenuBarAccessibilityValuesDescribeState() {
-        XCTAssertEqual(
-            MenuBarIcon.accessibilityValue(
-                connectionState: .disconnected("socket unavailable"),
-                attentionCount: 3
-            ),
-            "Disconnected"
-        )
-        XCTAssertEqual(
-            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 0),
-            "Connected, no agents need attention"
-        )
-        XCTAssertEqual(
-            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 1),
-            "Connected, 1 agent needs attention"
-        )
-        XCTAssertEqual(
-            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 3),
-            "Connected, 3 agents need attention"
-        )
-    }
-
-    func testSelectionFocusesBeforeActivationThenRefreshes() async {
-        let sequence = ActionSequence()
-        let client = FakeAgentClient(sequence: sequence)
-        let activator = RecordingActivator(sequence: sequence)
-        let store = AgentStore(client: client, terminalActivator: activator)
-
-        await store.select(AgentMenuItem(pane: pane("p", .blocked)))
-
-        let values = await sequence.values
-        XCTAssertEqual(values, ["focus:p", "activate:com.github.wez.wezterm", "refresh"])
-        XCTAssertNil(store.transientError)
     }
 
     func testSelectionReadsCurrentTerminalPreferenceAfterFocusSucceeds() async {
@@ -222,41 +314,30 @@ final class AgentStoreTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let preferences = Preferences(defaults: defaults)
-        XCTAssertEqual(
-            preferences.selectedTerminalBundleIdentifier,
-            "com.github.wez.wezterm"
-        )
-        let client = FakeAgentClient(focusAction: {
-            await MainActor.run {
-                preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
-            }
+        let supervisor = FakeSessionSupervisor(focusAction: {
+            await MainActor.run { preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty" }
         })
         let activator = RecordingActivator()
-        let store = AgentStore(
-            client: client,
-            terminalActivator: activator,
-            preferences: preferences
-        )
+        let store = AgentStore(supervisor: supervisor, terminalActivator: activator, preferences: preferences)
 
-        await store.select(AgentMenuItem(pane: pane("p", .blocked)))
+        await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("p", .blocked)))
 
         XCTAssertEqual(activator.activatedBundleIdentifiers, ["com.mitchellh.ghostty"])
     }
 
-    func testFailedFocusDoesNotActivateOrRefreshAndShowsExactServerMessage() async {
-        let client = FakeAgentClient(
-            focusError: HerdrAPIError(code: "pane_not_found", message: "Pane no longer exists")
-        )
-        let activator = RecordingActivator()
-        let store = AgentStore(client: client, terminalActivator: activator)
+    func testActivationFailureAfterFocusStillRefreshesAndShowsTransientError() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let activator = RecordingActivator(error: TestFailure.activation, sequence: sequence)
+        let store = AgentStore(supervisor: supervisor, terminalActivator: activator)
 
-        await store.select(AgentMenuItem(pane: pane("p", .blocked)))
+        await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("p", .done)))
 
-        let activationCount = activator.activationCount
-        let refreshCount = await client.refreshCount
-        XCTAssertEqual(activationCount, 0)
-        XCTAssertEqual(refreshCount, 0)
-        XCTAssertEqual(store.transientError, "Could not focus pane: Pane no longer exists")
+        let actions = await sequence.values
+        XCTAssertEqual(actions, [
+            "focus:Default:p", "activate:com.github.wez.wezterm", "refresh:Default"
+        ])
+        XCTAssertNotNil(store.transientError)
     }
 
     func testHostedXCTestEnvironmentDisablesProductionSynchronization() {
@@ -264,20 +345,6 @@ final class AgentStoreTests: XCTestCase {
             "XCTestConfigurationFilePath": "/tmp/HerdrMenubarTests.xctestconfiguration"
         ]))
         XCTAssertTrue(HerdrMenubarApp.shouldStartSynchronization(environment: [:]))
-        XCTAssertTrue(HerdrMenubarApp.shouldStartSynchronization(environment: ["HERDR_SOCKET": "/tmp/herdr.sock"]))
-    }
-
-    func testActivationFailureAfterFocusStillRefreshesAndShowsTransientError() async {
-        let sequence = ActionSequence()
-        let client = FakeAgentClient(sequence: sequence)
-        let activator = RecordingActivator(error: TestFailure.activation, sequence: sequence)
-        let store = AgentStore(client: client, terminalActivator: activator)
-
-        await store.select(AgentMenuItem(pane: pane("p", .done)))
-
-        let values = await sequence.values
-        XCTAssertEqual(values, ["focus:p", "activate:com.github.wez.wezterm", "refresh"])
-        XCTAssertNotNil(store.transientError)
     }
 
     private func eventually(
@@ -286,28 +353,31 @@ final class AgentStoreTests: XCTestCase {
     ) async {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
-        while !condition(), clock.now < deadline {
-            await Task.yield()
-        }
+        while !condition(), clock.now < deadline { await Task.yield() }
         XCTAssertTrue(condition())
     }
 }
 
-private enum TestFailure: Error {
-    case focus
-    case activation
+private struct FocusRequest: Equatable, Sendable {
+    let sessionID: SessionID
+    let paneID: String
 }
+
+private enum TestFailure: Error { case activation }
 
 private actor ActionSequence {
     private(set) var values: [String] = []
     func append(_ value: String) { values.append(value) }
 }
 
-private actor FakeAgentClient: AgentClientServing {
-    private var continuation: AsyncStream<HerdrClientEvent>.Continuation?
+private actor FakeSessionSupervisor: SessionSupervising {
+    private var continuation: AsyncStream<SessionSupervisorEvent>.Continuation?
+    private(set) var lifecycleActions: [String] = []
     private(set) var retryCount = 0
-    private(set) var refreshCount = 0
     private(set) var stopCount = 0
+    private(set) var refreshRequests: [SessionID] = []
+    private(set) var focusRequests: [FocusRequest] = []
+    private(set) var streamTerminated = false
     private let focusError: (any Error)?
     private let sequence: ActionSequence?
     private let focusAction: (@Sendable () async -> Void)?
@@ -322,34 +392,35 @@ private actor FakeAgentClient: AgentClientServing {
         self.focusAction = focusAction
     }
 
-    func events() -> AsyncStream<HerdrClientEvent> {
-        let (stream, continuation) = AsyncStream<HerdrClientEvent>.makeStream()
+    func events() -> AsyncStream<SessionSupervisorEvent> {
+        lifecycleActions.append("events")
+        let (stream, continuation) = AsyncStream<SessionSupervisorEvent>.makeStream()
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.recordTermination() }
+        }
         self.continuation = continuation
         return stream
     }
 
-    func start() {}
-    func stop() { stopCount += 1 }
+    func start() { lifecycleActions.append("start") }
+    func stop() { stopCount += 1; continuation?.finish() }
+    func retryUnavailable() { retryCount += 1 }
 
-    func retryNow() {
-        retryCount += 1
-    }
-
-    func refresh() async {
-        refreshCount += 1
-        await sequence?.append("refresh")
-    }
-
-    func focus(paneID: String) async throws -> PaneInfo {
-        await sequence?.append("focus:\(paneID)")
+    func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo {
+        focusRequests.append(FocusRequest(sessionID: sessionID, paneID: paneID))
+        await sequence?.append("focus:\(sessionID.displayName):\(paneID)")
         if let focusError { throw focusError }
         await focusAction?()
         return pane(paneID, .idle)
     }
 
-    func send(_ event: HerdrClientEvent) {
-        continuation?.yield(event)
+    func refresh(sessionID: SessionID) async {
+        refreshRequests.append(sessionID)
+        await sequence?.append("refresh:\(sessionID.displayName)")
     }
+
+    func send(_ event: SessionSupervisorEvent) { continuation?.yield(event) }
+    private func recordTermination() { streamTerminated = true }
 }
 
 @MainActor
@@ -372,6 +443,15 @@ private final class RecordingActivator: TerminalActivating {
     }
 }
 
+private let defaultDescriptor = SessionDescriptor(
+    id: .default, socketURL: URL(fileURLWithPath: "/tmp/default.sock")
+)
+private let workDescriptor = descriptor("work")
+
+private func descriptor(_ name: String) -> SessionDescriptor {
+    SessionDescriptor(id: .named(name), socketURL: URL(fileURLWithPath: "/tmp/\(name).sock"))
+}
+
 private func snapshot(_ panes: [PaneInfo]) -> PresentationSnapshot {
     PresentationSnapshot(panes: panes, workspaces: [], tabs: [])
 }
@@ -385,41 +465,22 @@ private func pane(
     tabID: String = "tab"
 ) -> PaneInfo {
     PaneInfo(
-        paneID: id,
-        terminalID: "terminal-\(id)",
-        workspaceID: workspaceID,
-        tabID: tabID,
-        focused: false,
-        label: label,
-        agent: "claude",
-        title: title,
-        displayAgent: "Claude",
-        agentStatus: status,
-        revision: 1
+        paneID: id, terminalID: "terminal-\(id)", workspaceID: workspaceID, tabID: tabID,
+        focused: false, label: label, agent: "claude", title: title, displayAgent: "Claude",
+        agentStatus: status, revision: 1
     )
 }
 
 private func workspace(_ id: String, label: String, tabCount: Int) -> WorkspaceInfo {
     WorkspaceInfo(
-        workspaceID: id,
-        number: 1,
-        label: label,
-        focused: false,
-        paneCount: 1,
-        tabCount: tabCount,
-        activeTabID: "\(id):tab",
-        agentStatus: .working
+        workspaceID: id, number: 1, label: label, focused: false, paneCount: 1,
+        tabCount: tabCount, activeTabID: "\(id):tab", agentStatus: .working
     )
 }
 
 private func tab(_ id: String, workspaceID: String, label: String) -> TabInfo {
     TabInfo(
-        tabID: id,
-        workspaceID: workspaceID,
-        number: 1,
-        label: label,
-        focused: false,
-        paneCount: 1,
-        agentStatus: .working
+        tabID: id, workspaceID: workspaceID, number: 1, label: label, focused: false,
+        paneCount: 1, agentStatus: .working
     )
 }
