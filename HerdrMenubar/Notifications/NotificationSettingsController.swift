@@ -78,14 +78,11 @@ final class NotificationSettingsController {
             systemSettings = settings
             preferences.notificationsEnabled = granted
                 && settings.authorization == .authorized
-                && settings.alertsEnabled
         } catch {
             guard activePermissionOperation == operationID else { throw error }
             preferences.notificationsEnabled = false
             errorMessage = "Could not enable notifications."
-            AppLog.systemActions.error(
-                "Notification authorization failed: \(error.localizedDescription, privacy: .private)"
-            )
+            AppLog.systemActions.error("Notification authorization failed")
             throw error
         }
     }

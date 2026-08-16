@@ -15,7 +15,7 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertNil(fixture.controller.helpText)
     }
 
-    func testEnablePersistsOnlyAfterGrantedEffectiveAuthorization() async throws {
+    func testEnablePersistsAfterGrantedAuthorizedRequest() async throws {
         let fixture = makeFixture(authorizationResult: true, settings: .authorized)
         defer { fixture.removeDefaults() }
 
@@ -29,7 +29,7 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertEqual(authorizationRequests, 1)
     }
 
-    func testGrantedRequestWithDisabledSystemAlertsLeavesIntentOff() async throws {
+    func testGrantedAuthorizedRequestPreservesIntentWhenSystemAlertsAreDisabled() async throws {
         let alertsDisabled = NotificationSystemSettings(
             authorization: .authorized,
             alertsEnabled: false,
@@ -40,9 +40,12 @@ final class NotificationSettingsControllerTests: XCTestCase {
 
         try await fixture.controller.setNotificationsEnabled(true)
 
-        XCTAssertFalse(fixture.controller.isEnabled)
-        XCTAssertFalse(fixture.defaults.bool(forKey: Preferences.notificationsEnabledKey))
-        XCTAssertEqual(fixture.controller.helpText, "Allow notifications in System Settings")
+        XCTAssertTrue(fixture.controller.isEnabled)
+        XCTAssertTrue(fixture.defaults.bool(forKey: Preferences.notificationsEnabledKey))
+        XCTAssertEqual(
+            fixture.controller.helpText,
+            "Notifications are disabled in System Settings"
+        )
     }
 
     func testDenialLeavesIntentOffAndShowsSystemSettingsHelp() async throws {
@@ -210,6 +213,50 @@ final class NotificationSettingsControllerTests: XCTestCase {
         await olderRefresh.value
 
         XCTAssertEqual(fixture.controller.systemSettings, .authorized)
+    }
+
+    func testOlderGatedRefreshCannotOverwriteNewerPermissionOperation() async throws {
+        let fixture = makeFixture(settings: .denied, gateNextSettings: true)
+        defer { fixture.removeDefaults() }
+        let olderRefresh = Task { await fixture.controller.refreshStatus() }
+        await fixture.service.waitForSettingsRequests(1)
+
+        await fixture.service.setSettings(.authorized)
+        try await fixture.controller.setNotificationsEnabled(true)
+        XCTAssertEqual(fixture.controller.systemSettings, .authorized)
+        XCTAssertTrue(fixture.controller.isEnabled)
+
+        await fixture.service.releaseSettings()
+        await olderRefresh.value
+
+        XCTAssertEqual(fixture.controller.systemSettings, .authorized)
+        XCTAssertTrue(fixture.controller.isEnabled)
+        let settingsRequests = await fixture.service.settingsRequests
+        XCTAssertEqual(settingsRequests, 2)
+    }
+
+    func testRefreshDuringGatedPermissionOperationDoesNotReadOrMutateSettings() async throws {
+        let fixture = makeFixture(settings: .authorized, gateAuthorization: true)
+        defer { fixture.removeDefaults() }
+        let permissionOperation = Task {
+            try await fixture.controller.setNotificationsEnabled(true)
+        }
+        await fixture.service.waitForAuthorizationRequests(1)
+
+        await fixture.controller.refreshStatus()
+
+        var settingsRequests = await fixture.service.settingsRequests
+        XCTAssertEqual(settingsRequests, 0)
+        XCTAssertEqual(fixture.controller.systemSettings, .notDetermined)
+        XCTAssertFalse(fixture.controller.isEnabled)
+
+        await fixture.service.releaseAuthorization()
+        try await permissionOperation.value
+
+        settingsRequests = await fixture.service.settingsRequests
+        XCTAssertEqual(settingsRequests, 1)
+        XCTAssertEqual(fixture.controller.systemSettings, .authorized)
+        XCTAssertTrue(fixture.controller.isEnabled)
     }
 
     private func makeFixture(
