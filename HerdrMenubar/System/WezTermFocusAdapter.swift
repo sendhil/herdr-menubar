@@ -38,7 +38,7 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
     private let timing: any FocusTiming
     private let markerGenerator: @Sendable () -> String
     private var pendingCleanup: Set<SessionID> = []
-    private var sessionEpochs: [SessionID: UInt64] = [:]
+    private var sessionLifecycles: [SessionID: FocusSessionLifecycle] = [:]
 
     init(
         supervisor: any SessionSupervising,
@@ -55,10 +55,13 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
     }
 
     func focusAttachedClient(sessionID: SessionID) async throws {
-        let epoch = sessionEpoch(for: sessionID)
-        try await resolvePendingCleanupIfNeeded(sessionID: sessionID, epoch: epoch)
+        let lifecycle = lifecycle(for: sessionID)
+        try await resolvePendingCleanupIfNeeded(
+            sessionID: sessionID,
+            lifecycle: lifecycle
+        )
         try Task.checkCancellation()
-        try ensureCurrent(sessionID: sessionID, epoch: epoch)
+        try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
 
         let marker = markerGenerator()
         let setResult: ClientWindowTitleResult
@@ -68,11 +71,13 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
                 title: marker
             )
         } catch let error as HerdrAPIError where error.code == "method_not_found" {
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
             throw WezTermFocusError.unsupportedHerdr
         } catch {
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
             throw mapped(error)
         }
-        try ensureCurrent(sessionID: sessionID, epoch: epoch)
+        try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
 
         guard setResult.hasForegroundClient else {
             throw WezTermFocusError.noAttachedClient
@@ -81,25 +86,25 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
         var markerInstalled = true
         do {
             let pane = try await findExactPane(marker: marker)
-            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
             try await clearMarkerCancellationIndependently(
                 sessionID: sessionID,
-                epoch: epoch
+                lifecycle: lifecycle
             )
             markerInstalled = false
             try Task.checkCancellation()
-            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
             try await cli.activatePane(id: pane.paneID)
         } catch {
             let operationError = error
-            guard isCurrent(sessionID: sessionID, epoch: epoch) else {
+            guard isCurrent(sessionID: sessionID, lifecycle: lifecycle) else {
                 throw CancellationError()
             }
             if markerInstalled, !pendingCleanup.contains(sessionID) {
                 do {
                     try await clearMarkerCancellationIndependently(
                         sessionID: sessionID,
-                        epoch: epoch
+                        lifecycle: lifecycle
                     )
                 } catch {
                     throw mapped(error)
@@ -110,7 +115,7 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
     }
 
     func forget(sessionID: SessionID) {
-        sessionEpochs[sessionID] = sessionEpoch(for: sessionID) &+ 1
+        sessionLifecycles.removeValue(forKey: sessionID)
         pendingCleanup.remove(sessionID)
     }
 
@@ -158,33 +163,39 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
 
     private func resolvePendingCleanupIfNeeded(
         sessionID: SessionID,
-        epoch: UInt64
+        lifecycle: FocusSessionLifecycle
     ) async throws {
         guard pendingCleanup.contains(sessionID) else { return }
-        try await clearMarkerCancellationIndependently(sessionID: sessionID, epoch: epoch)
+        try await clearMarkerCancellationIndependently(
+            sessionID: sessionID,
+            lifecycle: lifecycle
+        )
     }
 
     private func clearMarkerCancellationIndependently(
         sessionID: SessionID,
-        epoch: UInt64
+        lifecycle: FocusSessionLifecycle
     ) async throws {
         let task = Task { @MainActor [self] in
-            try await clearMarkerWithRetries(sessionID: sessionID, epoch: epoch)
+            try await clearMarkerWithRetries(
+                sessionID: sessionID,
+                lifecycle: lifecycle
+            )
         }
         try await task.value
     }
 
     private func clearMarkerWithRetries(
         sessionID: SessionID,
-        epoch: UInt64
+        lifecycle: FocusSessionLifecycle
     ) async throws {
         let startedAt = await timing.now()
-        try ensureCurrent(sessionID: sessionID, epoch: epoch)
+        try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
         let deadline = startedAt.advanced(by: .milliseconds(500))
 
         for attempt in 1...3 {
             let beforeAttempt = await timing.now()
-            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
             guard beforeAttempt < deadline else { break }
             let attemptBudget = beforeAttempt.duration(to: deadline)
             do {
@@ -192,7 +203,7 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
                     sessionID: sessionID,
                     timeout: attemptBudget
                 )
-                try ensureCurrent(sessionID: sessionID, epoch: epoch)
+                try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
                 if result.reason == "cleared" || result.reason == "no_foreground_client" {
                     pendingCleanup.remove(sessionID)
                     return
@@ -200,18 +211,18 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
             } catch {
                 // Retry boundedly; the public result deliberately does not expose transport detail.
             }
-            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
 
             guard attempt < 3 else { break }
             let current = await timing.now()
-            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
             guard current < deadline else { break }
             let remaining = current.duration(to: deadline)
             try? await timing.sleep(for: min(.milliseconds(100), remaining))
-            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
         }
 
-        try ensureCurrent(sessionID: sessionID, epoch: epoch)
+        try ensureCurrent(sessionID: sessionID, lifecycle: lifecycle)
         pendingCleanup.insert(sessionID)
         throw WezTermFocusError.markerCleanupFailed
     }
@@ -234,16 +245,27 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
         }
     }
 
-    private func sessionEpoch(for sessionID: SessionID) -> UInt64 {
-        sessionEpochs[sessionID] ?? 0
+    private func lifecycle(for sessionID: SessionID) -> FocusSessionLifecycle {
+        if let lifecycle = sessionLifecycles[sessionID] {
+            return lifecycle
+        }
+        let lifecycle = FocusSessionLifecycle()
+        sessionLifecycles[sessionID] = lifecycle
+        return lifecycle
     }
 
-    private func isCurrent(sessionID: SessionID, epoch: UInt64) -> Bool {
-        sessionEpoch(for: sessionID) == epoch
+    private func isCurrent(
+        sessionID: SessionID,
+        lifecycle: FocusSessionLifecycle
+    ) -> Bool {
+        sessionLifecycles[sessionID] === lifecycle
     }
 
-    private func ensureCurrent(sessionID: SessionID, epoch: UInt64) throws {
-        guard isCurrent(sessionID: sessionID, epoch: epoch) else {
+    private func ensureCurrent(
+        sessionID: SessionID,
+        lifecycle: FocusSessionLifecycle
+    ) throws {
+        guard isCurrent(sessionID: sessionID, lifecycle: lifecycle) else {
             throw CancellationError()
         }
     }
@@ -266,6 +288,8 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
         return WezTermFocusError.wezTermControlFailed
     }
 }
+
+private final class FocusSessionLifecycle {}
 
 private enum FocusAttemptError: Error {
     case timedOut

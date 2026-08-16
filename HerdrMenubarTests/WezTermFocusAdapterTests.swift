@@ -96,7 +96,7 @@ final class WezTermFocusAdapterTests: XCTestCase {
         }
 
         var expected = ["set:work:\(marker)"]
-        for iteration in 0..<20 {
+        for _ in 0..<20 {
             expected.append("list")
             expected.append("sleep:50ms")
         }
@@ -177,6 +177,18 @@ final class WezTermFocusAdapterTests: XCTestCase {
 
         XCTAssertEqual(recorder.actions, ["set:work:\(marker)"])
         XCTAssertTrue(cli.activatedPaneIDs.isEmpty)
+    }
+
+    func testForgetWhileSetIsSuspendedInvalidatesMethodNotFoundAndRecreatedSessionStartsClean() async {
+        await assertForgetInvalidatesSuspendedSet(
+            HerdrAPIError(code: "method_not_found", message: "private")
+        )
+    }
+
+    func testForgetWhileSetIsSuspendedInvalidatesTransportFailureAndRecreatedSessionStartsClean() async {
+        await assertForgetInvalidatesSuspendedSet(
+            SessionSupervisorError.sessionUnavailable("work")
+        )
     }
 
     func testMalformedListOutputClearsMarkerBeforeReturningError() async {
@@ -659,6 +671,50 @@ final class WezTermFocusAdapterTests: XCTestCase {
         )
         XCTAssertTrue(cli.activatedPaneIDs.isEmpty, file: file, line: line)
     }
+
+    private func assertForgetInvalidatesSuspendedSet(
+        _ setError: any Error,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let recorder = FocusActionRecorder()
+        let setGate = FocusListGate()
+        let supervisor = FocusSupervisorFake(
+            recorder: recorder,
+            setResults: [.failure(setError), .success(noForegroundResult)],
+            setGate: setGate
+        )
+        let cli = FocusCLIFake(recorder: recorder)
+        let adapter = makeAdapter(supervisor: supervisor, cli: cli, recorder: recorder)
+
+        let oldOperation = Task {
+            await capturedError {
+                try await adapter.focusAttachedClient(sessionID: session)
+            }
+        }
+        await setGate.waitUntilEntered()
+        adapter.forget(sessionID: session)
+        setGate.release()
+        let oldError = await oldOperation.value
+
+        XCTAssertTrue(oldError is CancellationError, file: file, line: line)
+        let recreatedError = await capturedError {
+            try await adapter.focusAttachedClient(sessionID: session)
+        }
+        XCTAssertEqual(
+            recreatedError as? WezTermFocusError,
+            .noAttachedClient,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            recorder.actions,
+            ["set:work:\(marker)", "set:work:\(marker)"],
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(cli.activatedPaneIDs.isEmpty, file: file, line: line)
+    }
 }
 
 @MainActor
@@ -675,6 +731,7 @@ private final class FocusSupervisorFake: SessionSupervising {
     private let recorder: FocusActionRecorder
     private var setResults: [Result<ClientWindowTitleResult, Error>]
     private var clearResults: [Result<ClientWindowTitleResult, Error>]
+    private var setGate: FocusListGate?
     private var clearGate: FocusListGate?
     private(set) var setTitles: [String] = []
     private(set) var clearSessionIDs: [SessionID] = []
@@ -686,11 +743,13 @@ private final class FocusSupervisorFake: SessionSupervising {
         recorder: FocusActionRecorder,
         setResults: [Result<ClientWindowTitleResult, Error>] = [],
         clearResults: [Result<ClientWindowTitleResult, Error>] = [],
+        setGate: FocusListGate? = nil,
         clearGate: FocusListGate? = nil
     ) {
         self.recorder = recorder
         self.setResults = setResults
         self.clearResults = clearResults
+        self.setGate = setGate
         self.clearGate = clearGate
     }
 
@@ -712,6 +771,9 @@ private final class FocusSupervisorFake: SessionSupervising {
     ) async throws -> ClientWindowTitleResult {
         recorder.append("set:\(sessionID.displayName):\(title)")
         setTitles.append(title)
+        let gate = setGate
+        setGate = nil
+        await gate?.wait()
         guard !setResults.isEmpty else {
             return ClientWindowTitleResult(
                 type: "client_window_title",
