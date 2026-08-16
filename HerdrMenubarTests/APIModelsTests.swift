@@ -100,16 +100,24 @@ final class APIModelsTests: XCTestCase {
         )
     }
 
-    func testClientWindowTitleResultDecodesSetClearedAndNoForegroundClient() throws {
-        for (reason, changed) in [("set", true), ("cleared", true), ("no_foreground_client", false)] {
+    func testClientWindowTitleResultDecodesCurrentAndFutureReasons() throws {
+        for (reason, changed, hasForegroundClient) in [
+            ("set", true, true),
+            ("cleared", true, true),
+            ("no_foreground_client", false, false),
+            ("future_reason", false, true)
+        ] {
             let data = Data(#"{"id":"1","result":{"type":"client_window_title","changed":\#(changed),"reason":"\#(reason)"}}"#.utf8)
             let response = try JSONDecoder().decode(
                 HerdrResponse<ClientWindowTitleResult>.self,
                 from: data
             )
-            XCTAssertEqual(response.result, ClientWindowTitleResult(
+            let expected = ClientWindowTitleResult(
                 type: "client_window_title", changed: changed, reason: reason
-            ))
+            )
+            XCTAssertEqual(response.result, expected)
+            XCTAssertEqual(response.result?.reason, reason)
+            XCTAssertEqual(response.result?.hasForegroundClient, hasForegroundClient)
         }
     }
 

@@ -55,12 +55,23 @@ final class HerdrClientTests: XCTestCase {
         XCTAssertEqual(connectedSocketURLs, [url, url])
     }
 
-    func testClientWindowTitleMethodNotFoundRemainsAnAPIError() async {
+    func testClientWindowTitleMethodNotFoundKeepsLiveSessionConnected() async {
+        let url = URL(fileURLWithPath: "/tmp/title-live-session.sock")
         let factory = FakeHerdrConnectionFactory()
-        let client = makeClient(factory: factory)
+        let client = makeClient(factory: factory, socketURL: url)
+        let events = await client.events()
+        await client.start()
+        let subscription = await completeBootstrap(
+            factory: factory,
+            discovered: ["pane"],
+            authoritative: ["pane"]
+        )
+        _ = await events.next()
+
         let task = Task { try await client.setClientWindowTitle("marker") }
-        let connection = await factory.connection(at: 0)
+        let connection = await factory.connection(at: 5)
         let request = await connection.nextSent()
+        XCTAssertEqual(request.method, "client.window_title.set")
         await connection.push(
             #"{"id":"\#(request.id)","error":{"code":"method_not_found","message":"unknown method"}}"#
         )
@@ -76,6 +87,82 @@ final class HerdrClientTests: XCTestCase {
         } catch {
             XCTFail("Expected HerdrAPIError, got \(error)")
         }
+
+        guard !(await subscription.isClosed) else {
+            await client.stop()
+            return XCTFail("A command-scoped API error must not invalidate the live subscription")
+        }
+        await subscription.push(
+            #"{"event":"pane.agent_status_changed","data":{"pane_id":"pane"}}"#
+        )
+        let refresh = await factory.connection(at: 6)
+        let refreshRequest = await refresh.nextSent()
+        XCTAssertEqual(refreshRequest.method, "pane.list")
+        await refresh.reply(to: refreshRequest, result: paneListResult(ids: ["healthy"]))
+        await completeMetadata(factory: factory, startIndex: 7)
+        let refreshed = await events.next()
+        XCTAssertEqual(refreshed, .snapshot(clientSnapshot([pane("healthy")])))
+
+        let connectedSocketURLs = await factory.connectedSocketURLs
+        XCTAssertEqual(connectedSocketURLs.count, 9)
+        XCTAssertEqual(Set(connectedSocketURLs), [url])
+        await client.stop()
+    }
+
+    func testClientWindowTitleUnexpectedResultTypeInvalidatesLiveSession() async {
+        let url = URL(fileURLWithPath: "/tmp/title-protocol-session.sock")
+        let factory = FakeHerdrConnectionFactory()
+        let client = HerdrClient(
+            socketURL: url,
+            connectionFactory: factory,
+            backoff: BackoffPolicy(delays: [.seconds(15)], jitter: { 0 }),
+            sleeper: ControlledSleeper()
+        )
+        let events = await client.events()
+        await client.start()
+        let subscription = await completeBootstrap(
+            factory: factory,
+            discovered: ["pane"],
+            authoritative: ["pane"]
+        )
+        _ = await events.next()
+
+        let task = Task { try await client.setClientWindowTitle("marker") }
+        let connection = await factory.connection(at: 5)
+        let request = await connection.nextSent()
+        await connection.reply(
+            to: request,
+            result: #"{"type":"future_title_result","changed":false,"reason":"future"}"#
+        )
+
+        do {
+            _ = try await task.value
+            await client.stop()
+            return XCTFail("Expected title result type validation to fail")
+        } catch let error as HerdrClientError {
+            XCTAssertEqual(
+                error,
+                .unexpectedResponseType(
+                    expected: "client_window_title",
+                    actual: "future_title_result"
+                )
+            )
+        } catch {
+            await client.stop()
+            return XCTFail("Expected HerdrClientError, got \(error)")
+        }
+
+        guard await subscription.isClosed else {
+            await client.stop()
+            return XCTFail("A title protocol failure must invalidate the live subscription")
+        }
+        guard case .disconnected = await events.next() else {
+            await client.stop()
+            return XCTFail("Expected title protocol failure to publish disconnection")
+        }
+        let connectedSocketURLs = await factory.connectedSocketURLs
+        XCTAssertEqual(Set(connectedSocketURLs), [url])
+        await client.stop()
     }
 
     func testBootstrapReconcilesPaneAddedBetweenInitialAndPostSubscriptionLists() async throws {
