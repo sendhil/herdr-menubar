@@ -291,7 +291,48 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertNil(store.transientError)
     }
 
-    func testSupersededSelectionCannotActivateOrPublishError() async {
+    func testSupersededSuccessfulSelectionCannotActivateAndStillRefreshes() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let focuser = RecordingWezTermFocuser(
+            sequence: sequence,
+            results: [.success(()), .success(())],
+            blockedCalls: [1],
+            checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator(sequence: sequence)
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            preferences: testPreferences()
+        )
+        let first = Task {
+            await store.select(AgentMenuItem(session: workDescriptor, pane: pane("first", .working)))
+        }
+        await eventually { focuser.focusedSessionIDs.count == 1 }
+        let second = Task {
+            await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("second", .blocked)))
+        }
+        for _ in 0..<20 { await Task.yield() }
+        await focuser.releaseBlockedCalls()
+        await first.value
+        await second.value
+
+        let actions = await sequence.values
+        let refreshRequests = await supervisor.refreshRequests
+        XCTAssertEqual(actions, [
+            "focus:work:first", "wezterm:work", "refresh:work",
+            "focus:Default:second", "wezterm:Default",
+            "activate:com.github.wez.wezterm", "refresh:Default"
+        ])
+        XCTAssertEqual(focuser.cancellationObservedSessionIDs, [.named("work")])
+        XCTAssertEqual(activator.activatedBundleIdentifiers, [WezTermCLIConstants.bundleIdentifier])
+        XCTAssertEqual(refreshRequests, [.named("work"), .default])
+        XCTAssertNil(store.transientError)
+    }
+
+    func testSupersededFailedSelectionCannotActivateOrPublishError() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
         let focuser = RecordingWezTermFocuser(
@@ -899,6 +940,7 @@ private final class RecordingActivator: TerminalActivating {
 private final class RecordingWezTermFocuser: WezTermSessionFocusing {
     private(set) var focusedSessionIDs: [SessionID] = []
     private(set) var forgottenSessionIDs: [SessionID] = []
+    private(set) var cancellationObservedSessionIDs: [SessionID] = []
     private var results: [Result<Void, WezTermFocusError>]
     private let sequence: ActionSequence?
     private let blockedCalls: Set<Int>
@@ -923,6 +965,9 @@ private final class RecordingWezTermFocuser: WezTermSessionFocusing {
         await sequence?.append("wezterm:\(sessionID.displayName)")
         if blockedCalls.contains(call) {
             await gate.wait()
+            if Task.isCancelled {
+                cancellationObservedSessionIDs.append(sessionID)
+            }
             if checksCancellationAfterGate {
                 try Task.checkCancellation()
             }
