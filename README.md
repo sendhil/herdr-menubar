@@ -13,6 +13,7 @@ Herdr remains the source of truth. The app reads Herdr's public socket API and d
 - Uses Herdr-compatible workspace, tab, and agent labels.
 - Focuses the exact Herdr pane when an agent is selected.
 - Switches to the owning session's existing WezTerm tab, or activates another configured terminal application.
+- Optionally posts native macOS notifications for new blocked and completed-agent transitions.
 - Defaults to WezTerm and discovers supported terminals installed on the Mac.
 - Discovers sessions while running and reconnects them independently when Herdr starts, stops, or restarts.
 - Keeps healthy sessions visible when another session is unavailable.
@@ -35,6 +36,16 @@ The menu reflects Herdr's semantic pane status across all connected sessions:
 Selecting a row sends `pane.focus` to that row's owning Herdr session. When WezTerm is selected, Herdr Menubar also switches to the existing WezTerm tab containing that session's foreground attached client. It never opens a new tab when no client is attached; the menu reports that partial-focus condition instead. Other recognized terminals retain application-level activation without session-aware tab selection.
 
 For completed work, Herdr owns the resulting seen-state transition from `done` to `idle`; Herdr Menubar does not acknowledge it independently.
+
+## Notifications
+
+Native notifications are opt-in. Turn on **Notifications** in the Herdr Menubar menu to request macOS permission in context. The first snapshot from each Herdr session is used only as a baseline, so agents that already need attention when the app starts or notifications are enabled do not produce a notification.
+
+After that baseline, each distinct transition into `blocked` or `done` creates one notification for that pane. A change from `blocked` to `done`, or from `done` to `blocked`, creates another notification because the two states call for different attention. Repeated snapshots and an unchanged reconnect do not create duplicates. **Sound** is a separate opt-in setting, defaults off, and is unavailable while Notifications is off.
+
+Clicking a notification uses the same exact-session focus path as selecting a menu row: it focuses the identified pane in its owning Herdr session and, when WezTerm is selected, activates that session's existing attached WezTerm tab. It does not open a replacement tab or choose another session when the original target is unavailable.
+
+Notification labels are visible to macOS and follow the notification-preview choices in System Settings. The menu toggles record local app intent; macOS notification settings, Focus modes, and sound settings can still suppress presentation or sound. If permission is later disabled in System Settings, Herdr monitoring and the menu badge continue to work.
 
 The menu is status-first: **Needs Attention** and **Working** are the top-level sections, with **Default** followed by named-session groups inside each section. The menu-bar badge is the total number of `blocked` and `done` agents across connected sessions. An unavailable session's last-known state is removed from the badge and menu immediately, without disturbing healthy sessions.
 
@@ -85,6 +96,7 @@ The app has no Dock icon or normal application window. After launch, use its ter
 - Inspect working agents.
 - Select the terminal used for activation.
 - Enable or disable Launch at Login.
+- Enable native notifications and, independently, notification sound.
 - Retry unavailable Herdr sessions.
 - Quit the app.
 
@@ -147,6 +159,7 @@ HerdrMenubar/
 ├── App/       SwiftUI application lifecycle and composition
 ├── Herdr/     API models, socket discovery, transport, and synchronization
 ├── Menu/      Menu-bar icon, grouped menu, and agent rows
+├── Notifications/ Native notification transitions, delivery, and settings
 ├── Status/    Observable presentation state and user actions
 └── System/    Preferences, terminal activation, logging, and login items
 ```
@@ -157,6 +170,8 @@ The main runtime boundaries are:
 - **`SessionSupervisor`** — owns one `HerdrClient` per discovered session and isolates discovery, reconnect, retry, and removal behavior.
 - **`HerdrClient`** — an actor that owns one session's socket requests, event subscriptions, snapshots, reconnects, and synchronization generations.
 - **`AgentStore`** — a main-actor observable model that aggregates session-qualified menu sections and coordinates routed focus and activation.
+- **`AttentionNotificationCoordinator`** — tracks per-session pane transitions and suppresses startup and reconnect duplicates.
+- **`NativeNotificationService`** — owns macOS permission, delivery, and exact session-and-pane response routing.
 - **`NWHerdrConnection`** — a Network.framework Unix-domain socket adapter using newline-delimited JSON.
 - **`LoginItemService`** — a testable wrapper around `SMAppService.mainApp`.
 
@@ -203,6 +218,8 @@ The app persists only:
 
 - Selected terminal bundle identifier.
 - Launch at Login intent.
+- Notifications intent.
+- Notification sound intent.
 
 Actual login-item state is read from macOS through `SMAppService`. Pane snapshots, agent status, terminal output, session state, and acknowledgement state are not written to disk by Herdr Menubar. Herdr remains the source of truth for all runtime state.
 

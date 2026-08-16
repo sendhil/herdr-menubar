@@ -4,6 +4,159 @@ import XCTest
 @testable import HerdrMenubar
 
 final class MultiSessionIntegrationTests: XCTestCase {
+    func testTwoServersDeliverDistinctAttentionTransitionsAndRouteNotificationClickExactly() async throws {
+        let root = try makeTemporaryHerdrRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let defaultURL = root.appending(path: "herdr.sock")
+        let namedURL = root.appending(path: "sessions/work/herdr.sock")
+        let defaultServer = try FakeHerdrServer(
+            url: defaultURL,
+            panes: [integrationPane("duplicate", .working)]
+        )
+        defer { defaultServer.stop() }
+        var namedServer: FakeHerdrServer? = try FakeHerdrServer(
+            url: namedURL,
+            panes: [integrationPane("duplicate", .working)]
+        )
+        defer { namedServer?.stop() }
+
+        let graceSleeper = IntegrationHoldingSleeper()
+        let supervisor = SessionSupervisor(
+            discovery: SessionDiscovery(configRoot: root),
+            clientFactory: IntegrationClientFactory(),
+            sleeper: graceSleeper,
+            discoveryInterval: .seconds(30),
+            removalGracePeriod: .seconds(10)
+        )
+        let notifications = IntegrationNotificationService()
+        let coordinator = AttentionNotificationCoordinator(service: notifications)
+        let activator = await MainActor.run { IntegrationRecordingActivator() }
+        let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
+        let preferencesFixture = try await MainActor.run { try IntegrationPreferencesFixture() }
+        await MainActor.run {
+            preferencesFixture.preferences.notificationsEnabled = true
+        }
+        let store = await MainActor.run {
+            AgentStore(
+                supervisor: supervisor,
+                terminalActivator: activator,
+                wezTermFocuser: focuser,
+                attentionCoordinator: coordinator,
+                notificationService: notifications,
+                preferences: preferencesFixture.preferences
+            )
+        }
+        defer {
+            Task { @MainActor in preferencesFixture.remove() }
+        }
+
+        await store.start()
+        await eventually {
+            await MainActor.run { store.workingSections.count == 2 }
+        }
+        var deliveries = await notifications.deliveries
+        XCTAssertEqual(deliveries, [])
+
+        guard let initialNamedServer = namedServer else {
+            await store.stop()
+            return XCTFail("Expected named server")
+        }
+        await initialNamedServer.setPanes([integrationPane("duplicate", .blocked)])
+        await initialNamedServer.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
+        await eventually { await notifications.deliveries.count == 1 }
+        deliveries = await notifications.deliveries
+        XCTAssertEqual(deliveries[0].event, AttentionNotificationEvent(
+            target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
+            sessionName: "work",
+            visibleLabel: "pane-duplicate · Claude",
+            status: .blocked
+        ))
+        XCTAssertFalse(deliveries[0].sound)
+
+        await defaultServer.setPanes([integrationPane("duplicate", .done)])
+        await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .done)
+        await eventually { await notifications.deliveries.count == 2 }
+        deliveries = await notifications.deliveries
+        XCTAssertEqual(deliveries.map(\.event.target.sessionID), [.named("work"), .default])
+        XCTAssertEqual(deliveries[1].event, AttentionNotificationEvent(
+            target: NotificationSelectionTarget(sessionID: .default, paneID: "duplicate"),
+            sessionName: "Default",
+            visibleLabel: "pane-duplicate · Claude",
+            status: .done
+        ))
+        XCTAssertFalse(deliveries[1].sound)
+
+        await initialNamedServer.setPanes([integrationPane("duplicate", .done)])
+        await initialNamedServer.pushAgentStatusEvent(paneID: "duplicate", status: .done)
+        await eventually { await notifications.deliveries.count == 3 }
+        deliveries = await notifications.deliveries
+        XCTAssertEqual(deliveries[2].event, AttentionNotificationEvent(
+            target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
+            sessionName: "work",
+            visibleLabel: "pane-duplicate · Claude",
+            status: .done
+        ))
+        XCTAssertEqual(deliveries.map(\.sound), [false, false, false])
+
+        await notifications.send(NotificationSelectionTarget(
+            sessionID: .named("work"),
+            paneID: "duplicate"
+        ))
+        await eventually { await initialNamedServer.focusedPaneIDs == ["duplicate"] }
+        let defaultFocusedPaneIDs = await defaultServer.focusedPaneIDs
+        let focusedSessionIDs = await MainActor.run { focuser.focusedSessionIDs }
+        XCTAssertEqual(defaultFocusedPaneIDs, [])
+        XCTAssertEqual(focusedSessionIDs, [.named("work")])
+
+        namedServer?.stop()
+        namedServer = nil
+        await store.retry()
+        await eventually {
+            await MainActor.run { store.unavailableSessions.map(\.id) == [.named("work")] }
+        }
+        let reconnectedNamedServer = try FakeHerdrServer(
+            url: namedURL,
+            panes: [integrationPane("duplicate", .done)]
+        )
+        namedServer = reconnectedNamedServer
+        await store.retry()
+        await eventually {
+            await MainActor.run {
+                store.attentionSections.contains { $0.id == .named("work") }
+                    && store.unavailableSessions.isEmpty
+            }
+        }
+        let reconnectDeliveryCount = await notifications.deliveries.count
+        XCTAssertEqual(reconnectDeliveryCount, 3)
+
+        namedServer?.stop()
+        namedServer = nil
+        await store.retry()
+        await eventually { await graceSleeper.hasPendingWait(for: .seconds(10)) }
+        await graceSleeper.resumePendingWait(for: .seconds(10))
+        await eventually {
+            await MainActor.run {
+                !store.unavailableSessions.contains { $0.id == .named("work") }
+                    && !store.attentionSections.contains { $0.id == .named("work") }
+            }
+        }
+        let recreatedNamedServer = try FakeHerdrServer(
+            url: namedURL,
+            panes: [integrationPane("duplicate", .blocked)]
+        )
+        namedServer = recreatedNamedServer
+        await store.retry()
+        await eventually {
+            await MainActor.run { store.attentionSections.contains { $0.id == .named("work") } }
+        }
+        let recreatedDeliveryCount = await notifications.deliveries.count
+        XCTAssertEqual(recreatedDeliveryCount, 3)
+
+        await store.stop()
+        await MainActor.run { preferencesFixture.remove() }
+    }
+
     func testTwoServersBootstrapUpdateAndFocusIndependently() async throws {
         let root = try makeTemporaryHerdrRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -266,11 +419,36 @@ private struct IntegrationClientFactory: SessionClientCreating {
     }
 }
 
+private struct IntegrationNotificationDelivery: Equatable, Sendable {
+    let event: AttentionNotificationEvent
+    let sound: Bool
+}
+
 private actor IntegrationNotificationService: NativeNotificationServing {
-    func responses() async -> NotificationResponseSubscription { .finished() }
+    private(set) var deliveries: [IntegrationNotificationDelivery] = []
+    private var responseContinuation: AsyncStream<NotificationSelectionTarget>.Continuation?
+
+    func responses() async -> NotificationResponseSubscription {
+        let (stream, continuation) = AsyncStream<NotificationSelectionTarget>.makeStream()
+        responseContinuation?.finish()
+        responseContinuation = continuation
+        return NotificationResponseSubscription(
+            stream: stream,
+            cancellation: NotificationResponseCancellation {
+                continuation.finish()
+            }
+        )
+    }
+
+    func send(_ target: NotificationSelectionTarget) {
+        responseContinuation?.yield(target)
+    }
+
     func requestAuthorization() async throws -> Bool { true }
     func settings() async -> NotificationSystemSettings { .authorized }
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {}
+    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
+        deliveries.append(IntegrationNotificationDelivery(event: event, sound: sound))
+    }
 }
 
 private actor IntegrationAttentionCoordinator: AttentionNotificationCoordinating {
@@ -404,6 +582,13 @@ private actor IntegrationHoldingSleeper: Sleeper {
 
     func hasPendingWait(for duration: Duration) -> Bool {
         waits.contains { $0.duration == duration }
+    }
+
+    @discardableResult
+    func resumePendingWait(for duration: Duration) -> Bool {
+        guard let index = waits.firstIndex(where: { $0.duration == duration }) else { return false }
+        waits.remove(at: index).continuation.resume()
+        return true
     }
 }
 
