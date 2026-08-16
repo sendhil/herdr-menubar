@@ -81,8 +81,8 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         responseBroker.finish()
     }
 
-    func responses() async -> AsyncStream<NotificationSelectionTarget> {
-        responseBroker.stream()
+    func responses() async -> NotificationResponseSubscription {
+        responseBroker.subscription()
     }
 
     var responseSubscriberCount: Int {
@@ -207,17 +207,24 @@ private final class NotificationResponseBroker: @unchecked Sendable {
         lock.withLock { subscribers.count }
     }
 
-    func stream() -> AsyncStream<Target> {
+    func subscription() -> NotificationResponseSubscription {
         let subscriptionID = UUID()
-        return AsyncStream(
+        let cancellation = NotificationResponseCancellation { [weak self] in
+            self?.cancel(subscriptionID: subscriptionID)
+        }
+        let stream = AsyncStream<Target>(
             unfolding: { [weak self] in
                 guard let self else { return nil }
-                return await self.next(subscriptionID: subscriptionID)
+                return await self.next(
+                    subscriptionID: subscriptionID,
+                    cancellation: cancellation
+                )
             },
-            onCancel: { [weak self] in
-                self?.cancel(subscriptionID: subscriptionID)
+            onCancel: {
+                cancellation.cancel()
             }
         )
+        return NotificationResponseSubscription(stream: stream, cancellation: cancellation)
     }
 
     func yield(_ target: Target) {
@@ -260,7 +267,10 @@ private final class NotificationResponseBroker: @unchecked Sendable {
         }
     }
 
-    private func next(subscriptionID: UUID) async -> Target? {
+    private func next(
+        subscriptionID: UUID,
+        cancellation: NotificationResponseCancellation
+    ) async -> Target? {
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 enum Action {
@@ -269,36 +279,38 @@ private final class NotificationResponseBroker: @unchecked Sendable {
                     case terminateDuplicate(Waiter)
                 }
 
-                let action = lock.withLock { () -> Action in
-                    guard !isFinished, !Task.isCancelled else { return .resume(nil) }
+                let action = cancellation.withActive {
+                    lock.withLock { () -> Action in
+                        guard !isFinished, !Task.isCancelled else { return .resume(nil) }
 
-                    var subscriber: Subscriber
-                    if let existing = subscribers[subscriptionID] {
-                        subscriber = existing
-                    } else {
-                        let initialMailbox: [Target]
-                        if subscribers.isEmpty {
-                            initialMailbox = pendingTargets
-                            pendingTargets.removeAll(keepingCapacity: true)
+                        var subscriber: Subscriber
+                        if let existing = subscribers[subscriptionID] {
+                            subscriber = existing
                         } else {
-                            initialMailbox = []
+                            let initialMailbox: [Target]
+                            if subscribers.isEmpty {
+                                initialMailbox = pendingTargets
+                                pendingTargets.removeAll(keepingCapacity: true)
+                            } else {
+                                initialMailbox = []
+                            }
+                            subscriber = Subscriber(mailbox: initialMailbox, waiter: nil)
                         }
-                        subscriber = Subscriber(mailbox: initialMailbox, waiter: nil)
-                    }
 
-                    if let existingWaiter = subscriber.waiter {
-                        subscribers.removeValue(forKey: subscriptionID)
-                        return .terminateDuplicate(existingWaiter)
-                    }
-                    if !subscriber.mailbox.isEmpty {
-                        let target = subscriber.mailbox.removeFirst()
+                        if let existingWaiter = subscriber.waiter {
+                            subscribers.removeValue(forKey: subscriptionID)
+                            return .terminateDuplicate(existingWaiter)
+                        }
+                        if !subscriber.mailbox.isEmpty {
+                            let target = subscriber.mailbox.removeFirst()
+                            subscribers[subscriptionID] = subscriber
+                            return .resume(target)
+                        }
+                        subscriber.waiter = continuation
                         subscribers[subscriptionID] = subscriber
-                        return .resume(target)
+                        return .suspend
                     }
-                    subscriber.waiter = continuation
-                    subscribers[subscriptionID] = subscriber
-                    return .suspend
-                }
+                } ?? .resume(nil)
 
                 switch action {
                 case .suspend:
@@ -306,12 +318,13 @@ private final class NotificationResponseBroker: @unchecked Sendable {
                 case .resume(let target):
                     continuation.resume(returning: target)
                 case .terminateDuplicate(let existingWaiter):
+                    cancellation.cancel()
                     existingWaiter.resume(returning: nil)
                     continuation.resume(returning: nil)
                 }
             }
         } onCancel: {
-            cancel(subscriptionID: subscriptionID)
+            cancellation.cancel()
         }
     }
 

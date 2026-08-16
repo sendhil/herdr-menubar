@@ -412,8 +412,8 @@ private actor RecordingNotificationService: NativeNotificationServing {
 
     private(set) var deliveries: [Delivery] = []
 
-    func responses() async -> AsyncStream<NotificationSelectionTarget> {
-        AsyncStream { $0.finish() }
+    func responses() async -> NotificationResponseSubscription {
+        .finished()
     }
 
     func requestAuthorization() async throws -> Bool { true }
@@ -442,8 +442,8 @@ private actor ControlledNotificationService: NativeNotificationServing {
         self.firstDeliveryBehavior = firstDeliveryBehavior
     }
 
-    func responses() async -> AsyncStream<NotificationSelectionTarget> {
-        AsyncStream { $0.finish() }
+    func responses() async -> NotificationResponseSubscription {
+        .finished()
     }
 
     func requestAuthorization() async throws -> Bool { true }

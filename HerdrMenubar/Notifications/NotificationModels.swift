@@ -5,6 +5,65 @@ struct NotificationSelectionTarget: Equatable, Sendable {
     let paneID: String
 }
 
+/// Owns one notification-response registration.
+///
+/// Every consumer must call `cancel()` from `defer`. A consumer whose startup
+/// aborts after acquiring a subscription must cancel it before dropping it.
+struct NotificationResponseSubscription: AsyncSequence, Sendable {
+    typealias Element = NotificationSelectionTarget
+    typealias AsyncIterator = AsyncStream<Element>.Iterator
+
+    private let stream: AsyncStream<Element>
+    let cancellation: NotificationResponseCancellation
+
+    init(
+        stream: AsyncStream<Element>,
+        cancellation: NotificationResponseCancellation
+    ) {
+        self.stream = stream
+        self.cancellation = cancellation
+    }
+
+    func makeAsyncIterator() -> AsyncIterator {
+        stream.makeAsyncIterator()
+    }
+
+    func cancel() {
+        cancellation.cancel()
+    }
+
+    static func finished() -> NotificationResponseSubscription {
+        NotificationResponseSubscription(
+            stream: AsyncStream { continuation in continuation.finish() },
+            cancellation: NotificationResponseCancellation(onCancel: {})
+        )
+    }
+}
+
+final class NotificationResponseCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var onCancel: (@Sendable () -> Void)?
+
+    init(onCancel: @escaping @Sendable () -> Void) {
+        self.onCancel = onCancel
+    }
+
+    func cancel() {
+        let action = lock.withLock { () -> (@Sendable () -> Void)? in
+            defer { onCancel = nil }
+            return onCancel
+        }
+        action?()
+    }
+
+    func withActive<Result>(_ action: () -> Result) -> Result? {
+        lock.withLock {
+            guard onCancel != nil else { return nil }
+            return action()
+        }
+    }
+}
+
 struct AttentionNotificationEvent: Equatable, Sendable {
     let target: NotificationSelectionTarget
     let sessionName: String
@@ -46,7 +105,7 @@ struct NotificationSystemSettings: Equatable, Sendable {
 }
 
 protocol NativeNotificationServing: Sendable {
-    func responses() async -> AsyncStream<NotificationSelectionTarget>
+    func responses() async -> NotificationResponseSubscription
     func requestAuthorization() async throws -> Bool
     func settings() async -> NotificationSystemSettings
     func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws
