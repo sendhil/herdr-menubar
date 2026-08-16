@@ -50,6 +50,7 @@ final class SessionSupervisorTests: XCTestCase {
         await waitUntil { await factory.makeCount == 2 }
 
         let named = await factory.client(for: namedDescriptor.id)
+        await waitUntil { await named?.startCount == 1 }
         let namedStartCount = await named?.startCount
         XCTAssertEqual(namedStartCount, 1)
         await supervisor.stop()
