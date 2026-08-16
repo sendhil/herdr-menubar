@@ -241,6 +241,7 @@ final class AgentStore {
         hasCompletedDiscovery = false
         sessions.removeAll()
         connectionState = .searching
+        transientError = nil
 
         let precedingStop = stopTask
         let token = UUID()
@@ -381,7 +382,6 @@ private extension AgentStore {
             let allItems = makeAllItems(snapshot: snapshot, session: descriptor)
             (state.attentionItems, state.workingItems) = makePresentationItems(allItems)
             sessions[descriptor.id] = state
-            transientError = nil
             await attentionCoordinator.reconcile(
                 session: descriptor,
                 items: allItems,
@@ -464,6 +464,7 @@ private extension AgentStore {
 
     func discardAbsentPendingTarget(discovered: [SessionDescriptor]) {
         guard let pendingNotificationTarget,
+              sessions[pendingNotificationTarget.sessionID] == nil,
               !discovered.contains(where: { $0.id == pendingNotificationTarget.sessionID }) else {
             return
         }
