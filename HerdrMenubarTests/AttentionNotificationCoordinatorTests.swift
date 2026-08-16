@@ -198,6 +198,36 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(attempts, ["a"])
     }
 
+    func testCancellationAfterNoncooperativeFirstDeliverySucceedsStillStopsRemainingDeliveries() async {
+        let service = ControlledNotificationService(firstDeliveryBehavior: .suspendUntilReleased)
+        let coordinator = AttentionNotificationCoordinator(service: service)
+        let session = descriptor("work")
+        let policy = enabledPolicy()
+
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "a", .working), item(session, "b", .working)],
+            policy: policy
+        )
+        let reconcileTask = Task {
+            await coordinator.reconcile(
+                session: session,
+                items: [item(session, "a", .blocked), item(session, "b", .done)],
+                policy: policy
+            )
+        }
+
+        await service.waitForFirstDeliveryToSuspend()
+        reconcileTask.cancel()
+        await service.releaseFirstDelivery()
+        await reconcileTask.value
+
+        let attempts = await service.attemptedPaneIDs
+        let delivered = await service.deliveredPaneIDs
+        XCTAssertEqual(attempts, ["a"])
+        XCTAssertEqual(delivered, ["a"])
+    }
+
     func testShuffledAttentionItemsDeliverInLabelOrderWithPaneIDTieBreaker() async {
         let service = RecordingNotificationService()
         let coordinator = AttentionNotificationCoordinator(service: service)
@@ -398,11 +428,13 @@ private actor RecordingNotificationService: NativeNotificationServing {
 private actor ControlledNotificationService: NativeNotificationServing {
     enum FirstDeliveryBehavior: Sendable {
         case suspendUntilCancelled
+        case suspendUntilReleased
         case throwSchedulingError
     }
 
     private let firstDeliveryBehavior: FirstDeliveryBehavior
     private let firstAttemptSignal = TestSignal()
+    private let noncooperativeGate = NoncooperativeDeliveryGate()
     private(set) var attemptedPaneIDs: [String] = []
     private(set) var deliveredPaneIDs: [String] = []
 
@@ -425,6 +457,8 @@ private actor ControlledNotificationService: NativeNotificationServing {
             switch firstDeliveryBehavior {
             case .suspendUntilCancelled:
                 try await Task.sleep(for: .seconds(30))
+            case .suspendUntilReleased:
+                await noncooperativeGate.suspend()
             case .throwSchedulingError:
                 throw TestDeliveryError.scheduling
             }
@@ -434,6 +468,41 @@ private actor ControlledNotificationService: NativeNotificationServing {
 
     func waitForFirstAttempt() async {
         await firstAttemptSignal.wait()
+    }
+
+    func waitForFirstDeliveryToSuspend() async {
+        await noncooperativeGate.waitUntilSuspended()
+    }
+
+    func releaseFirstDelivery() async {
+        await noncooperativeGate.release()
+    }
+}
+
+private actor NoncooperativeDeliveryGate {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var isSuspended = false
+    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func suspend() async {
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+            isSuspended = true
+            let ownedWaiters = suspensionWaiters
+            suspensionWaiters.removeAll()
+            for waiter in ownedWaiters { waiter.resume() }
+        }
+    }
+
+    func waitUntilSuspended() async {
+        guard !isSuspended else { return }
+        await withCheckedContinuation { suspensionWaiters.append($0) }
+    }
+
+    func release() {
+        let continuation = releaseContinuation
+        releaseContinuation = nil
+        continuation?.resume()
     }
 }
 
