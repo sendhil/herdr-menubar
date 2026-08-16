@@ -5,9 +5,11 @@ import SwiftUI
 final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
     var store: AgentStore?
     var loginItemService: LoginItemService?
+    var notificationSettings: NotificationSettingsController?
 
     func applicationDidBecomeActive(_ notification: Notification) {
         loginItemService?.refreshStatus()
+        Task { await notificationSettings?.refreshStatus() }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -26,6 +28,7 @@ struct HerdrMenubarApp: App {
     @State private var store: AgentStore
     @State private var preferences: Preferences
     @State private var loginItemService: LoginItemService
+    @State private var notificationSettings: NotificationSettingsController
     private let installedTerminals: [TerminalApp]
 
     init() {
@@ -42,8 +45,13 @@ struct HerdrMenubarApp: App {
         let preferences = Preferences()
         let notificationService = NativeNotificationService()
         let attentionCoordinator = AttentionNotificationCoordinator(service: notificationService)
+        let notificationSettings = NotificationSettingsController(
+            service: notificationService,
+            preferences: preferences
+        )
         _preferences = State(initialValue: preferences)
         _loginItemService = State(initialValue: LoginItemService())
+        _notificationSettings = State(initialValue: notificationSettings)
         _store = State(initialValue: AgentStore(
             supervisor: supervisor,
             terminalActivator: TerminalActivationService(),
@@ -65,7 +73,8 @@ struct HerdrMenubarApp: App {
                 store: store,
                 preferences: preferences,
                 installedTerminals: installedTerminals,
-                loginItemService: loginItemService
+                loginItemService: loginItemService,
+                notificationSettings: notificationSettings
             )
         } label: {
             MenuBarIcon(
@@ -75,7 +84,9 @@ struct HerdrMenubarApp: App {
             .task {
                 appDelegate.store = store
                 appDelegate.loginItemService = loginItemService
+                appDelegate.notificationSettings = notificationSettings
                 loginItemService.refreshStatus()
+                await notificationSettings.refreshStatus()
                 if Self.shouldStartSynchronization(environment: ProcessInfo.processInfo.environment) {
                     await store.start()
                 }

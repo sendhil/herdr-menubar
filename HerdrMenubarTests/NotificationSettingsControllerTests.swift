@@ -133,6 +133,26 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertNil(fixture.controller.helpText)
     }
 
+    func testApplicationActivationRefreshesSettingsWithoutRequestingOrRewritingIntent() async {
+        let fixture = makeFixture(settings: .authorized)
+        defer { fixture.removeDefaults() }
+        fixture.preferences.notificationsEnabled = true
+        fixture.preferences.notificationSoundEnabled = true
+        let appDelegate = HerdrAppDelegate()
+        appDelegate.notificationSettings = fixture.controller
+
+        appDelegate.applicationDidBecomeActive(
+            Notification(name: NSApplication.didBecomeActiveNotification)
+        )
+        await fixture.service.waitForSettingsRequests(1)
+
+        XCTAssertEqual(fixture.controller.systemSettings, .authorized)
+        XCTAssertTrue(fixture.preferences.notificationsEnabled)
+        XCTAssertTrue(fixture.preferences.notificationSoundEnabled)
+        let authorizationRequests = await fixture.service.authorizationRequests
+        XCTAssertEqual(authorizationRequests, 0)
+    }
+
     func testSoundPersistsIndependentlyAndRequiresNotificationsOnAndIdle() async throws {
         let fixture = makeFixture(settings: .authorized, gateAuthorization: true)
         defer { fixture.removeDefaults() }

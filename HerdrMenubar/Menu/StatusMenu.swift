@@ -6,6 +6,7 @@ struct StatusMenu: View {
     let preferences: Preferences
     let installedTerminals: [TerminalApp]
     let loginItemService: LoginItemService
+    let notificationSettings: NotificationSettingsController
 
     var body: some View {
         if !store.attentionSections.isEmpty {
@@ -68,6 +69,30 @@ struct StatusMenu: View {
                 .foregroundStyle(.red)
         }
 
+        sectionLabel("Notifications")
+        Toggle("Notifications", isOn: Binding(
+            get: { notificationSettings.isEnabled },
+            set: { enabled in
+                Task { await updateNotifications(enabled: enabled) }
+            }
+        ))
+        .disabled(notificationSettings.isChanging)
+
+        Toggle("Sound", isOn: Binding(
+            get: { notificationSettings.isSoundEnabled },
+            set: { notificationSettings.setSoundEnabled($0) }
+        ))
+        .disabled(!notificationSettings.canEnableSound)
+
+        if let helpText = notificationSettings.helpText {
+            Text(helpText)
+                .foregroundStyle(.secondary)
+        }
+        if let error = notificationSettings.errorMessage {
+            Text(error)
+                .foregroundStyle(.red)
+        }
+
         if !store.unavailableSessions.isEmpty {
             Button("Retry Unavailable Sessions") {
                 Task { await store.retry() }
@@ -112,6 +137,15 @@ struct StatusMenu: View {
             )
         } catch {
             // LoginItemService presents failures; busy means no operation occurred.
+        }
+    }
+
+    @MainActor
+    private func updateNotifications(enabled: Bool) async {
+        do {
+            try await notificationSettings.setNotificationsEnabled(enabled)
+        } catch {
+            // NotificationSettingsController presents failures; busy means no operation occurred.
         }
     }
 
