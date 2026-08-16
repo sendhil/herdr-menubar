@@ -509,6 +509,13 @@ private actor FakeSessionSupervisor: SessionSupervising {
     private(set) var stopCount = 0
     private(set) var refreshRequests: [SessionID] = []
     private(set) var focusRequests: [FocusRequest] = []
+    private(set) var setWindowTitleCount = 0
+    private(set) var clearWindowTitleCount = 0
+    private(set) var setWindowTitleSessionIDs: [SessionID] = []
+    private(set) var setWindowTitles: [String] = []
+    private(set) var clearWindowTitleSessionIDs: [SessionID] = []
+    private var setWindowTitleResults: [Result<ClientWindowTitleResult, HerdrAPIError>] = []
+    private var clearWindowTitleResults: [Result<ClientWindowTitleResult, HerdrAPIError>] = []
     private(set) var streamTerminated = false
     private(set) var stopObservedTerminatedStream = false
     private let focusError: (any Error)?
@@ -561,6 +568,50 @@ private actor FakeSessionSupervisor: SessionSupervising {
         if let focusError { throw focusError }
         await focusAction?()
         return pane(paneID, .idle)
+    }
+
+    func setClientWindowTitle(
+        sessionID: SessionID,
+        title: String
+    ) throws -> ClientWindowTitleResult {
+        setWindowTitleCount += 1
+        setWindowTitleSessionIDs.append(sessionID)
+        setWindowTitles.append(title)
+        guard !setWindowTitleResults.isEmpty else {
+            return ClientWindowTitleResult(
+                type: "client_window_title",
+                changed: true,
+                reason: "set"
+            )
+        }
+        return try setWindowTitleResults.removeFirst().get()
+    }
+
+    func clearClientWindowTitle(
+        sessionID: SessionID
+    ) throws -> ClientWindowTitleResult {
+        clearWindowTitleCount += 1
+        clearWindowTitleSessionIDs.append(sessionID)
+        guard !clearWindowTitleResults.isEmpty else {
+            return ClientWindowTitleResult(
+                type: "client_window_title",
+                changed: true,
+                reason: "cleared"
+            )
+        }
+        return try clearWindowTitleResults.removeFirst().get()
+    }
+
+    func enqueueSetWindowTitleResult(
+        _ result: Result<ClientWindowTitleResult, HerdrAPIError>
+    ) {
+        setWindowTitleResults.append(result)
+    }
+
+    func enqueueClearWindowTitleResult(
+        _ result: Result<ClientWindowTitleResult, HerdrAPIError>
+    ) {
+        clearWindowTitleResults.append(result)
     }
 
     func refresh(sessionID: SessionID) async {

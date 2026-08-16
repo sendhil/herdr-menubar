@@ -135,6 +135,106 @@ final class SessionSupervisorTests: XCTestCase {
         await supervisor.stop()
     }
 
+    func testClientWindowTitleCommandsRouteOnlyToRequestedSession() async throws {
+        let first = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let second = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [
+            defaultDescriptor.id: first,
+            namedDescriptor.id: second
+        ])
+        let discovery = FakeSessionDiscovery(results: [.success([defaultDescriptor, namedDescriptor])])
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory)
+        let stream = await supervisor.events()
+        var iterator = stream.makeAsyncIterator()
+
+        await supervisor.start()
+        _ = await iterator.next()
+        _ = await iterator.next()
+        _ = await iterator.next()
+
+        let setResult = try await supervisor.setClientWindowTitle(
+            sessionID: namedDescriptor.id,
+            title: "marker"
+        )
+        let clearResult = try await supervisor.clearClientWindowTitle(
+            sessionID: namedDescriptor.id
+        )
+
+        XCTAssertEqual(
+            setResult,
+            ClientWindowTitleResult(type: "client_window_title", changed: true, reason: "set")
+        )
+        XCTAssertEqual(
+            clearResult,
+            ClientWindowTitleResult(type: "client_window_title", changed: true, reason: "cleared")
+        )
+        await XCTAssertEqualAsync(await first.setWindowTitles, [])
+        await XCTAssertEqualAsync(await first.clearWindowTitleCount, 0)
+        await XCTAssertEqualAsync(await second.setWindowTitles, ["marker"])
+        await XCTAssertEqualAsync(await second.clearWindowTitleCount, 1)
+        await supervisor.stop()
+    }
+
+    func testClientWindowTitleReportsNoForegroundClientFromOwningRuntime() async throws {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let expected = ClientWindowTitleResult(
+            type: "client_window_title",
+            changed: false,
+            reason: "no_foreground_client"
+        )
+        await client.setSetWindowTitleResult(expected)
+        let factory = FakeSessionClientFactory(clients: [namedDescriptor.id: client])
+        let discovery = FakeSessionDiscovery(results: [.success([namedDescriptor])])
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory)
+        let stream = await supervisor.events()
+        var iterator = stream.makeAsyncIterator()
+
+        await supervisor.start()
+        _ = await iterator.next()
+        _ = await iterator.next()
+
+        let result = try await supervisor.setClientWindowTitle(
+            sessionID: namedDescriptor.id,
+            title: "marker"
+        )
+
+        XCTAssertEqual(result, expected)
+        await supervisor.stop()
+    }
+
+    func testClientWindowTitleCommandsRejectUnknownOrDisconnectedSession() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [namedDescriptor.id: client])
+        let discovery = FakeSessionDiscovery(results: [.success([namedDescriptor])])
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory)
+        let stream = await supervisor.events()
+        var iterator = stream.makeAsyncIterator()
+
+        await supervisor.start()
+        _ = await iterator.next()
+        _ = await iterator.next()
+
+        do {
+            _ = try await supervisor.setClientWindowTitle(
+                sessionID: .named("missing"),
+                title: "marker"
+            )
+            XCTFail("Expected unknown session to be unavailable")
+        } catch {
+            XCTAssertEqual(error as? SessionSupervisorError, .sessionUnavailable("missing"))
+        }
+
+        await client.send(.disconnected("lost work"))
+        _ = await iterator.next()
+        do {
+            _ = try await supervisor.clearClientWindowTitle(sessionID: namedDescriptor.id)
+            XCTFail("Expected disconnected session to be unavailable")
+        } catch {
+            XCTAssertEqual(error as? SessionSupervisorError, .sessionUnavailable("work"))
+        }
+        await supervisor.stop()
+    }
+
     func testUnknownSessionFocusThrowsNamedUnavailableError() async {
         let discovery = FakeSessionDiscovery(results: [.success([])])
         let supervisor = makeSupervisor(discovery: discovery)
@@ -912,6 +1012,18 @@ private actor FakeSessionClient: SessionClientServing {
     private(set) var retryStarted = false
     private(set) var refreshCount = 0
     private(set) var focusedPaneIDs: [String] = []
+    private(set) var setWindowTitles: [String] = []
+    private(set) var clearWindowTitleCount = 0
+    private var setWindowTitleResult = ClientWindowTitleResult(
+        type: "client_window_title",
+        changed: true,
+        reason: "set"
+    )
+    private var clearWindowTitleResult = ClientWindowTitleResult(
+        type: "client_window_title",
+        changed: true,
+        reason: "cleared"
+    )
     private(set) var streamTerminated = false
     private(set) var focusIsAvailable = false
     private(set) var stopStarted = false
@@ -962,6 +1074,20 @@ private actor FakeSessionClient: SessionClientServing {
     func focus(paneID: String) throws -> PaneInfo {
         focusedPaneIDs.append(paneID)
         return pane(paneID)
+    }
+
+    func setClientWindowTitle(_ title: String) -> ClientWindowTitleResult {
+        setWindowTitles.append(title)
+        return setWindowTitleResult
+    }
+
+    func clearClientWindowTitle() -> ClientWindowTitleResult {
+        clearWindowTitleCount += 1
+        return clearWindowTitleResult
+    }
+
+    func setSetWindowTitleResult(_ result: ClientWindowTitleResult) {
+        setWindowTitleResult = result
     }
 
     func send(_ event: HerdrClientEvent) {

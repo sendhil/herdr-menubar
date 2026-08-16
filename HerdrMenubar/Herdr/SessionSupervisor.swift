@@ -8,6 +8,8 @@ protocol SessionClientServing: Sendable {
     func retryNow() async
     func refresh() async
     func focus(paneID: String) async throws -> PaneInfo
+    func setClientWindowTitle(_ title: String) async throws -> ClientWindowTitleResult
+    func clearClientWindowTitle() async throws -> ClientWindowTitleResult
 }
 
 extension HerdrClient: SessionClientServing {}
@@ -36,6 +38,13 @@ protocol SessionSupervising: Sendable {
     func stop() async
     func retryUnavailable() async
     func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo
+    func setClientWindowTitle(
+        sessionID: SessionID,
+        title: String
+    ) async throws -> ClientWindowTitleResult
+    func clearClientWindowTitle(
+        sessionID: SessionID
+    ) async throws -> ClientWindowTitleResult
     func refresh(sessionID: SessionID) async
 }
 
@@ -233,15 +242,36 @@ actor SessionSupervisor {
     }
 
     func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo {
-        guard let runtime = runtimes[sessionID], runtime.isPresent, runtime.isConnected else {
-            throw SessionSupervisorError.sessionUnavailable(sessionID.displayName)
-        }
-        return try await runtime.client.focus(paneID: paneID)
+        try await commandClient(sessionID: sessionID).focus(paneID: paneID)
+    }
+
+    func setClientWindowTitle(
+        sessionID: SessionID,
+        title: String
+    ) async throws -> ClientWindowTitleResult {
+        try await commandClient(sessionID: sessionID).setClientWindowTitle(title)
+    }
+
+    func clearClientWindowTitle(
+        sessionID: SessionID
+    ) async throws -> ClientWindowTitleResult {
+        try await commandClient(sessionID: sessionID).clearClientWindowTitle()
     }
 
     func refresh(sessionID: SessionID) async {
         guard let runtime = runtimes[sessionID], runtime.isPresent else { return }
         await runtime.client.refresh()
+    }
+
+    private func commandClient(
+        sessionID: SessionID
+    ) throws -> any SessionClientServing {
+        guard let runtime = runtimes[sessionID],
+              runtime.isPresent,
+              runtime.isConnected else {
+            throw SessionSupervisorError.sessionUnavailable(sessionID.displayName)
+        }
+        return runtime.client
     }
 }
 
