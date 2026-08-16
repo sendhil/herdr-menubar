@@ -157,7 +157,8 @@ final class SessionSupervisorTests: XCTestCase {
             title: "marker"
         )
         let clearResult = try await supervisor.clearClientWindowTitle(
-            sessionID: namedDescriptor.id
+            sessionID: namedDescriptor.id,
+            timeout: .milliseconds(125)
         )
 
         XCTAssertEqual(
@@ -172,6 +173,10 @@ final class SessionSupervisorTests: XCTestCase {
         await XCTAssertEqualAsync(await first.clearWindowTitleCount, 0)
         await XCTAssertEqualAsync(await second.setWindowTitles, ["marker"])
         await XCTAssertEqualAsync(await second.clearWindowTitleCount, 1)
+        await XCTAssertEqualAsync(
+            await second.clearWindowTitleTimeouts,
+            [.milliseconds(125)]
+        )
         await supervisor.stop()
     }
 
@@ -1014,6 +1019,7 @@ private actor FakeSessionClient: SessionClientServing {
     private(set) var focusedPaneIDs: [String] = []
     private(set) var setWindowTitles: [String] = []
     private(set) var clearWindowTitleCount = 0
+    private(set) var clearWindowTitleTimeouts: [Duration] = []
     private var setWindowTitleResult = ClientWindowTitleResult(
         type: "client_window_title",
         changed: true,
@@ -1081,8 +1087,9 @@ private actor FakeSessionClient: SessionClientServing {
         return setWindowTitleResult
     }
 
-    func clearClientWindowTitle() -> ClientWindowTitleResult {
+    func clearClientWindowTitle(timeout: Duration) -> ClientWindowTitleResult {
         clearWindowTitleCount += 1
+        clearWindowTitleTimeouts.append(timeout)
         return clearWindowTitleResult
     }
 

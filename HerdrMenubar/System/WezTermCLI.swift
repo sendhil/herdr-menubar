@@ -27,8 +27,14 @@ enum WezTermCLIConstants {
 
 @MainActor
 protocol WezTermCLIControlling: Sendable {
-    func listPanes() async throws -> [WezTermPane]
+    func listPanes(timeout: Duration) async throws -> [WezTermPane]
     func activatePane(id: Int) async throws
+}
+
+extension WezTermCLIControlling {
+    func listPanes() async throws -> [WezTermPane] {
+        try await listPanes(timeout: .milliseconds(500))
+    }
 }
 
 @MainActor
@@ -55,11 +61,11 @@ struct LiveWezTermCLI: WezTermCLIControlling {
         self.bundleURL = bundleURL
     }
 
-    func listPanes() async throws -> [WezTermPane] {
+    func listPanes(timeout: Duration) async throws -> [WezTermPane] {
         let result = try await run(ProcessInvocation(
             executableURL: try executableURL(),
             arguments: ["cli", "list", "--format", "json"],
-            deadline: .milliseconds(500),
+            deadline: min(.milliseconds(500), max(.zero, timeout)),
             stdoutLimit: Self.outputLimit,
             stderrLimit: Self.outputLimit
         ))

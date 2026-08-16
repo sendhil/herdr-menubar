@@ -38,6 +38,7 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
     private let timing: any FocusTiming
     private let markerGenerator: @Sendable () -> String
     private var pendingCleanup: Set<SessionID> = []
+    private var sessionEpochs: [SessionID: UInt64] = [:]
 
     init(
         supervisor: any SessionSupervising,
@@ -54,8 +55,10 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
     }
 
     func focusAttachedClient(sessionID: SessionID) async throws {
-        try await resolvePendingCleanupIfNeeded(sessionID: sessionID)
+        let epoch = sessionEpoch(for: sessionID)
+        try await resolvePendingCleanupIfNeeded(sessionID: sessionID, epoch: epoch)
         try Task.checkCancellation()
+        try ensureCurrent(sessionID: sessionID, epoch: epoch)
 
         let marker = markerGenerator()
         let setResult: ClientWindowTitleResult
@@ -69,6 +72,7 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
         } catch {
             throw mapped(error)
         }
+        try ensureCurrent(sessionID: sessionID, epoch: epoch)
 
         guard setResult.hasForegroundClient else {
             throw WezTermFocusError.noAttachedClient
@@ -77,15 +81,26 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
         var markerInstalled = true
         do {
             let pane = try await findExactPane(marker: marker)
-            try await clearMarkerCancellationIndependently(sessionID: sessionID)
+            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            try await clearMarkerCancellationIndependently(
+                sessionID: sessionID,
+                epoch: epoch
+            )
             markerInstalled = false
             try Task.checkCancellation()
+            try ensureCurrent(sessionID: sessionID, epoch: epoch)
             try await cli.activatePane(id: pane.paneID)
         } catch {
             let operationError = error
+            guard isCurrent(sessionID: sessionID, epoch: epoch) else {
+                throw CancellationError()
+            }
             if markerInstalled, !pendingCleanup.contains(sessionID) {
                 do {
-                    try await clearMarkerCancellationIndependently(sessionID: sessionID)
+                    try await clearMarkerCancellationIndependently(
+                        sessionID: sessionID,
+                        epoch: epoch
+                    )
                 } catch {
                     throw mapped(error)
                 }
@@ -95,6 +110,7 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
     }
 
     func forget(sessionID: SessionID) {
+        sessionEpochs[sessionID] = sessionEpoch(for: sessionID) &+ 1
         pendingCleanup.remove(sessionID)
     }
 
@@ -104,8 +120,28 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
 
         while true {
             try Task.checkCancellation()
-            let panes = try await cli.listPanes()
+            let beforeList = await timing.now()
+            guard beforeList < deadline else {
+                throw WezTermFocusError.lookupTimedOut
+            }
+            let remaining = beforeList.duration(to: deadline)
+            let panes: [WezTermPane]
+            do {
+                panes = try await cli.listPanes(
+                    timeout: min(.milliseconds(500), remaining)
+                )
+            } catch {
+                let afterFailure = await timing.now()
+                if afterFailure >= deadline {
+                    throw WezTermFocusError.lookupTimedOut
+                }
+                throw error
+            }
             try Task.checkCancellation()
+            let afterList = await timing.now()
+            guard afterList < deadline else {
+                throw WezTermFocusError.lookupTimedOut
+            }
 
             let matches = panes.filter { $0.title == marker }
             if matches.count > 1 {
@@ -115,36 +151,48 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
                 return match
             }
 
-            let current = await timing.now()
-            guard current < deadline else {
-                throw WezTermFocusError.lookupTimedOut
-            }
-            let remaining = current.duration(to: deadline)
-            try await timing.sleep(for: min(.milliseconds(50), remaining))
+            let sleepBudget = afterList.duration(to: deadline)
+            try await timing.sleep(for: min(.milliseconds(50), sleepBudget))
         }
     }
 
-    private func resolvePendingCleanupIfNeeded(sessionID: SessionID) async throws {
+    private func resolvePendingCleanupIfNeeded(
+        sessionID: SessionID,
+        epoch: UInt64
+    ) async throws {
         guard pendingCleanup.contains(sessionID) else { return }
-        try await clearMarkerCancellationIndependently(sessionID: sessionID)
+        try await clearMarkerCancellationIndependently(sessionID: sessionID, epoch: epoch)
     }
 
     private func clearMarkerCancellationIndependently(
-        sessionID: SessionID
+        sessionID: SessionID,
+        epoch: UInt64
     ) async throws {
         let task = Task { @MainActor [self] in
-            try await clearMarkerWithRetries(sessionID: sessionID)
+            try await clearMarkerWithRetries(sessionID: sessionID, epoch: epoch)
         }
         try await task.value
     }
 
-    private func clearMarkerWithRetries(sessionID: SessionID) async throws {
+    private func clearMarkerWithRetries(
+        sessionID: SessionID,
+        epoch: UInt64
+    ) async throws {
         let startedAt = await timing.now()
+        try ensureCurrent(sessionID: sessionID, epoch: epoch)
         let deadline = startedAt.advanced(by: .milliseconds(500))
 
         for attempt in 1...3 {
+            let beforeAttempt = await timing.now()
+            try ensureCurrent(sessionID: sessionID, epoch: epoch)
+            guard beforeAttempt < deadline else { break }
+            let attemptBudget = beforeAttempt.duration(to: deadline)
             do {
-                let result = try await supervisor.clearClientWindowTitle(sessionID: sessionID)
+                let result = try await boundedClear(
+                    sessionID: sessionID,
+                    timeout: attemptBudget
+                )
+                try ensureCurrent(sessionID: sessionID, epoch: epoch)
                 if result.reason == "cleared" || result.reason == "no_foreground_client" {
                     pendingCleanup.remove(sessionID)
                     return
@@ -152,16 +200,52 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
             } catch {
                 // Retry boundedly; the public result deliberately does not expose transport detail.
             }
+            try ensureCurrent(sessionID: sessionID, epoch: epoch)
 
             guard attempt < 3 else { break }
             let current = await timing.now()
+            try ensureCurrent(sessionID: sessionID, epoch: epoch)
             guard current < deadline else { break }
             let remaining = current.duration(to: deadline)
             try? await timing.sleep(for: min(.milliseconds(100), remaining))
+            try ensureCurrent(sessionID: sessionID, epoch: epoch)
         }
 
+        try ensureCurrent(sessionID: sessionID, epoch: epoch)
         pendingCleanup.insert(sessionID)
         throw WezTermFocusError.markerCleanupFailed
+    }
+
+    private func boundedClear(
+        sessionID: SessionID,
+        timeout: Duration
+    ) async throws -> ClientWindowTitleResult {
+        let operation = FocusBoundedOperation<ClientWindowTitleResult>()
+        operation.start(timeout: timeout, timing: timing) { [supervisor] in
+            try await supervisor.clearClientWindowTitle(
+                sessionID: sessionID,
+                timeout: timeout
+            )
+        }
+        switch await operation.value() {
+        case .success(let result): return result
+        case .failure(let error): throw error
+        case .timedOut: throw FocusAttemptError.timedOut
+        }
+    }
+
+    private func sessionEpoch(for sessionID: SessionID) -> UInt64 {
+        sessionEpochs[sessionID] ?? 0
+    }
+
+    private func isCurrent(sessionID: SessionID, epoch: UInt64) -> Bool {
+        sessionEpoch(for: sessionID) == epoch
+    }
+
+    private func ensureCurrent(sessionID: SessionID, epoch: UInt64) throws {
+        guard isCurrent(sessionID: sessionID, epoch: epoch) else {
+            throw CancellationError()
+        }
     }
 
     private func mapped(_ error: any Error) -> any Error {
@@ -180,5 +264,81 @@ final class LiveWezTermFocusAdapter: WezTermSessionFocusing {
             }
         }
         return WezTermFocusError.wezTermControlFailed
+    }
+}
+
+private enum FocusAttemptError: Error {
+    case timedOut
+}
+
+@MainActor
+private final class FocusBoundedOperation<Value: Sendable> {
+    enum Outcome {
+        case success(Value)
+        case failure(any Error)
+        case timedOut
+    }
+
+    private var outcome: Outcome?
+    private var continuation: CheckedContinuation<Outcome, Never>?
+    private var operationTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    func start(
+        timeout: Duration,
+        timing: any FocusTiming,
+        operation: @escaping @MainActor @Sendable () async throws -> Value
+    ) {
+        precondition(operationTask == nil && outcome == nil)
+        operationTask = Task { @MainActor [self] in
+            timeoutTask = Task { @MainActor [self] in
+                do {
+                    try await timing.sleep(for: max(.zero, timeout))
+                    try Task.checkCancellation()
+                    complete(.timedOut, winner: .timeout)
+                } catch {
+                    // The operation won or the owning focus operation was invalidated.
+                }
+            }
+
+            do {
+                complete(.success(try await operation()), winner: .operation)
+            } catch {
+                complete(.failure(error), winner: .operation)
+            }
+        }
+    }
+
+    func value() async -> Outcome {
+        if let outcome { return outcome }
+        return await withCheckedContinuation { continuation in
+            if let outcome {
+                continuation.resume(returning: outcome)
+            } else {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    private enum Winner {
+        case operation
+        case timeout
+    }
+
+    private func complete(_ outcome: Outcome, winner: Winner) {
+        guard self.outcome == nil else { return }
+        self.outcome = outcome
+        let continuation = continuation
+        self.continuation = nil
+        let operationTask = operationTask
+        let timeoutTask = timeoutTask
+        self.operationTask = nil
+        self.timeoutTask = nil
+
+        switch winner {
+        case .operation: timeoutTask?.cancel()
+        case .timeout: operationTask?.cancel()
+        }
+        continuation?.resume(returning: outcome)
     }
 }

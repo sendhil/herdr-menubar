@@ -199,6 +199,22 @@ final class WezTermCLITests: XCTestCase {
         XCTAssertEqual(invocation.stderrLimit, 256 * 1024)
     }
 
+    func testListCapsProcessInvocationToCallerRemainingLookupBudget() async throws {
+        let application = try TemporaryWezTermApplication()
+        defer { application.remove() }
+        let runner = FakeBoundedProcessRunner(results: [
+            .success(ProcessResult(stdout: Data("[]".utf8), stderr: Data(), exitStatus: 0)),
+            .success(ProcessResult(stdout: Data("[]".utf8), stderr: Data(), exitStatus: 0))
+        ])
+        let cli = LiveWezTermCLI(runner: runner, bundleURL: { application.appURL })
+
+        _ = try await cli.listPanes(timeout: .milliseconds(125))
+        _ = try await cli.listPanes(timeout: .seconds(2))
+
+        let invocations = await runner.invocations()
+        XCTAssertEqual(invocations.map(\.deadline), [.milliseconds(125), .milliseconds(500)])
+    }
+
     private func assertError(
         _ expected: WezTermCLIError,
         operation: () async throws -> Void,

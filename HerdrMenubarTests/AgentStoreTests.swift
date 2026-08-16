@@ -588,7 +588,8 @@ private actor FakeSessionSupervisor: SessionSupervising {
     }
 
     func clearClientWindowTitle(
-        sessionID: SessionID
+        sessionID: SessionID,
+        timeout: Duration
     ) throws -> ClientWindowTitleResult {
         clearWindowTitleCount += 1
         clearWindowTitleSessionIDs.append(sessionID)

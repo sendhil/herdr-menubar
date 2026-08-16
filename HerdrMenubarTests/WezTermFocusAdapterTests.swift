@@ -96,13 +96,52 @@ final class WezTermFocusAdapterTests: XCTestCase {
         }
 
         var expected = ["set:work:\(marker)"]
-        for iteration in 0...20 {
+        for iteration in 0..<20 {
             expected.append("list")
-            if iteration < 20 { expected.append("sleep:50ms") }
+            expected.append("sleep:50ms")
         }
         expected.append("clear:work")
         XCTAssertEqual(recorder.actions, expected)
         XCTAssertEqual(timing.recordedSleeps, Array(repeating: .milliseconds(50), count: 20))
+        XCTAssertEqual(cli.requestedListTimeouts.count, 20)
+        XCTAssertEqual(cli.requestedListTimeouts.first, .milliseconds(500))
+        XCTAssertEqual(cli.requestedListTimeouts.last, .milliseconds(50))
+        XCTAssertTrue(cli.requestedListTimeouts.allSatisfy { $0 <= .milliseconds(500) })
+        XCTAssertTrue(cli.activatedPaneIDs.isEmpty)
+    }
+
+    func testLateMarkerAfterLookupDeadlineIsRejectedAndCleared() async {
+        let recorder = FocusActionRecorder()
+        let supervisor = FocusSupervisorFake(recorder: recorder)
+        let listGate = FocusListGate()
+        let cli = FocusCLIFake(
+            recorder: recorder,
+            listResults: [.success([pane(id: 91, title: marker)])],
+            listGate: listGate
+        )
+        let timing = FocusTimingFake(recorder: recorder)
+        let adapter = makeAdapter(
+            supervisor: supervisor,
+            cli: cli,
+            timing: timing,
+            recorder: recorder
+        )
+
+        let operation = Task {
+            await capturedError {
+                try await adapter.focusAttachedClient(sessionID: session)
+            }
+        }
+        await listGate.waitUntilEntered()
+        timing.advance(by: .seconds(1))
+        listGate.release()
+        let error = await operation.value
+
+        XCTAssertEqual(error as? WezTermFocusError, .lookupTimedOut)
+        XCTAssertEqual(cli.requestedListTimeouts, [.milliseconds(500)])
+        XCTAssertEqual(recorder.actions, [
+            "set:work:\(marker)", "list", "clear:work"
+        ])
         XCTAssertTrue(cli.activatedPaneIDs.isEmpty)
     }
 
@@ -228,6 +267,67 @@ final class WezTermFocusAdapterTests: XCTestCase {
             "set:work:\(marker)", "list", "clear:work", "sleep:100ms", "clear:work"
         ])
         XCTAssertTrue(cli.activatedPaneIDs.isEmpty)
+    }
+
+    func testSuspendedClearIsBoundedByOverallCleanupDeadlineAndLateSuccessIsIgnored() async {
+        let recorder = FocusActionRecorder()
+        let clearGate = FocusListGate()
+        let supervisor = FocusSupervisorFake(
+            recorder: recorder,
+            setResults: [.success(setResult), .success(noForegroundResult)],
+            clearResults: [.success(clearedResult), .success(noForegroundResult)],
+            clearGate: clearGate
+        )
+        let cli = FocusCLIFake(
+            recorder: recorder,
+            listResults: [.success([pane(id: 62, title: marker)])]
+        )
+        let timing = FocusTimingFake(recorder: recorder)
+        let adapter = makeAdapter(
+            supervisor: supervisor,
+            cli: cli,
+            timing: timing,
+            recorder: recorder
+        )
+        let completion = FocusCompletionProbe()
+
+        let operation = Task {
+            let error = await capturedError {
+                try await adapter.focusAttachedClient(sessionID: session)
+            }
+            completion.finish(error)
+        }
+        await clearGate.waitUntilEntered()
+        for _ in 0..<100 { await Task.yield() }
+        let completedBeforeLateRPC = completion.isFinished
+        clearGate.release()
+        await operation.value
+        await supervisor.waitForClearCompletion(count: 1)
+
+        XCTAssertTrue(completedBeforeLateRPC, "Cleanup must not inherit Herdr's five-second timeout")
+        XCTAssertEqual(completion.error as? WezTermFocusError, .markerCleanupFailed)
+        XCTAssertEqual(supervisor.requestedClearTimeouts.first, .milliseconds(500))
+        XCTAssertEqual(supervisor.clearObservedCancellation.first, true)
+        XCTAssertTrue(cli.activatedPaneIDs.isEmpty)
+
+        await assertFocusError(.noAttachedClient) {
+            try await adapter.focusAttachedClient(sessionID: session)
+        }
+        XCTAssertEqual(recorder.actions, [
+            "set:work:\(marker)", "list", "clear:work", "sleep:500ms",
+            "clear:work", "set:work:\(marker)"
+        ])
+        XCTAssertTrue(cli.activatedPaneIDs.isEmpty)
+    }
+
+    func testForgetInvalidatesSuspendedSuccessfulCleanupAndRecreatedSessionStartsClean() async {
+        await assertForgetInvalidatesSuspendedCleanup(.success(clearedResult))
+    }
+
+    func testForgetInvalidatesSuspendedFailedCleanupAndRecreatedSessionStartsClean() async {
+        await assertForgetInvalidatesSuspendedCleanup(
+            .failure(SessionSupervisorError.sessionUnavailable("work"))
+        )
     }
 
     func testClearRetriesThreeTimesWithinFiveHundredMilliseconds() async {
@@ -499,6 +599,66 @@ final class WezTermFocusAdapterTests: XCTestCase {
             return error
         }
     }
+
+    private func assertForgetInvalidatesSuspendedCleanup(
+        _ clearResult: Result<ClientWindowTitleResult, Error>,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let recorder = FocusActionRecorder()
+        let clearGate = FocusListGate()
+        let supervisor = FocusSupervisorFake(
+            recorder: recorder,
+            setResults: [.success(setResult), .success(noForegroundResult)],
+            clearResults: [clearResult],
+            clearGate: clearGate
+        )
+        let cli = FocusCLIFake(
+            recorder: recorder,
+            listResults: [.success([pane(id: 63, title: marker)])]
+        )
+        let timing = FocusTimingFake(recorder: recorder)
+        timing.blockSleep(for: .milliseconds(500))
+        let adapter = makeAdapter(
+            supervisor: supervisor,
+            cli: cli,
+            timing: timing,
+            recorder: recorder
+        )
+
+        let oldOperation = Task {
+            await capturedError {
+                try await adapter.focusAttachedClient(sessionID: session)
+            }
+        }
+        await clearGate.waitUntilEntered()
+        adapter.forget(sessionID: session)
+        clearGate.release()
+        let oldError = await oldOperation.value
+        timing.unblockSleep(for: .milliseconds(500))
+
+        XCTAssertTrue(oldError is CancellationError, file: file, line: line)
+        XCTAssertTrue(cli.activatedPaneIDs.isEmpty, file: file, line: line)
+        let recreatedError = await capturedError {
+            try await adapter.focusAttachedClient(sessionID: session)
+        }
+        XCTAssertEqual(
+            recreatedError as? WezTermFocusError,
+            .noAttachedClient,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            recorder.actions,
+            [
+                "set:work:\(marker)", "list", "clear:work", "sleep:500ms",
+                "set:work:\(marker)"
+            ],
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(cli.activatedPaneIDs.isEmpty, file: file, line: line)
+    }
 }
 
 @MainActor
@@ -515,17 +675,23 @@ private final class FocusSupervisorFake: SessionSupervising {
     private let recorder: FocusActionRecorder
     private var setResults: [Result<ClientWindowTitleResult, Error>]
     private var clearResults: [Result<ClientWindowTitleResult, Error>]
+    private var clearGate: FocusListGate?
     private(set) var setTitles: [String] = []
     private(set) var clearSessionIDs: [SessionID] = []
+    private(set) var requestedClearTimeouts: [Duration] = []
+    private(set) var clearObservedCancellation: [Bool] = []
+    private(set) var clearCompletionCount = 0
 
     init(
         recorder: FocusActionRecorder,
         setResults: [Result<ClientWindowTitleResult, Error>] = [],
-        clearResults: [Result<ClientWindowTitleResult, Error>] = []
+        clearResults: [Result<ClientWindowTitleResult, Error>] = [],
+        clearGate: FocusListGate? = nil
     ) {
         self.recorder = recorder
         self.setResults = setResults
         self.clearResults = clearResults
+        self.clearGate = clearGate
     }
 
     func events() async -> AsyncStream<SessionSupervisorEvent> {
@@ -559,8 +725,21 @@ private final class FocusSupervisorFake: SessionSupervising {
     func clearClientWindowTitle(
         sessionID: SessionID
     ) async throws -> ClientWindowTitleResult {
+        try await clearClientWindowTitle(sessionID: sessionID, timeout: .seconds(5))
+    }
+
+    func clearClientWindowTitle(
+        sessionID: SessionID,
+        timeout: Duration
+    ) async throws -> ClientWindowTitleResult {
         recorder.append("clear:\(sessionID.displayName)")
         clearSessionIDs.append(sessionID)
+        requestedClearTimeouts.append(timeout)
+        let gate = clearGate
+        clearGate = nil
+        await gate?.wait()
+        clearObservedCancellation.append(Task.isCancelled)
+        clearCompletionCount += 1
         guard !clearResults.isEmpty else {
             return ClientWindowTitleResult(
                 type: "client_window_title",
@@ -572,6 +751,10 @@ private final class FocusSupervisorFake: SessionSupervising {
     }
 
     func refresh(sessionID: SessionID) async {}
+
+    func waitForClearCompletion(count: Int) async {
+        while clearCompletionCount < count { await Task.yield() }
+    }
 }
 
 @MainActor
@@ -582,6 +765,7 @@ private final class FocusCLIFake: WezTermCLIControlling {
     private var activationResults: [Result<Void, Error>]
     private let listGate: FocusListGate?
     private(set) var activatedPaneIDs: [Int] = []
+    private(set) var requestedListTimeouts: [Duration] = []
 
     init(
         recorder: FocusActionRecorder,
@@ -597,8 +781,9 @@ private final class FocusCLIFake: WezTermCLIControlling {
         self.listGate = listGate
     }
 
-    func listPanes() async throws -> [WezTermPane] {
+    func listPanes(timeout: Duration) async throws -> [WezTermPane] {
         recorder.append("list")
+        requestedListTimeouts.append(timeout)
         await listGate?.wait()
         guard !listResults.isEmpty else { return defaultPanes }
         return try listResults.removeFirst().get()
@@ -616,6 +801,7 @@ private final class FocusCLIFake: WezTermCLIControlling {
 private final class FocusTimingFake: FocusTiming {
     private let recorder: FocusActionRecorder
     private var instant = ContinuousClock().now
+    private var blockedSleeps: Set<Duration> = []
     private(set) var recordedSleeps: [Duration] = []
 
     init(recorder: FocusActionRecorder) {
@@ -633,10 +819,39 @@ private final class FocusTimingFake: FocusTiming {
             recorder.append("sleep:50ms")
         } else if duration == .milliseconds(100) {
             recorder.append("sleep:100ms")
+        } else if duration == .milliseconds(500) {
+            recorder.append("sleep:500ms")
         } else {
             recorder.append("sleep:\(duration)")
         }
+        while blockedSleeps.contains(duration) {
+            try Task.checkCancellation()
+            await Task.yield()
+        }
         instant = instant.advanced(by: duration)
+    }
+
+    func advance(by duration: Duration) {
+        instant = instant.advanced(by: duration)
+    }
+
+    func blockSleep(for duration: Duration) {
+        blockedSleeps.insert(duration)
+    }
+
+    func unblockSleep(for duration: Duration) {
+        blockedSleeps.remove(duration)
+    }
+}
+
+@MainActor
+private final class FocusCompletionProbe {
+    private(set) var isFinished = false
+    private(set) var error: (any Error)?
+
+    func finish(_ error: (any Error)?) {
+        self.error = error
+        isFinished = true
     }
 }
 

@@ -55,6 +55,36 @@ final class HerdrClientTests: XCTestCase {
         XCTAssertEqual(connectedSocketURLs, [url, url])
     }
 
+    func testClientWindowTitleClearHonorsCallerTimeoutBelowFiveSecondDefault() async {
+        let factory = FakeHerdrConnectionFactory()
+        let requestSleeper = RecordingRequestSleeper()
+        let client = HerdrClient(
+            socketURL: URL(fileURLWithPath: "/tmp/bounded-title-clear.sock"),
+            connectionFactory: factory,
+            requestSleeper: requestSleeper
+        )
+
+        let clear = Task {
+            try await client.clearClientWindowTitle(timeout: .milliseconds(125))
+        }
+        let connection = await factory.connection(at: 0)
+        let request = await connection.nextSent()
+        XCTAssertEqual(request.method, "client.window_title.clear")
+        await requestSleeper.waitUntilSleeping()
+        let recordedDurations = await requestSleeper.durations
+        XCTAssertEqual(recordedDurations, [Duration.milliseconds(125)])
+        await requestSleeper.release()
+
+        do {
+            _ = try await clear.value
+            XCTFail("Expected caller-bounded clear timeout")
+        } catch {
+            XCTAssertEqual(error as? HerdrClientError, .timeout)
+        }
+        let connectionClosed = await connection.isClosed
+        XCTAssertTrue(connectionClosed)
+    }
+
     func testClientWindowTitleMethodNotFoundKeepsLiveSessionConnected() async {
         let url = URL(fileURLWithPath: "/tmp/title-live-session.sock")
         let factory = FakeHerdrConnectionFactory()
@@ -445,6 +475,36 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+}
+
+private actor RecordingRequestSleeper: Sleeper {
+    private(set) var durations: [Duration] = []
+    private var continuation: CheckedContinuation<Void, any Error>?
+
+    func sleep(for duration: Duration) async throws {
+        durations.append(duration)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+            }
+        } onCancel: {
+            Task { await self.cancel() }
+        }
+    }
+
+    func waitUntilSleeping() async {
+        while continuation == nil { await Task.yield() }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+
+    private func cancel() {
+        continuation?.resume(throwing: CancellationError())
+        continuation = nil
+    }
 }
 
 extension HerdrClientTests {

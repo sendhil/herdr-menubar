@@ -66,6 +66,7 @@ actor HerdrClient {
     private let connectionFactory: any HerdrConnectionFactory
     private let backoff: BackoffPolicy
     private let sleeper: any Sleeper
+    private let requestSleeper: any Sleeper
     private let requestTimeout: Duration
     private let subscriptionRebuildDebounce: Duration
 
@@ -89,6 +90,7 @@ actor HerdrClient {
         connectionFactory: any HerdrConnectionFactory = NWHerdrConnectionFactory(),
         backoff: BackoffPolicy = BackoffPolicy(),
         sleeper: any Sleeper = TaskSleeper(),
+        requestSleeper: any Sleeper = TaskSleeper(),
         requestTimeout: Duration = .seconds(5),
         subscriptionRebuildDebounce: Duration = .milliseconds(100)
     ) {
@@ -96,6 +98,7 @@ actor HerdrClient {
         self.connectionFactory = connectionFactory
         self.backoff = backoff
         self.sleeper = sleeper
+        self.requestSleeper = requestSleeper
         self.requestTimeout = requestTimeout
         self.subscriptionRebuildDebounce = subscriptionRebuildDebounce
     }
@@ -188,22 +191,29 @@ actor HerdrClient {
     }
 
     func clearClientWindowTitle() async throws -> ClientWindowTitleResult {
+        try await clearClientWindowTitle(timeout: requestTimeout)
+    }
+
+    func clearClientWindowTitle(timeout: Duration) async throws -> ClientWindowTitleResult {
         try await clientWindowTitleRequest(
             method: "client.window_title.clear",
-            params: EmptyParams()
+            params: EmptyParams(),
+            timeout: timeout
         )
     }
 
     private func clientWindowTitleRequest<Params: Encodable & Sendable>(
         method: String,
-        params: Params
+        params: Params,
+        timeout: Duration? = nil
     ) async throws -> ClientWindowTitleResult {
         let generation = lifecycleGeneration
         do {
             let result: ClientWindowTitleResult = try await request(
                 method: method,
                 params: params,
-                as: ClientWindowTitleResult.self
+                as: ClientWindowTitleResult.self,
+                timeout: timeout
             )
             guard result.type == "client_window_title" else {
                 throw HerdrClientError.unexpectedResponseType(
@@ -590,10 +600,11 @@ private extension HerdrClient {
     private func request<Params, Result>(
         method: String,
         params: Params,
-        as type: Result.Type
+        as type: Result.Type,
+        timeout: Duration? = nil
     ) async throws -> Result
     where Params: Encodable & Sendable, Result: Decodable & Sendable {
-        return try await withTimeout { [connectionFactory, socketURL] in
+        return try await withTimeout(timeout: timeout) { [connectionFactory, socketURL] in
             let connection = try await connectionFactory.connect(to: socketURL)
             do {
                 let requestID = UUID().uuidString
@@ -629,13 +640,15 @@ private extension HerdrClient {
     }
 
     private func withTimeout<Value: Sendable>(
+        timeout requestedTimeout: Duration? = nil,
         _ operation: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
-        let timeout = requestTimeout
+        let timeout = min(requestTimeout, max(.zero, requestedTimeout ?? requestTimeout))
+        let requestSleeper = requestSleeper
         return try await withThrowingTaskGroup(of: Value.self) { group in
             group.addTask { try await operation() }
             group.addTask {
-                try await Task.sleep(for: timeout)
+                try await requestSleeper.sleep(for: timeout)
                 throw HerdrClientError.timeout
             }
             guard let result = try await group.next() else { throw HerdrClientError.timeout }

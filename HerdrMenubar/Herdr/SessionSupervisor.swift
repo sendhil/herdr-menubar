@@ -9,7 +9,13 @@ protocol SessionClientServing: Sendable {
     func refresh() async
     func focus(paneID: String) async throws -> PaneInfo
     func setClientWindowTitle(_ title: String) async throws -> ClientWindowTitleResult
-    func clearClientWindowTitle() async throws -> ClientWindowTitleResult
+    func clearClientWindowTitle(timeout: Duration) async throws -> ClientWindowTitleResult
+}
+
+extension SessionClientServing {
+    func clearClientWindowTitle() async throws -> ClientWindowTitleResult {
+        try await clearClientWindowTitle(timeout: .seconds(5))
+    }
 }
 
 extension HerdrClient: SessionClientServing {}
@@ -43,9 +49,18 @@ protocol SessionSupervising: Sendable {
         title: String
     ) async throws -> ClientWindowTitleResult
     func clearClientWindowTitle(
-        sessionID: SessionID
+        sessionID: SessionID,
+        timeout: Duration
     ) async throws -> ClientWindowTitleResult
     func refresh(sessionID: SessionID) async
+}
+
+extension SessionSupervising {
+    func clearClientWindowTitle(
+        sessionID: SessionID
+    ) async throws -> ClientWindowTitleResult {
+        try await clearClientWindowTitle(sessionID: sessionID, timeout: .seconds(5))
+    }
 }
 
 extension SessionSupervisor: SessionSupervising {}
@@ -256,6 +271,13 @@ actor SessionSupervisor {
         sessionID: SessionID
     ) async throws -> ClientWindowTitleResult {
         try await commandClient(sessionID: sessionID).clearClientWindowTitle()
+    }
+
+    func clearClientWindowTitle(
+        sessionID: SessionID,
+        timeout: Duration
+    ) async throws -> ClientWindowTitleResult {
+        try await commandClient(sessionID: sessionID).clearClientWindowTitle(timeout: timeout)
     }
 
     func refresh(sessionID: SessionID) async {
