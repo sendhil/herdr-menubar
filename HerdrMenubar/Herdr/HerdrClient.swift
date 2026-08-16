@@ -180,6 +180,46 @@ actor HerdrClient {
         }
     }
 
+    func setClientWindowTitle(_ title: String) async throws -> ClientWindowTitleResult {
+        try await clientWindowTitleRequest(
+            method: "client.window_title.set",
+            params: ClientWindowTitleSetParams(title: title)
+        )
+    }
+
+    func clearClientWindowTitle() async throws -> ClientWindowTitleResult {
+        try await clientWindowTitleRequest(
+            method: "client.window_title.clear",
+            params: EmptyParams()
+        )
+    }
+
+    private func clientWindowTitleRequest<Params: Encodable & Sendable>(
+        method: String,
+        params: Params
+    ) async throws -> ClientWindowTitleResult {
+        let generation = lifecycleGeneration
+        do {
+            let result: ClientWindowTitleResult = try await request(
+                method: method,
+                params: params,
+                as: ClientWindowTitleResult.self
+            )
+            guard result.type == "client_window_title" else {
+                throw HerdrClientError.unexpectedResponseType(
+                    expected: "client_window_title",
+                    actual: result.type
+                )
+            }
+            return result
+        } catch {
+            if generation == lifecycleGeneration, shouldInvalidate(for: error) {
+                await invalidate(reason: description(for: error), generation: generation)
+            }
+            throw error
+        }
+    }
+
     private func startReconnectLoop() {
         guard running, reconnectTask == nil else { return }
         let generation = lifecycleGeneration

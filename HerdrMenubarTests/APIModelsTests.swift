@@ -76,6 +76,43 @@ final class APIModelsTests: XCTestCase {
         XCTAssertEqual(response.result?.pane.focused, true)
     }
 
+    func testClientWindowTitleRequestsEncodeExactWireShapes() throws {
+        let set = HerdrRequest(
+            id: "title-set",
+            method: "client.window_title.set",
+            params: ClientWindowTitleSetParams(title: "herdr-menubar-focus:token")
+        )
+        let clear = HerdrRequest(
+            id: "title-clear",
+            method: "client.window_title.clear",
+            params: EmptyParams()
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        XCTAssertEqual(
+            String(decoding: try encoder.encode(set), as: UTF8.self),
+            #"{"id":"title-set","method":"client.window_title.set","params":{"title":"herdr-menubar-focus:token"}}"#
+        )
+        XCTAssertEqual(
+            String(decoding: try encoder.encode(clear), as: UTF8.self),
+            #"{"id":"title-clear","method":"client.window_title.clear","params":{}}"#
+        )
+    }
+
+    func testClientWindowTitleResultDecodesSetClearedAndNoForegroundClient() throws {
+        for (reason, changed) in [("set", true), ("cleared", true), ("no_foreground_client", false)] {
+            let data = Data(#"{"id":"1","result":{"type":"client_window_title","changed":\#(changed),"reason":"\#(reason)"}}"#.utf8)
+            let response = try JSONDecoder().decode(
+                HerdrResponse<ClientWindowTitleResult>.self,
+                from: data
+            )
+            XCTAssertEqual(response.result, ClientWindowTitleResult(
+                type: "client_window_title", changed: changed, reason: reason
+            ))
+        }
+    }
+
     func testEventEnvelopeDecodesKnownFieldsAndIgnoresAdditionalFields() throws {
         let data = Data(#"{"event":"pane.agent_status_changed","data":{"pane_id":"w1:p1","workspace_id":"w1","agent_status":"done","future_field":"ignored"},"future_envelope_field":true}"#.utf8)
 

@@ -77,6 +77,14 @@ struct PaneFocusResult: Codable, Equatable, Sendable {
     let pane: PaneInfo
 }
 
+struct ClientWindowTitleResult: Codable, Equatable, Sendable {
+    let type: String
+    let changed: Bool
+    let reason: String
+
+    var hasForegroundClient: Bool { reason != "no_foreground_client" }
+}
+
 struct WorkspaceInfo: Codable, Equatable, Sendable {
     let workspaceID: String
     let number: Int
@@ -181,6 +189,10 @@ struct PaneTargetParams: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
     }
+}
+
+struct ClientWindowTitleSetParams: Codable, Equatable, Sendable {
+    let title: String
 }
 
 struct TabListParams: Codable, Equatable, Sendable {

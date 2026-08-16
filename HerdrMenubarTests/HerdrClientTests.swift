@@ -23,6 +23,61 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+    func testClientWindowTitleSetAndClearUseConfiguredSocket() async throws {
+        let url = URL(fileURLWithPath: "/tmp/title-session.sock")
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory, socketURL: url)
+
+        let setTask = Task { try await client.setClientWindowTitle("marker") }
+        let setConnection = await factory.connection(at: 0)
+        let setRequest = await setConnection.nextSent()
+        XCTAssertEqual(setRequest.method, "client.window_title.set")
+        XCTAssertEqual(try setRequest.paramsObject(), ["title": "marker"] as NSDictionary)
+        await setConnection.reply(
+            to: setRequest,
+            result: #"{"type":"client_window_title","changed":true,"reason":"set"}"#
+        )
+        let setResult = try await setTask.value
+        XCTAssertEqual(setResult.reason, "set")
+
+        let clearTask = Task { try await client.clearClientWindowTitle() }
+        let clearConnection = await factory.connection(at: 1)
+        let clearRequest = await clearConnection.nextSent()
+        XCTAssertEqual(clearRequest.method, "client.window_title.clear")
+        XCTAssertEqual(try clearRequest.paramsObject(), [:] as NSDictionary)
+        await clearConnection.reply(
+            to: clearRequest,
+            result: #"{"type":"client_window_title","changed":true,"reason":"cleared"}"#
+        )
+        let clearResult = try await clearTask.value
+        XCTAssertEqual(clearResult.reason, "cleared")
+        let connectedSocketURLs = await factory.connectedSocketURLs
+        XCTAssertEqual(connectedSocketURLs, [url, url])
+    }
+
+    func testClientWindowTitleMethodNotFoundRemainsAnAPIError() async {
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory)
+        let task = Task { try await client.setClientWindowTitle("marker") }
+        let connection = await factory.connection(at: 0)
+        let request = await connection.nextSent()
+        await connection.push(
+            #"{"id":"\#(request.id)","error":{"code":"method_not_found","message":"unknown method"}}"#
+        )
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected method_not_found")
+        } catch let error as HerdrAPIError {
+            XCTAssertEqual(
+                error,
+                HerdrAPIError(code: "method_not_found", message: "unknown method")
+            )
+        } catch {
+            XCTFail("Expected HerdrAPIError, got \(error)")
+        }
+    }
+
     func testBootstrapReconcilesPaneAddedBetweenInitialAndPostSubscriptionLists() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
