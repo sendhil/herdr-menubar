@@ -72,6 +72,99 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await store.stop()
     }
 
+    func testDuplicatePaneIDsFocusOwningHerdrServerAndOwningWezTermPane() async throws {
+        let root = try makeTemporaryHerdrRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaultServer = try FakeHerdrServer(
+            url: root.appending(path: "herdr.sock"),
+            panes: [integrationPane("duplicate", .done)]
+        )
+        defer { defaultServer.stop() }
+        let namedServer = try FakeHerdrServer(
+            url: root.appending(path: "sessions/work/herdr.sock"),
+            panes: [integrationPane("duplicate", .done)]
+        )
+        defer { namedServer.stop() }
+
+        let supervisor = SessionSupervisor(
+            discovery: SessionDiscovery(configRoot: root),
+            clientFactory: IntegrationClientFactory(),
+            sleeper: IntegrationHoldingSleeper(),
+            discoveryInterval: .seconds(30)
+        )
+        let activator = await MainActor.run { IntegrationRecordingActivator() }
+        let wezTermCLI = await MainActor.run {
+            IntegrationWezTermCLI(
+                defaultServer: defaultServer,
+                namedServer: namedServer,
+                defaultPaneID: 41,
+                namedPaneID: 82
+            )
+        }
+        let wezTermFocuser = await MainActor.run {
+            LiveWezTermFocusAdapter(
+                supervisor: supervisor,
+                cli: wezTermCLI,
+                markerGenerator: { "herdr-menubar-focus:integration" }
+            )
+        }
+        let preferencesFixture = try await MainActor.run { try IntegrationPreferencesFixture() }
+        let store = await MainActor.run {
+            AgentStore(
+                supervisor: supervisor,
+                terminalActivator: activator,
+                wezTermFocuser: wezTermFocuser,
+                preferences: preferencesFixture.preferences
+            )
+        }
+        await store.start()
+        await eventually {
+            await MainActor.run { store.attentionCount == 2 }
+        }
+
+        guard let namedItem = await MainActor.run(body: {
+            store.attentionSections.first { $0.id == .named("work") }?.items.first
+        }) else {
+            await store.stop()
+            await MainActor.run { preferencesFixture.remove() }
+            return XCTFail("Expected named-session attention item")
+        }
+        await store.select(namedItem)
+
+        let namedFocused = await namedServer.focusedPaneIDs
+        let defaultInitiallyFocused = await defaultServer.focusedPaneIDs
+        XCTAssertEqual(namedFocused, ["duplicate"])
+        XCTAssertEqual(defaultInitiallyFocused, [])
+        let namedActivations = await MainActor.run { wezTermCLI.activatedPaneIDs }
+        XCTAssertEqual(namedActivations, [82])
+        let namedTitleActions = await namedServer.windowTitleActions
+        let defaultInitialTitleActions = await defaultServer.windowTitleActions
+        XCTAssertEqual(namedTitleActions, [
+            .set("herdr-menubar-focus:integration"), .clear
+        ])
+        XCTAssertEqual(defaultInitialTitleActions, [])
+
+        guard let defaultItem = await MainActor.run(body: {
+            store.attentionSections.first { $0.id == .default }?.items.first
+        }) else {
+            await store.stop()
+            await MainActor.run { preferencesFixture.remove() }
+            return XCTFail("Expected default-session attention item")
+        }
+        await store.select(defaultItem)
+
+        let allActivations = await MainActor.run { wezTermCLI.activatedPaneIDs }
+        XCTAssertEqual(allActivations, [82, 41])
+        let defaultFocused = await defaultServer.focusedPaneIDs
+        let defaultTitleActions = await defaultServer.windowTitleActions
+        XCTAssertEqual(defaultFocused, ["duplicate"])
+        XCTAssertEqual(defaultTitleActions, [
+            .set("herdr-menubar-focus:integration"), .clear
+        ])
+        await store.stop()
+        await MainActor.run { preferencesFixture.remove() }
+    }
+
     func testStoppingOneServerKeepsOtherConnectedAndRestartWithinGraceDoesNotDuplicate() async throws {
         let root = try makeTemporaryHerdrRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -171,6 +264,29 @@ private final class IntegrationRecordingActivator: TerminalActivating {
 }
 
 @MainActor
+private final class IntegrationPreferencesFixture {
+    let preferences: Preferences
+
+    private let defaults: UserDefaults
+    private let suiteName: String
+
+    init() throws {
+        suiteName = "dev.herdr.menubar.integration.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        self.defaults = defaults
+        defaults.removePersistentDomain(forName: suiteName)
+        preferences = Preferences(defaults: defaults)
+        preferences.selectedTerminalBundleIdentifier = WezTermCLIConstants.bundleIdentifier
+    }
+
+    func remove() {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+@MainActor
 private final class IntegrationRecordingWezTermFocuser: WezTermSessionFocusing {
     private(set) var focusedSessionIDs: [SessionID] = []
     private(set) var forgottenSessionIDs: [SessionID] = []
@@ -181,6 +297,52 @@ private final class IntegrationRecordingWezTermFocuser: WezTermSessionFocusing {
 
     func forget(sessionID: SessionID) {
         forgottenSessionIDs.append(sessionID)
+    }
+}
+
+@MainActor
+private final class IntegrationWezTermCLI: WezTermCLIControlling {
+    private let defaultServer: FakeHerdrServer
+    private let namedServer: FakeHerdrServer
+    private let defaultPaneID: Int
+    private let namedPaneID: Int
+    private(set) var activatedPaneIDs: [Int] = []
+
+    init(
+        defaultServer: FakeHerdrServer,
+        namedServer: FakeHerdrServer,
+        defaultPaneID: Int,
+        namedPaneID: Int
+    ) {
+        self.defaultServer = defaultServer
+        self.namedServer = namedServer
+        self.defaultPaneID = defaultPaneID
+        self.namedPaneID = namedPaneID
+    }
+
+    func listPanes(timeout: Duration) async -> [WezTermPane] {
+        var panes: [WezTermPane] = []
+        if let title = await defaultServer.currentWindowTitle {
+            panes.append(WezTermPane(
+                windowID: 1,
+                tabID: 1,
+                paneID: defaultPaneID,
+                title: title
+            ))
+        }
+        if let title = await namedServer.currentWindowTitle {
+            panes.append(WezTermPane(
+                windowID: 1,
+                tabID: 2,
+                paneID: namedPaneID,
+                title: title
+            ))
+        }
+        return panes
+    }
+
+    func activatePane(id: Int) {
+        activatedPaneIDs.append(id)
     }
 }
 
@@ -277,14 +439,17 @@ private struct FakeServerRequest: Decodable, Sendable {
 
 private struct FakeServerRequestParams: Decodable, Sendable {
     let paneID: String?
+    let title: String?
 
     private enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
+        case title
     }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         paneID = try container.decodeIfPresent(String.self, forKey: .paneID)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
     }
 }
 
@@ -302,9 +467,16 @@ private struct FakeServerAction: Sendable {
     let isSubscription: Bool
 }
 
+private enum FakeWindowTitleAction: Equatable, Sendable {
+    case set(String)
+    case clear
+}
+
 private actor FakeHerdrServerState {
     private var panes: [PaneInfo]
     private var focused: [String] = []
+    private var windowTitle: String?
+    private var titleActions: [FakeWindowTitleAction] = []
 
     init(panes: [PaneInfo]) {
         self.panes = panes
@@ -315,6 +487,8 @@ private actor FakeHerdrServerState {
     }
 
     var focusedPaneIDs: [String] { focused }
+    var currentWindowTitle: String? { windowTitle }
+    var windowTitleActions: [FakeWindowTitleAction] { titleActions }
 
     func action(for request: FakeServerRequest) throws -> FakeServerAction {
         let encoder = JSONEncoder()
@@ -357,6 +531,33 @@ private actor FakeHerdrServerState {
             response = try encoder.encode(FakeServerResponse(
                 id: request.id,
                 result: PaneFocusResult(type: "pane_info", pane: pane)
+            ))
+            isSubscription = false
+        case "client.window_title.set":
+            guard let title = request.params.title else {
+                throw FakeHerdrServerError.malformedRequest
+            }
+            windowTitle = title
+            titleActions.append(.set(title))
+            response = try encoder.encode(FakeServerResponse(
+                id: request.id,
+                result: ClientWindowTitleResult(
+                    type: "client_window_title",
+                    changed: true,
+                    reason: "set"
+                )
+            ))
+            isSubscription = false
+        case "client.window_title.clear":
+            windowTitle = nil
+            titleActions.append(.clear)
+            response = try encoder.encode(FakeServerResponse(
+                id: request.id,
+                result: ClientWindowTitleResult(
+                    type: "client_window_title",
+                    changed: true,
+                    reason: "cleared"
+                )
             ))
             isSubscription = false
         default:
@@ -431,6 +632,14 @@ private final class FakeHerdrServer: @unchecked Sendable {
 
     var focusedPaneIDs: [String] {
         get async { await state.focusedPaneIDs }
+    }
+
+    var currentWindowTitle: String? {
+        get async { await state.currentWindowTitle }
+    }
+
+    var windowTitleActions: [FakeWindowTitleAction] {
+        get async { await state.windowTitleActions }
     }
 
     func stop() {

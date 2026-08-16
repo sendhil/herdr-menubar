@@ -12,7 +12,7 @@ Herdr remains the source of truth. The app reads Herdr's public socket API and d
 - Shows active agents separately under **Working**, grouped by session.
 - Uses Herdr-compatible workspace, tab, and agent labels.
 - Focuses the exact Herdr pane when an agent is selected.
-- Activates a configurable terminal application after focusing the pane.
+- Switches to the owning session's existing WezTerm tab, or activates another configured terminal application.
 - Defaults to WezTerm and discovers supported terminals installed on the Mac.
 - Discovers sessions while running and reconnects them independently when Herdr starts, stops, or restarts.
 - Keeps healthy sessions visible when another session is unavailable.
@@ -32,16 +32,18 @@ The menu reflects Herdr's semantic pane status across all connected sessions:
 | `idle` | Hidden. |
 | `unknown` | Hidden. |
 
-Selecting a row sends `pane.focus` to Herdr. For completed work, Herdr owns the resulting seen-state transition from `done` to `idle`; Herdr Menubar does not acknowledge it independently.
+Selecting a row sends `pane.focus` to that row's owning Herdr session. When WezTerm is selected, Herdr Menubar also switches to the existing WezTerm tab containing that session's foreground attached client. It never opens a new tab when no client is attached; the menu reports that partial-focus condition instead. Other recognized terminals retain application-level activation without session-aware tab selection.
+
+For completed work, Herdr owns the resulting seen-state transition from `done` to `idle`; Herdr Menubar does not acknowledge it independently.
 
 The menu is status-first: **Needs Attention** and **Working** are the top-level sections, with **Default** followed by named-session groups inside each section. The menu-bar badge is the total number of `blocked` and `done` agents across connected sessions. An unavailable session's last-known state is removed from the badge and menu immediately, without disturbing healthy sessions.
 
 ## Requirements
 
 - A current macOS release supported by the project deployment target.
-- A running Herdr default or named session.
+- A running Herdr default or named session. Session-aware WezTerm tab focus is verified with Herdr 0.7.3 or newer.
 - Xcode 26 or newer, including the macOS SDK and command-line tools. After installing Xcode, select it in **Xcode > Settings > Locations**, or with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
-- One of the recognized terminal applications for click-through activation. WezTerm is the default.
+- One of the recognized terminal applications for click-through activation. WezTerm is the default; session-aware tab focus requires the installed app's `Contents/MacOS/wezterm` CLI.
 
 No Homebrew packages or third-party build tools are required. Signing, notarization, packaged releases, and Homebrew distribution are not currently included.
 
@@ -118,10 +120,12 @@ Each session has its own connection, subscription, snapshot, reconnect loop, and
 
 Selecting an agent performs the following sequence:
 
-1. Ask Herdr to focus the exact pane.
-2. Require a successful Herdr response.
+1. Ask the owning Herdr session to focus the exact pane.
+2. When WezTerm is selected, briefly mark that session's foreground attached client, locate its existing pane with the installed WezTerm CLI, clear the marker, and activate that pane.
 3. Activate the configured terminal through macOS.
-4. Refresh the Herdr snapshot.
+4. Refresh only the owning Herdr session.
+
+The WezTerm adapter runs only when a row is clicked. It installs no background helper, shell hook, or WezTerm configuration, and it never creates a tab.
 
 The app recognizes these terminal bundle identifiers:
 
