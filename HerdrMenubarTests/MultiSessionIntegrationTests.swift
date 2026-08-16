@@ -30,7 +30,8 @@ final class MultiSessionIntegrationTests: XCTestCase {
             removalGracePeriod: .seconds(10)
         )
         let notifications = IntegrationNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: notifications)
+        let liveCoordinator = AttentionNotificationCoordinator(service: notifications)
+        let coordinator = IntegrationObservingAttentionCoordinator(wrapping: liveCoordinator)
         let activator = await MainActor.run { IntegrationRecordingActivator() }
         let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
         let preferencesFixture = try await MainActor.run { try IntegrationPreferencesFixture() }
@@ -115,6 +116,8 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await eventually {
             await MainActor.run { store.unavailableSessions.map(\.id) == [.named("work")] }
         }
+        let reconnectBaseline = await coordinator.reconcileCompletionCount(for: .named("work"))
+        await coordinator.pauseNextReconcile(for: .named("work"))
         let reconnectedNamedServer = try FakeHerdrServer(
             url: namedURL,
             panes: [integrationPane("duplicate", .done)]
@@ -127,9 +130,16 @@ final class MultiSessionIntegrationTests: XCTestCase {
                     && store.unavailableSessions.isEmpty
             }
         }
+        await coordinator.waitUntilReconcileIsPaused(for: .named("work"))
+        await coordinator.resumePausedReconcile(for: .named("work"))
+        await coordinator.waitForReconcileCompletion(
+            for: .named("work"),
+            after: reconnectBaseline
+        )
         let reconnectDeliveryCount = await notifications.deliveries.count
         XCTAssertEqual(reconnectDeliveryCount, 3)
 
+        let removalBaseline = await coordinator.removeCompletionCount(for: .named("work"))
         namedServer?.stop()
         namedServer = nil
         await store.retry()
@@ -141,6 +151,9 @@ final class MultiSessionIntegrationTests: XCTestCase {
                     && !store.attentionSections.contains { $0.id == .named("work") }
             }
         }
+        await coordinator.waitForRemoveCompletion(for: .named("work"), after: removalBaseline)
+        let recreationBaseline = await coordinator.reconcileCompletionCount(for: .named("work"))
+        await coordinator.pauseNextReconcile(for: .named("work"))
         let recreatedNamedServer = try FakeHerdrServer(
             url: namedURL,
             panes: [integrationPane("duplicate", .blocked)]
@@ -150,6 +163,12 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await eventually {
             await MainActor.run { store.attentionSections.contains { $0.id == .named("work") } }
         }
+        await coordinator.waitUntilReconcileIsPaused(for: .named("work"))
+        await coordinator.resumePausedReconcile(for: .named("work"))
+        await coordinator.waitForReconcileCompletion(
+            for: .named("work"),
+            after: recreationBaseline
+        )
         let recreatedDeliveryCount = await notifications.deliveries.count
         XCTAssertEqual(recreatedDeliveryCount, 3)
 
@@ -460,6 +479,113 @@ private actor IntegrationAttentionCoordinator: AttentionNotificationCoordinating
     func unavailable(sessionID: SessionID) {}
     func remove(sessionID: SessionID) {}
     func reset() {}
+}
+
+private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoordinating {
+    private struct Waiter {
+        let threshold: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private let wrapped: any AttentionNotificationCoordinating
+    private var reconcileCompletions: [SessionID: Int] = [:]
+    private var removeCompletions: [SessionID: Int] = [:]
+    private var reconcileWaiters: [SessionID: [Waiter]] = [:]
+    private var removeWaiters: [SessionID: [Waiter]] = [:]
+    private var reconcilePauses: Set<SessionID> = []
+    private var pausedReconciles: [SessionID: CheckedContinuation<Void, Never>] = [:]
+    private var pauseArrivalWaiters: [SessionID: [CheckedContinuation<Void, Never>]] = [:]
+
+    init(wrapping wrapped: any AttentionNotificationCoordinating) {
+        self.wrapped = wrapped
+    }
+
+    func reconcile(
+        session: SessionDescriptor,
+        items: [AgentMenuItem],
+        policy: NotificationDeliveryPolicy
+    ) async {
+        if reconcilePauses.remove(session.id) != nil {
+            await withCheckedContinuation { continuation in
+                pausedReconciles[session.id] = continuation
+                for waiter in pauseArrivalWaiters.removeValue(forKey: session.id) ?? [] {
+                    waiter.resume()
+                }
+            }
+        }
+        await wrapped.reconcile(session: session, items: items, policy: policy)
+        recordCompletion(for: session.id, counts: &reconcileCompletions, waiters: &reconcileWaiters)
+    }
+
+    func unavailable(sessionID: SessionID) async {
+        await wrapped.unavailable(sessionID: sessionID)
+    }
+
+    func remove(sessionID: SessionID) async {
+        await wrapped.remove(sessionID: sessionID)
+        recordCompletion(for: sessionID, counts: &removeCompletions, waiters: &removeWaiters)
+    }
+
+    func reset() async {
+        await wrapped.reset()
+    }
+
+    func reconcileCompletionCount(for sessionID: SessionID) -> Int {
+        reconcileCompletions[sessionID, default: 0]
+    }
+
+    func removeCompletionCount(for sessionID: SessionID) -> Int {
+        removeCompletions[sessionID, default: 0]
+    }
+
+    func waitForReconcileCompletion(for sessionID: SessionID, after count: Int) async {
+        guard reconcileCompletions[sessionID, default: 0] <= count else { return }
+        await withCheckedContinuation { continuation in
+            reconcileWaiters[sessionID, default: []].append(Waiter(
+                threshold: count,
+                continuation: continuation
+            ))
+        }
+    }
+
+    func waitForRemoveCompletion(for sessionID: SessionID, after count: Int) async {
+        guard removeCompletions[sessionID, default: 0] <= count else { return }
+        await withCheckedContinuation { continuation in
+            removeWaiters[sessionID, default: []].append(Waiter(
+                threshold: count,
+                continuation: continuation
+            ))
+        }
+    }
+
+    func pauseNextReconcile(for sessionID: SessionID) {
+        reconcilePauses.insert(sessionID)
+    }
+
+    func waitUntilReconcileIsPaused(for sessionID: SessionID) async {
+        guard pausedReconciles[sessionID] == nil else { return }
+        await withCheckedContinuation { continuation in
+            pauseArrivalWaiters[sessionID, default: []].append(continuation)
+        }
+    }
+
+    func resumePausedReconcile(for sessionID: SessionID) {
+        pausedReconciles.removeValue(forKey: sessionID)?.resume()
+    }
+
+    private func recordCompletion(
+        for sessionID: SessionID,
+        counts: inout [SessionID: Int],
+        waiters: inout [SessionID: [Waiter]]
+    ) {
+        counts[sessionID, default: 0] += 1
+        let count = counts[sessionID, default: 0]
+        let waiting = waiters.removeValue(forKey: sessionID) ?? []
+        for waiter in waiting where count > waiter.threshold {
+            waiter.continuation.resume()
+        }
+        waiters[sessionID] = waiting.filter { count <= $0.threshold }
+    }
 }
 
 @MainActor
