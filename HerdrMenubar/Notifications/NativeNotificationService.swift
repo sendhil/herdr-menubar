@@ -85,6 +85,10 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         responseBroker.stream()
     }
 
+    var responseSubscriberCount: Int {
+        responseBroker.subscriberCount
+    }
+
     func requestAuthorization() async throws -> Bool {
         try await backend.requestAuthorization(options: [.alert, .sound])
     }
@@ -182,122 +186,139 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
 
 private final class NotificationResponseBroker: @unchecked Sendable {
     typealias Target = NotificationSelectionTarget
-    typealias Continuation = AsyncStream<Target>.Continuation
+    typealias Waiter = CheckedContinuation<Target?, Never>
 
-    private enum Action {
-        case yield(UUID, Continuation, Target)
-        case finish(Continuation)
+    private struct Subscriber {
+        var mailbox: [Target]
+        var waiter: Waiter?
     }
 
     private let lock = NSLock()
     private let preSubscriptionBufferLimit: Int
-    private var subscribers: [UUID: Continuation] = [:]
+    private var subscribers: [UUID: Subscriber] = [:]
     private var pendingTargets: [Target] = []
-    private var actions: [Action] = []
-    private var isDraining = false
     private var isFinished = false
 
     init(preSubscriptionBufferLimit: Int) {
         self.preSubscriptionBufferLimit = preSubscriptionBufferLimit
     }
 
+    var subscriberCount: Int {
+        lock.withLock { subscribers.count }
+    }
+
     func stream() -> AsyncStream<Target> {
         let subscriptionID = UUID()
-        let (stream, continuation) = AsyncStream.makeStream(
-            of: Target.self,
-            bufferingPolicy: .unbounded
-        )
-        continuation.onTermination = { [weak self] _ in
-            self?.removeSubscriber(subscriptionID)
-        }
-
-        let shouldDrain = lock.withLock {
-            if isFinished {
-                actions.append(.finish(continuation))
-            } else {
-                let isFirstSubscriber = subscribers.isEmpty
-                subscribers[subscriptionID] = continuation
-                if isFirstSubscriber {
-                    for target in pendingTargets {
-                        actions.append(.yield(subscriptionID, continuation, target))
-                    }
-                    pendingTargets.removeAll(keepingCapacity: true)
-                }
+        return AsyncStream(
+            unfolding: { [weak self] in
+                guard let self else { return nil }
+                return await self.next(subscriptionID: subscriptionID)
+            },
+            onCancel: { [weak self] in
+                self?.cancel(subscriptionID: subscriptionID)
             }
-            return claimDrainerIfNeeded()
-        }
-        if shouldDrain {
-            drainActions()
-        }
-        return stream
+        )
     }
 
     func yield(_ target: Target) {
-        let shouldDrain = lock.withLock {
-            guard !isFinished else { return false }
+        let waiters = lock.withLock { () -> [Waiter] in
+            guard !isFinished else { return [] }
             guard !subscribers.isEmpty else {
-                pendingTargets.append(target)
-                if pendingTargets.count > preSubscriptionBufferLimit {
-                    pendingTargets.removeFirst(pendingTargets.count - preSubscriptionBufferLimit)
+                appendNewest(target, to: &pendingTargets)
+                return []
+            }
+            var waiters: [Waiter] = []
+            let subscriptionIDs = Array(subscribers.keys)
+            for subscriptionID in subscriptionIDs {
+                guard var subscriber = subscribers[subscriptionID] else { continue }
+                if let waiter = subscriber.waiter {
+                    subscriber.waiter = nil
+                    waiters.append(waiter)
+                } else {
+                    appendNewest(target, to: &subscriber.mailbox)
                 }
-                return false
+                subscribers[subscriptionID] = subscriber
             }
-            for (subscriptionID, continuation) in subscribers {
-                actions.append(.yield(subscriptionID, continuation, target))
-            }
-            return claimDrainerIfNeeded()
+            return waiters
         }
-        if shouldDrain {
-            drainActions()
+        for waiter in waiters {
+            waiter.resume(returning: target)
         }
     }
 
     func finish() {
-        let shouldDrain = lock.withLock {
-            guard !isFinished else { return false }
+        let waiters = lock.withLock { () -> [Waiter] in
+            guard !isFinished else { return [] }
             isFinished = true
             pendingTargets.removeAll(keepingCapacity: false)
-            for continuation in subscribers.values {
-                actions.append(.finish(continuation))
-            }
+            let waiters = subscribers.values.compactMap(\.waiter)
             subscribers.removeAll(keepingCapacity: false)
-            return claimDrainerIfNeeded()
+            return waiters
         }
-        if shouldDrain {
-            drainActions()
-        }
-    }
-
-    private func removeSubscriber(_ subscriptionID: UUID) {
-        _ = lock.withLock {
-            subscribers.removeValue(forKey: subscriptionID)
+        for waiter in waiters {
+            waiter.resume(returning: nil)
         }
     }
 
-    private func claimDrainerIfNeeded() -> Bool {
-        guard !isDraining, !actions.isEmpty else { return false }
-        isDraining = true
-        return true
-    }
-
-    private func drainActions() {
-        while true {
-            let action = lock.withLock { () -> Action? in
-                guard !actions.isEmpty else {
-                    isDraining = false
-                    return nil
+    private func next(subscriptionID: UUID) async -> Target? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                enum Action {
+                    case suspend
+                    case resume(Target?)
                 }
-                return actions.removeFirst()
-            }
-            guard let action else { return }
-            switch action {
-            case .yield(let subscriptionID, let continuation, let target):
-                if case .terminated = continuation.yield(target) {
-                    removeSubscriber(subscriptionID)
+
+                let action = lock.withLock { () -> Action in
+                    guard !isFinished, !Task.isCancelled else { return .resume(nil) }
+
+                    var subscriber: Subscriber
+                    if let existing = subscribers[subscriptionID] {
+                        subscriber = existing
+                    } else {
+                        let initialMailbox: [Target]
+                        if subscribers.isEmpty {
+                            initialMailbox = pendingTargets
+                            pendingTargets.removeAll(keepingCapacity: true)
+                        } else {
+                            initialMailbox = []
+                        }
+                        subscriber = Subscriber(mailbox: initialMailbox, waiter: nil)
+                    }
+
+                    guard subscriber.waiter == nil else {
+                        subscribers[subscriptionID] = subscriber
+                        return .resume(nil)
+                    }
+                    if !subscriber.mailbox.isEmpty {
+                        let target = subscriber.mailbox.removeFirst()
+                        subscribers[subscriptionID] = subscriber
+                        return .resume(target)
+                    }
+                    subscriber.waiter = continuation
+                    subscribers[subscriptionID] = subscriber
+                    return .suspend
                 }
-            case .finish(let continuation):
-                continuation.finish()
+
+                if case .resume(let target) = action {
+                    continuation.resume(returning: target)
+                }
             }
+        } onCancel: {
+            cancel(subscriptionID: subscriptionID)
+        }
+    }
+
+    private func cancel(subscriptionID: UUID) {
+        let waiter = lock.withLock {
+            subscribers.removeValue(forKey: subscriptionID)?.waiter
+        }
+        waiter?.resume(returning: nil)
+    }
+
+    private func appendNewest(_ target: Target, to buffer: inout [Target]) {
+        buffer.append(target)
+        if buffer.count > preSubscriptionBufferLimit {
+            buffer.removeFirst(buffer.count - preSubscriptionBufferLimit)
         }
     }
 }
