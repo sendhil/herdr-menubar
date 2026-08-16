@@ -6,21 +6,23 @@ Herdr remains the source of truth. The app reads Herdr's public socket API and d
 
 ## Features
 
-- Shows a persistent attention count in the macOS menu bar.
-- Lists blocked and newly completed agents under **Needs Attention**.
-- Shows active agents separately under **Working**.
+- Automatically monitors the default Herdr session and every named session.
+- Shows one aggregate attention count in the macOS menu bar.
+- Lists blocked and newly completed agents under **Needs Attention**, grouped by session.
+- Shows active agents separately under **Working**, grouped by session.
 - Uses Herdr-compatible workspace, tab, and agent labels.
 - Focuses the exact Herdr pane when an agent is selected.
 - Activates a configurable terminal application after focusing the pane.
 - Defaults to WezTerm and discovers supported terminals installed on the Mac.
-- Reconnects automatically when Herdr starts, stops, or restarts.
+- Discovers sessions while running and reconnects them independently when Herdr starts, stops, or restarts.
+- Keeps healthy sessions visible when another session is unavailable.
 - Supports an optional **Launch at Login** setting.
 - Uses a native macOS menu, template icon, accessibility labels, and unified logging.
 - Stores preferences only; pane and agent state is never persisted.
 
 ## Status behavior
 
-The menu reflects Herdr's semantic pane status:
+The menu reflects Herdr's semantic pane status across all connected sessions:
 
 | Herdr status | Menu behavior |
 | --- | --- |
@@ -32,10 +34,12 @@ The menu reflects Herdr's semantic pane status:
 
 Selecting a row sends `pane.focus` to Herdr. For completed work, Herdr owns the resulting seen-state transition from `done` to `idle`; Herdr Menubar does not acknowledge it independently.
 
+The menu is status-first: **Needs Attention** and **Working** are the top-level sections, with **Default** followed by named-session groups inside each section. The menu-bar badge is the total number of `blocked` and `done` agents across connected sessions. An unavailable session's last-known state is removed from the badge and menu immediately, without disturbing healthy sessions.
+
 ## Requirements
 
 - A current macOS release supported by the project deployment target.
-- A running Herdr server or session.
+- A running Herdr default or named session.
 - Xcode 26 or newer, including the macOS SDK and command-line tools. After installing Xcode, select it in **Xcode > Settings > Locations**, or with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
 - One of the recognized terminal applications for click-through activation. WezTerm is the default.
 
@@ -79,7 +83,7 @@ The app has no Dock icon or normal application window. After launch, use its ter
 - Inspect working agents.
 - Select the terminal used for activation.
 - Enable or disable Launch at Login.
-- Retry a disconnected Herdr connection.
+- Retry unavailable Herdr sessions.
 - Quit the app.
 
 You can also build from the command line:
@@ -93,16 +97,9 @@ xcodebuild build \
 
 The debug app is written under Xcode's DerivedData directory. When rebuilding while the app is already running, quit or relaunch the existing process so macOS does not continue using a stale binary.
 
-## Herdr connection discovery
+## Herdr session discovery
 
-Herdr Menubar follows Herdr's public socket path conventions in this order:
-
-1. Non-empty `HERDR_SOCKET_PATH`.
-2. Herdr's configuration root from non-empty `XDG_CONFIG_HOME`, otherwise `~/.config`.
-3. A named `HERDR_SESSION`, when set to a value other than `default`.
-4. The default Herdr socket.
-
-Typical paths are:
+Herdr Menubar automatically monitors Herdr's public default socket and every direct named-session socket under one configuration base:
 
 ```text
 ~/.config/herdr/herdr.sock
@@ -111,9 +108,11 @@ $XDG_CONFIG_HOME/herdr/herdr.sock
 $XDG_CONFIG_HOME/herdr/sessions/<name>/herdr.sock
 ```
 
-`HERDR_SESSION=default` resolves to the root `herdr.sock`, matching Herdr itself.
+When `XDG_CONFIG_HOME` is non-empty, it replaces `~/.config` as that one discovery base. Herdr Menubar never scans both roots together. `HERDR_SOCKET_PATH` and `HERDR_SESSION` do not select or limit the sessions monitored by the app.
 
-When disconnected, the icon is dimmed and the menu provides a **Retry** action. The client uses bounded reconnect backoff and rebuilds its authoritative snapshot after reconnecting.
+The app scans these shallow locations at startup and approximately every two seconds. A newly created default or named session appears without relaunching the app. When a socket disappears, its rows and badge contribution are cleared immediately; the session remains in a reconnecting state for a ten-second grace period so a quick restart can recover without duplicating its group. If the socket remains absent, the session is removed after the grace period.
+
+Each session has its own connection, subscription, snapshot, reconnect loop, and focus routing. A failure in one session therefore leaves healthy session data active. Unavailable sessions appear under **Reconnecting**, and **Retry Unavailable Sessions** immediately retries only unhealthy sessions. The icon is dimmed only when no session is connected; each client uses bounded reconnect backoff and rebuilds its authoritative snapshot after reconnecting.
 
 ## Terminal activation
 
@@ -150,8 +149,10 @@ HerdrMenubar/
 
 The main runtime boundaries are:
 
-- **`HerdrClient`** — an actor that owns socket requests, event subscriptions, snapshots, reconnects, and synchronization generations.
-- **`AgentStore`** — a main-actor observable model that derives menu sections and coordinates focus and activation.
+- **`SessionDiscovery`** — finds the default and direct named-session public sockets under the active configuration root.
+- **`SessionSupervisor`** — owns one `HerdrClient` per discovered session and isolates discovery, reconnect, retry, and removal behavior.
+- **`HerdrClient`** — an actor that owns one session's socket requests, event subscriptions, snapshots, reconnects, and synchronization generations.
+- **`AgentStore`** — a main-actor observable model that aggregates session-qualified menu sections and coordinates routed focus and activation.
 - **`NWHerdrConnection`** — a Network.framework Unix-domain socket adapter using newline-delimited JSON.
 - **`LoginItemService`** — a testable wrapper around `SMAppService.mainApp`.
 
@@ -199,7 +200,7 @@ The app persists only:
 - Selected terminal bundle identifier.
 - Launch at Login intent.
 
-Actual login-item state is read from macOS through `SMAppService`. Pane snapshots, agent status, terminal output, and Herdr session data are not written to disk by Herdr Menubar.
+Actual login-item state is read from macOS through `SMAppService`. Pane snapshots, agent status, terminal output, session state, and acknowledgement state are not written to disk by Herdr Menubar. Herdr remains the source of truth for all runtime state.
 
 Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynamic socket, server, focus, activation, and error details are logged as private values.
 
