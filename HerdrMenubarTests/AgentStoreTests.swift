@@ -502,6 +502,143 @@ final class AgentStoreTests: XCTestCase {
         await store.stop()
     }
 
+    func testMenuSelectionSupersedesInFlightNotificationWithoutStaleActivationOrError() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let coordinator = RecordingAttentionCoordinator()
+        let notifications = RecordingNotificationService()
+        let focuser = RecordingWezTermFocuser(
+            sequence: sequence,
+            results: [.failure(WezTermFocusError.noAttachedClient), .success(())],
+            blockedCalls: [1],
+            checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator(sequence: sequence)
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            attentionCoordinator: coordinator,
+            notificationService: notifications
+        )
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("p1", .done)])))
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("p2", .done)])))
+        await coordinator.waitForReconciliations(2)
+
+        await notifications.send(NotificationSelectionTarget(
+            sessionID: .named("work"), paneID: "p1"
+        ))
+        await focuser.waitForCalls(1)
+
+        let menuSelection = Task {
+            await store.select(AgentMenuItem(
+                session: defaultDescriptor, pane: pane("p2", .done)
+            ))
+        }
+        await focuser.waitForCancellations(1)
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
+
+        await focuser.releaseBlockedCalls()
+        await menuSelection.value
+        await supervisor.waitForRefreshRequests(2)
+
+        let focusRequests = await supervisor.focusRequests
+        let refreshRequests = await supervisor.refreshRequests
+        let actions = await sequence.values
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .named("work"), paneID: "p1"),
+            FocusRequest(sessionID: .default, paneID: "p2")
+        ])
+        XCTAssertEqual(refreshRequests, [.named("work"), .default])
+        XCTAssertEqual(actions, [
+            "focus:work:p1", "wezterm:work", "refresh:work",
+            "focus:Default:p2", "wezterm:Default",
+            "activate:com.github.wez.wezterm", "refresh:Default"
+        ])
+        XCTAssertEqual(activator.activatedBundleIdentifiers, [
+            WezTermCLIConstants.bundleIdentifier
+        ])
+        XCTAssertEqual(focuser.cancellationObservedSessionIDs, [.named("work")])
+        XCTAssertNil(store.transientError)
+        await store.stop()
+    }
+
+    func testStopAndRestartClearsPendingNotificationWhileFreshResponseStillSelects() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let coordinator = RecordingAttentionCoordinator()
+        let notifications = RecordingNotificationService()
+        let focuser = RecordingWezTermFocuser(
+            sequence: sequence,
+            blockedCalls: [1],
+            checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator(sequence: sequence)
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            attentionCoordinator: coordinator,
+            notificationService: notifications
+        )
+        await store.start()
+
+        let precedingSelection = Task {
+            await store.select(AgentMenuItem(
+                session: defaultDescriptor, pane: pane("pre", .working)
+            ))
+        }
+        await focuser.waitForCalls(1)
+        await notifications.send(NotificationSelectionTarget(
+            sessionID: .named("work"), paneID: "p1"
+        ))
+        await focuser.waitForCancellations(1)
+        await focuser.releaseBlockedCalls()
+        await precedingSelection.value
+        await supervisor.waitForRefreshRequests(1)
+        var focusRequests = await supervisor.focusRequests
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .default, paneID: "pre")
+        ])
+
+        await store.stop()
+        await notifications.waitForCancellations(1)
+        await store.start()
+        await notifications.waitForResponseCalls(2)
+
+        await supervisor.send(.discoverySnapshot([workDescriptor]))
+        await supervisor.send(.connected(workDescriptor, snapshot([
+            pane("p1", .done), pane("p2", .working)
+        ])))
+        await coordinator.waitForReconciliations(1)
+        await coordinator.barrier()
+        focusRequests = await supervisor.focusRequests
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .default, paneID: "pre")
+        ])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
+
+        await notifications.send(NotificationSelectionTarget(
+            sessionID: .named("work"), paneID: "p2"
+        ))
+        await supervisor.waitForRefreshRequests(2)
+
+        focusRequests = await supervisor.focusRequests
+        let refreshRequests = await supervisor.refreshRequests
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .default, paneID: "pre"),
+            FocusRequest(sessionID: .named("work"), paneID: "p2")
+        ])
+        XCTAssertEqual(refreshRequests, [.default, .named("work")])
+        XCTAssertEqual(activator.activatedBundleIdentifiers, [
+            WezTermCLIConstants.bundleIdentifier
+        ])
+        XCTAssertNil(store.transientError)
+        await store.stop()
+        await notifications.waitForCancellations(2)
+    }
+
     func testRapidSecondSelectionCancelsAndAwaitsFirstFinalization() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
@@ -1109,6 +1246,32 @@ private actor AsyncFlag {
     func set() { value = true }
 }
 
+private actor AsyncCountSignal {
+    private struct Waiter {
+        let target: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private var count = 0
+    private var waiters: [Waiter] = []
+
+    func record() {
+        count += 1
+        let ready = waiters.filter { $0.target <= count }
+        waiters.removeAll { $0.target <= count }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
+    }
+
+    func wait(for target: Int) async {
+        guard count < target else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(Waiter(target: target, continuation: continuation))
+        }
+    }
+}
+
 private actor AsyncGate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -1167,6 +1330,7 @@ private actor FakeSessionSupervisor: SessionSupervising {
     private let eventsGate: AsyncGate?
     private let stopGate: AsyncGate?
     private let terminationProbe = StreamTerminationProbe()
+    private let refreshSignal = AsyncCountSignal()
 
     init(
         focusError: (any Error)? = nil,
@@ -1262,9 +1426,11 @@ private actor FakeSessionSupervisor: SessionSupervising {
     func refresh(sessionID: SessionID) async {
         refreshRequests.append(sessionID)
         await sequence?.append("refresh:\(sessionID.displayName)")
+        await refreshSignal.record()
     }
 
     func send(_ event: SessionSupervisorEvent) { continuation?.yield(event) }
+    func waitForRefreshRequests(_ count: Int) async { await refreshSignal.wait(for: count) }
     func releaseEvents() async { await eventsGate?.release() }
     func releaseStop() async { await stopGate?.release() }
     private func recordTermination() { streamTerminated = true }
@@ -1281,13 +1447,15 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
     private(set) var unavailableSessionIDs: [SessionID] = []
     private(set) var removedSessionIDs: [SessionID] = []
     private(set) var resetCount = 0
+    private let reconciliationSignal = AsyncCountSignal()
 
     func reconcile(
         session: SessionDescriptor,
         items: [AgentMenuItem],
         policy: NotificationDeliveryPolicy
-    ) {
+    ) async {
         reconciliations.append(Reconciliation(session: session, items: items, policy: policy))
+        await reconciliationSignal.record()
     }
 
     func unavailable(sessionID: SessionID) {
@@ -1301,6 +1469,12 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
     func reset() {
         resetCount += 1
     }
+
+    func waitForReconciliations(_ count: Int) async {
+        await reconciliationSignal.wait(for: count)
+    }
+
+    func barrier() {}
 }
 
 private actor RecordingNotificationService: NativeNotificationServing {
@@ -1316,6 +1490,8 @@ private actor RecordingNotificationService: NativeNotificationServing {
     private(set) var responsesCallCount = 0
     private(set) var cancellationCount = 0
     private(set) var deliveredResponseCount = 0
+    private let responsesSignal = AsyncCountSignal()
+    private let cancellationSignal = AsyncCountSignal()
 
     init(blockResponses: Bool = false) {
         responsesGate = blockResponses ? AsyncGate() : nil
@@ -1325,6 +1501,7 @@ private actor RecordingNotificationService: NativeNotificationServing {
 
     func responses() async -> NotificationResponseSubscription {
         responsesCallCount += 1
+        await responsesSignal.record()
         await responsesGate?.wait()
         let id = UUID()
         let (stream, continuation) = AsyncStream<NotificationSelectionTarget>.makeStream()
@@ -1376,10 +1553,19 @@ private actor RecordingNotificationService: NativeNotificationServing {
         await responsesGate?.release()
     }
 
-    private func cancel(id: UUID) {
+    func waitForResponseCalls(_ count: Int) async {
+        await responsesSignal.wait(for: count)
+    }
+
+    func waitForCancellations(_ count: Int) async {
+        await cancellationSignal.wait(for: count)
+    }
+
+    private func cancel(id: UUID) async {
         guard let index = subscribers.firstIndex(where: { $0.id == id }) else { return }
         subscribers.remove(at: index)
         cancellationCount += 1
+        await cancellationSignal.record()
     }
 }
 
@@ -1413,6 +1599,8 @@ private final class RecordingWezTermFocuser: WezTermSessionFocusing {
     private let blockedCalls: Set<Int>
     private let checksCancellationAfterGate: Bool
     private let gate = AsyncGate()
+    private let callSignal = AsyncCountSignal()
+    private let cancellationSignal = AsyncCountSignal()
 
     init(
         sequence: ActionSequence? = nil,
@@ -1430,8 +1618,14 @@ private final class RecordingWezTermFocuser: WezTermSessionFocusing {
         focusedSessionIDs.append(sessionID)
         let call = focusedSessionIDs.count
         await sequence?.append("wezterm:\(sessionID.displayName)")
+        await callSignal.record()
         if blockedCalls.contains(call) {
-            await gate.wait()
+            let cancellationSignal = self.cancellationSignal
+            await withTaskCancellationHandler {
+                await gate.wait()
+            } onCancel: {
+                Task { await cancellationSignal.record() }
+            }
             if Task.isCancelled {
                 cancellationObservedSessionIDs.append(sessionID)
             }
@@ -1450,6 +1644,14 @@ private final class RecordingWezTermFocuser: WezTermSessionFocusing {
 
     func releaseBlockedCalls() async {
         await gate.release()
+    }
+
+    func waitForCalls(_ count: Int) async {
+        await callSignal.wait(for: count)
+    }
+
+    func waitForCancellations(_ count: Int) async {
+        await cancellationSignal.wait(for: count)
     }
 }
 
