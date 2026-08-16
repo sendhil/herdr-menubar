@@ -9,7 +9,7 @@ The feature will build on the existing multi-session presentation and selection 
 ## Goals
 
 - Notify once when an observed agent enters `blocked` or `done`.
-- Notify again when a blocked agent later becomes done.
+- Notify again when an agent changes between the distinct attention states `blocked` and `done`.
 - Avoid notifications for initial state, repeated snapshots, and reconnect replay.
 - Keep panes with the same ID in different Herdr sessions independent.
 - Let a notification click reuse the exact session-aware focus path used by a menu row.
@@ -100,7 +100,7 @@ The coordinator keys all history by the composite identity `(SessionID, paneID)`
 For the first accepted snapshot of a session, the coordinator stores every pane status without notifying. For later snapshots:
 
 - A known pane not previously in `blocked` or `done` notifies when it enters either status.
-- A known blocked pane notifies again when it becomes done.
+- A status change between `blocked` and `done` notifies in either direction because each state communicates a distinct reason for attention.
 - Repeated `blocked`, repeated `done`, and every transition to a non-attention status remain silent.
 - A new pane in an already-baselined session notifies if its first status is blocked or done.
 - A pane absent from a later authoritative snapshot is removed from pane history. If it appears again after that, it is treated as a new pane in a baselined session.
@@ -173,7 +173,7 @@ As with Launch at Login, `HerdrAppDelegate.applicationDidBecomeActive` triggers 
 
 - First snapshot for every session is silent.
 - `idle`, `working`, and unknown to blocked or done notify once.
-- Blocked to done notifies again.
+- Blocked to done and done to blocked each notify again.
 - Repeated blocked and done snapshots stay silent.
 - Returning to a non-attention status allows a later blocked or done transition to notify.
 - New attention panes in a baselined session notify.
