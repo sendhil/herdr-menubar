@@ -41,6 +41,7 @@
 		C10000000000000000000006 /* WezTermFocusAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000000C /* WezTermFocusAdapterTests.swift */; };
 		C1000000000000000000000A /* WezTermCLITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000009 /* WezTermCLITests.swift */; };
 		C1000000000000000000000E /* WezTermSubprocessIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000000D /* WezTermSubprocessIntegrationTests.swift */; };
+		D20000000000000000000003 /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* NotificationModels.swift */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -97,6 +98,7 @@
 		C1000000000000000000000B /* WezTermFocusAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermFocusAdapter.swift; sourceTree = "<group>"; };
 		C1000000000000000000000C /* WezTermFocusAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermFocusAdapterTests.swift; sourceTree = "<group>"; };
 		C1000000000000000000000D /* WezTermSubprocessIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermSubprocessIntegrationTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000002 /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModels.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -199,11 +201,20 @@
 			path = Herdr;
 			sourceTree = "<group>";
 		};
+		D20000000000000000000001 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				D20000000000000000000002 /* NotificationModels.swift */,
+			);
+			path = Notifications;
+			sourceTree = "<group>";
+		};
 		E8E0E89542AC7CFF6A9E3570 /* HerdrMenubar */ = {
 			isa = PBXGroup;
 			children = (
 				7B7F2BADAF554B3A0A94F63D /* App */,
 				C49263C8A1747A34F59C8057 /* Herdr */,
+				D20000000000000000000001 /* Notifications */,
 				12A000000000000000000030 /* Status */,
 				12A000000000000000000031 /* Menu */,
 				12A000000000000000000032 /* System */,
@@ -332,6 +343,7 @@
 				12A00000000000000000000F /* TerminalActivationService.swift in Sources */,
 				12A00000000000000000002B /* LoginItemService.swift in Sources */,
 				12A00000000000000000002C /* AppLog.swift in Sources */,
+				D20000000000000000000003 /* NotificationModels.swift in Sources */,
 				902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

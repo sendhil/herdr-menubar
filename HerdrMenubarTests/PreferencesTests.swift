@@ -45,6 +45,32 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
+    func testNotificationPreferencesDefaultOff() {
+        withDefaults { defaults in
+            let preferences = Preferences(defaults: defaults)
+            XCTAssertFalse(preferences.notificationsEnabled)
+            XCTAssertFalse(preferences.notificationSoundEnabled)
+        }
+    }
+
+    func testNotificationPreferencesPersistIndependently() {
+        withDefaults { defaults in
+            let preferences = Preferences(defaults: defaults)
+            preferences.notificationsEnabled = true
+            preferences.notificationSoundEnabled = true
+
+            let restored = Preferences(defaults: defaults)
+            XCTAssertTrue(restored.notificationsEnabled)
+            XCTAssertTrue(restored.notificationSoundEnabled)
+            XCTAssertTrue(defaults.bool(forKey: Preferences.notificationsEnabledKey))
+            XCTAssertTrue(defaults.bool(forKey: Preferences.notificationSoundEnabledKey))
+
+            restored.notificationsEnabled = false
+            XCTAssertFalse(Preferences(defaults: defaults).notificationsEnabled)
+            XCTAssertTrue(Preferences(defaults: defaults).notificationSoundEnabled)
+        }
+    }
+
     private func withDefaults(_ body: @MainActor (UserDefaults) -> Void) {
         let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
