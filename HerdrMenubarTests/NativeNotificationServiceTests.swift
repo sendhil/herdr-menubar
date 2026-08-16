@@ -217,6 +217,165 @@ final class NativeNotificationServiceTests: XCTestCase {
         XCTAssertEqual(paneIDs, (4..<12).map { "pane-\($0)" })
     }
 
+    func testCancellingOldResponseSubscriberAllowsLaterSubscriberToReceive() async {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        let service = NativeNotificationService(backend: backend)
+        let oldStream = await service.responses()
+        let oldSubscriberStarted = expectation(description: "old subscriber started")
+        let oldSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = oldStream.makeAsyncIterator()
+            oldSubscriberStarted.fulfill()
+            return await iterator.next()
+        }
+        await fulfillment(of: [oldSubscriberStarted], timeout: 1)
+
+        oldSubscriber.cancel()
+        let cancelledResult = await oldSubscriber.value
+        XCTAssertNil(cancelledResult)
+
+        var newIterator = await service.responses().makeAsyncIterator()
+        service.handleResponse(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: validPayload(paneID: "after-resubscribe")
+        )
+        let newResult = await newIterator.next()
+        XCTAssertEqual(
+            newResult,
+            NotificationSelectionTarget(sessionID: .default, paneID: "after-resubscribe")
+        )
+    }
+
+    func testActiveResponseSubscribersEachReceiveEveryClick() async {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        let service = NativeNotificationService(backend: backend)
+        let firstStream = await service.responses()
+        let secondStream = await service.responses()
+        let subscribersStarted = expectation(description: "subscribers started")
+        subscribersStarted.expectedFulfillmentCount = 2
+        let subscribersReceived = expectation(description: "subscribers received")
+        subscribersReceived.expectedFulfillmentCount = 2
+        let firstSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = firstStream.makeAsyncIterator()
+            subscribersStarted.fulfill()
+            let target = await iterator.next()
+            subscribersReceived.fulfill()
+            return target
+        }
+        let secondSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = secondStream.makeAsyncIterator()
+            subscribersStarted.fulfill()
+            let target = await iterator.next()
+            subscribersReceived.fulfill()
+            return target
+        }
+        await fulfillment(of: [subscribersStarted], timeout: 1)
+
+        service.handleResponse(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: validPayload(paneID: "broadcast")
+        )
+        await fulfillment(of: [subscribersReceived], timeout: 0.5)
+        firstSubscriber.cancel()
+        secondSubscriber.cancel()
+        let firstResult = await firstSubscriber.value
+        let secondResult = await secondSubscriber.value
+        let expected = NotificationSelectionTarget(sessionID: .default, paneID: "broadcast")
+        XCTAssertEqual(firstResult, expected)
+        XCTAssertEqual(secondResult, expected)
+    }
+
+    func testCancellingOneResponseSubscriberLeavesOtherSubscriberActive() async {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        let service = NativeNotificationService(backend: backend)
+        let cancelledStream = await service.responses()
+        let retainedStream = await service.responses()
+        let subscribersStarted = expectation(description: "subscribers started")
+        subscribersStarted.expectedFulfillmentCount = 2
+        let cancelledSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = cancelledStream.makeAsyncIterator()
+            subscribersStarted.fulfill()
+            return await iterator.next()
+        }
+        let retainedSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = retainedStream.makeAsyncIterator()
+            subscribersStarted.fulfill()
+            return await iterator.next()
+        }
+        await fulfillment(of: [subscribersStarted], timeout: 1)
+
+        cancelledSubscriber.cancel()
+        let cancelledResult = await cancelledSubscriber.value
+        XCTAssertNil(cancelledResult)
+        service.handleResponse(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: validPayload(paneID: "retained")
+        )
+
+        let retainedResult = await retainedSubscriber.value
+        XCTAssertEqual(
+            retainedResult,
+            NotificationSelectionTarget(sessionID: .default, paneID: "retained")
+        )
+    }
+
+    func testPreSubscriptionBufferIsDeliveredOnlyToFirstSubscriber() async {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        let service = NativeNotificationService(backend: backend)
+        service.handleResponse(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: validPayload(paneID: "buffered")
+        )
+
+        var firstIterator = await service.responses().makeAsyncIterator()
+        let secondStream = await service.responses()
+        let bufferedResult = await firstIterator.next()
+        XCTAssertEqual(
+            bufferedResult,
+            NotificationSelectionTarget(sessionID: .default, paneID: "buffered")
+        )
+
+        let secondSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = secondStream.makeAsyncIterator()
+            return await iterator.next()
+        }
+        service.handleResponse(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: validPayload(paneID: "live")
+        )
+        let secondResult = await secondSubscriber.value
+        XCTAssertEqual(
+            secondResult,
+            NotificationSelectionTarget(sessionID: .default, paneID: "live")
+        )
+    }
+
+    func testServiceDeinitFinishesAllActiveResponseSubscribers() async {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        var service: NativeNotificationService? = NativeNotificationService(backend: backend)
+        let firstStream = await service?.responses()
+        let secondStream = await service?.responses()
+        let subscribersStarted = expectation(description: "subscribers started")
+        subscribersStarted.expectedFulfillmentCount = 2
+        let firstSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = firstStream!.makeAsyncIterator()
+            subscribersStarted.fulfill()
+            return await iterator.next()
+        }
+        let secondSubscriber = Task { () -> NotificationSelectionTarget? in
+            var iterator = secondStream!.makeAsyncIterator()
+            subscribersStarted.fulfill()
+            return await iterator.next()
+        }
+        await fulfillment(of: [subscribersStarted], timeout: 1)
+
+        service = nil
+
+        let firstResult = await firstSubscriber.value
+        let secondResult = await secondSubscriber.value
+        XCTAssertNil(firstResult)
+        XCTAssertNil(secondResult)
+    }
+
     func testDismissCustomMalformedEmptyAndFutureActionsAreIgnored() async {
         let backend = FakeNotificationCenterBackend(settings: .authorized)
         let service = NativeNotificationService(backend: backend)
@@ -258,6 +417,25 @@ final class NativeNotificationServiceTests: XCTestCase {
             firstTarget,
             NotificationSelectionTarget(sessionID: .default, paneID: "accepted")
         )
+    }
+
+    func testPayloadVersionAcceptsOnlyIntegerOne() {
+        let acceptedVersions: [Any] = [1, NSNumber(value: 1)]
+        for version in acceptedVersions {
+            var payload = validPayload(paneID: "accepted-integer")
+            payload["version"] = version
+            XCTAssertEqual(
+                NativeNotificationService.decodeTarget(payload),
+                NotificationSelectionTarget(sessionID: .default, paneID: "accepted-integer")
+            )
+        }
+
+        let rejectedVersions: [Any] = [NSNumber(value: true), NSNumber(value: 1.0)]
+        for version in rejectedVersions {
+            var payload = validPayload(paneID: "rejected-number")
+            payload["version"] = version
+            XCTAssertNil(NativeNotificationService.decodeTarget(payload))
+        }
     }
 
     func testForegroundPresentationIsListOnly() {

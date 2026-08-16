@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import UserNotifications
 
@@ -65,27 +66,23 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
     static let foregroundPresentationOptions: UNNotificationPresentationOptions = [.list]
 
     private static let payloadVersion = 1
-    private static let responseBufferLimit = 8
 
     private let backend: any UserNotificationCenterBacking
-    private let responseStream: AsyncStream<NotificationSelectionTarget>
-    private let responseContinuation: AsyncStream<NotificationSelectionTarget>.Continuation
+    private let responseBroker: NotificationResponseBroker
 
     init(backend: any UserNotificationCenterBacking = LiveUserNotificationCenterBackend()) {
         self.backend = backend
-        (responseStream, responseContinuation) = AsyncStream.makeStream(
-            bufferingPolicy: .bufferingNewest(Self.responseBufferLimit)
-        )
+        responseBroker = NotificationResponseBroker(preSubscriptionBufferLimit: 8)
         super.init()
         backend.setDelegate(self)
     }
 
     deinit {
-        responseContinuation.finish()
+        responseBroker.finish()
     }
 
     func responses() async -> AsyncStream<NotificationSelectionTarget> {
-        responseStream
+        responseBroker.stream()
     }
 
     func requestAuthorization() async throws -> Bool {
@@ -137,7 +134,7 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
     func handleResponse(actionIdentifier: String, userInfo: [AnyHashable: Any]) {
         guard actionIdentifier == UNNotificationDefaultActionIdentifier,
               let target = Self.decodeTarget(userInfo) else { return }
-        responseContinuation.yield(target)
+        responseBroker.yield(target)
     }
 
     static func payload(for target: NotificationSelectionTarget) -> [AnyHashable: Any] {
@@ -156,7 +153,7 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
     }
 
     static func decodeTarget(_ userInfo: [AnyHashable: Any]) -> NotificationSelectionTarget? {
-        guard userInfo["version"] as? Int == payloadVersion,
+        guard isSupportedPayloadVersion(userInfo["version"]),
               let sessionKind = userInfo["session_kind"] as? String,
               let paneID = userInfo["pane_id"] as? String,
               !paneID.isEmpty else { return nil }
@@ -173,5 +170,134 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
             return nil
         }
         return NotificationSelectionTarget(sessionID: sessionID, paneID: paneID)
+    }
+
+    private static func isSupportedPayloadVersion(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              !CFNumberIsFloatType(number) else { return false }
+        return number.intValue == payloadVersion
+    }
+}
+
+private final class NotificationResponseBroker: @unchecked Sendable {
+    typealias Target = NotificationSelectionTarget
+    typealias Continuation = AsyncStream<Target>.Continuation
+
+    private enum Action {
+        case yield(UUID, Continuation, Target)
+        case finish(Continuation)
+    }
+
+    private let lock = NSLock()
+    private let preSubscriptionBufferLimit: Int
+    private var subscribers: [UUID: Continuation] = [:]
+    private var pendingTargets: [Target] = []
+    private var actions: [Action] = []
+    private var isDraining = false
+    private var isFinished = false
+
+    init(preSubscriptionBufferLimit: Int) {
+        self.preSubscriptionBufferLimit = preSubscriptionBufferLimit
+    }
+
+    func stream() -> AsyncStream<Target> {
+        let subscriptionID = UUID()
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: Target.self,
+            bufferingPolicy: .unbounded
+        )
+        continuation.onTermination = { [weak self] _ in
+            self?.removeSubscriber(subscriptionID)
+        }
+
+        let shouldDrain = lock.withLock {
+            if isFinished {
+                actions.append(.finish(continuation))
+            } else {
+                let isFirstSubscriber = subscribers.isEmpty
+                subscribers[subscriptionID] = continuation
+                if isFirstSubscriber {
+                    for target in pendingTargets {
+                        actions.append(.yield(subscriptionID, continuation, target))
+                    }
+                    pendingTargets.removeAll(keepingCapacity: true)
+                }
+            }
+            return claimDrainerIfNeeded()
+        }
+        if shouldDrain {
+            drainActions()
+        }
+        return stream
+    }
+
+    func yield(_ target: Target) {
+        let shouldDrain = lock.withLock {
+            guard !isFinished else { return false }
+            guard !subscribers.isEmpty else {
+                pendingTargets.append(target)
+                if pendingTargets.count > preSubscriptionBufferLimit {
+                    pendingTargets.removeFirst(pendingTargets.count - preSubscriptionBufferLimit)
+                }
+                return false
+            }
+            for (subscriptionID, continuation) in subscribers {
+                actions.append(.yield(subscriptionID, continuation, target))
+            }
+            return claimDrainerIfNeeded()
+        }
+        if shouldDrain {
+            drainActions()
+        }
+    }
+
+    func finish() {
+        let shouldDrain = lock.withLock {
+            guard !isFinished else { return false }
+            isFinished = true
+            pendingTargets.removeAll(keepingCapacity: false)
+            for continuation in subscribers.values {
+                actions.append(.finish(continuation))
+            }
+            subscribers.removeAll(keepingCapacity: false)
+            return claimDrainerIfNeeded()
+        }
+        if shouldDrain {
+            drainActions()
+        }
+    }
+
+    private func removeSubscriber(_ subscriptionID: UUID) {
+        _ = lock.withLock {
+            subscribers.removeValue(forKey: subscriptionID)
+        }
+    }
+
+    private func claimDrainerIfNeeded() -> Bool {
+        guard !isDraining, !actions.isEmpty else { return false }
+        isDraining = true
+        return true
+    }
+
+    private func drainActions() {
+        while true {
+            let action = lock.withLock { () -> Action? in
+                guard !actions.isEmpty else {
+                    isDraining = false
+                    return nil
+                }
+                return actions.removeFirst()
+            }
+            guard let action else { return }
+            switch action {
+            case .yield(let subscriptionID, let continuation, let target):
+                if case .terminated = continuation.yield(target) {
+                    removeSubscriber(subscriptionID)
+                }
+            case .finish(let continuation):
+                continuation.finish()
+            }
+        }
     }
 }
