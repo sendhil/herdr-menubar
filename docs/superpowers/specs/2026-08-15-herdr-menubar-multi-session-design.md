@@ -42,7 +42,7 @@ The discovery service derives Herdr's configuration root from non-empty `XDG_CON
 <config-root>/herdr/sessions/<name>/herdr.sock
 ```
 
-The root socket identifies the **Default** session. A direct child of `sessions` identifies a named session using the directory name. Discovery ignores deeper descendants, non-socket entries, and empty or invalid session names.
+The root socket identifies the **Default** session. A direct child directory of `sessions` identifies a named session using its final path component. A valid session name is any non-empty direct-child component other than `.` or `..`; path separators cannot occur inside one component. Discovery ignores deeper descendants, non-directory direct children, and candidates whose `herdr.sock` entry is not a Unix-domain socket.
 
 Discovery runs at startup and then approximately every two seconds. Periodic reconciliation is preferred to filesystem-event-only discovery because the directory may not exist at launch, sockets are replaced during restarts, and filesystem events may be coalesced. Scanning one shallow local directory is inexpensive and deterministic.
 
@@ -93,11 +93,11 @@ func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo
 func refresh(sessionID: SessionID) async
 ```
 
-Supervisor events describe lifecycle and authoritative presentation state:
+Supervisor events describe lifecycle and authoritative presentation state. Every successful reconciliation publishes `discoverySnapshot`, including an empty array. That authoritative event lets the store distinguish a completed empty scan from startup before the first successful scan or a discovery failure:
 
 ```swift
 enum SessionSupervisorEvent: Sendable {
-    case discovered(SessionDescriptor)
+    case discoverySnapshot([SessionDescriptor])
     case connected(SessionDescriptor, PresentationSnapshot)
     case snapshot(SessionID, PresentationSnapshot)
     case unavailable(SessionID, String)
@@ -109,13 +109,13 @@ Each client still owns exactly one socket path, long-lived subscription, short-l
 
 ### `AgentStore`
 
-The main-actor store consumes supervisor events and maintains session-indexed presentation state. Each entry contains the descriptor, connection state, and most recent authoritative menu items. A disconnected or unavailable event clears only that session's items.
+The main-actor store consumes supervisor events and maintains session-indexed presentation state. Each entry contains the descriptor, connection state, and most recent authoritative menu items. A disconnected or unavailable event clears only that session's items. The store also records whether it has received its first successful `discoverySnapshot`; an empty first snapshot is the authoritative **No Herdr sessions running** state.
 
 The store derives aggregate menu sections and the attention count. It does not scan the filesystem, own clients, parse protocol messages, or retain stale snapshots.
 
 ### App composition
 
-`HerdrMenubarApp` creates one discovery service, one supervisor, and one store. Application startup starts the store and supervisor. Application termination stops the supervisor, which stops every child client and awaits their cleanup before macOS terminates the app.
+`HerdrMenubarApp` creates one discovery service, one supervisor, and one store. On startup, the store obtains the supervisor event stream and starts its aggregate-event consumer before starting the supervisor, so initial and empty reconciliation events cannot be lost. On termination, the store cancels and awaits its event consumer, then stops the supervisor; the supervisor cancels discovery and grace tasks, stops every child client, and awaits their cleanup before macOS terminates the app.
 
 ## Presentation model
 
@@ -184,6 +184,7 @@ Failure to find the runtime or focus the pane does not activate the terminal. Th
 - `AgentStore` changes observable presentation state only on the main actor.
 - A per-runtime generation token rejects events from clients that have been removed or replaced.
 - Discovery failures are logged and retried without stopping healthy runtimes.
+- Every successful discovery reconciliation publishes an authoritative descriptor snapshot, even when empty; failed scans publish no snapshot and cannot masquerade as an empty result.
 - Failure in one client's transport, bootstrap, metadata request, subscription, or focus operation changes only that session's state.
 - A session contributes data only after the existing authoritative bootstrap completes.
 - Repeated discovery results, disconnect events, retry commands, and removal requests are idempotent.
@@ -198,7 +199,10 @@ Dynamic socket paths, session names, focus details, and errors remain private in
 - Discover a root socket as `.default` with display name `Default`.
 - Discover multiple direct named-session sockets.
 - Use non-empty `XDG_CONFIG_HOME` as the configuration root.
-- Ignore missing roots, ordinary files, directories without sockets, and deeper descendants.
+- Accept any non-empty direct-child session name other than `.` or `..`.
+- Ignore missing roots, ordinary-file direct children, directories without Unix-domain sockets, and deeper descendants.
+- Publish a successful empty discovery snapshot when no session sockets exist.
+- Do not publish an empty snapshot when filesystem discovery fails.
 - Produce deterministic descriptors and ordering across repeated scans.
 - Do not use `HERDR_SESSION` or `HERDR_SOCKET_PATH` to limit production discovery.
 
@@ -215,6 +219,7 @@ Dynamic socket paths, session names, focus details, and errors remain private in
 - Keep healthy session events flowing when another session fails.
 - Retry only unavailable sessions and run discovery immediately.
 - Stop all runtimes and tasks deterministically.
+- Deliver the first discovery snapshot only after the store has subscribed.
 
 Tests inject a manual clock or short controllable durations; they do not wait for real two- or ten-second intervals.
 
@@ -226,6 +231,7 @@ Tests inject a manual clock or short controllable durations; they do not wait fo
 - Sort Default first, then named sessions, then items using existing status and label rules.
 - Clear only the unavailable session's items.
 - Derive active, partially unavailable, connecting, and no-session states.
+- Distinguish an authoritative empty discovery snapshot from startup before a successful scan.
 - Route focus and refresh to the selected item's owning session.
 - Include the session name in focus errors.
 
@@ -251,6 +257,7 @@ Update the README to describe automatic multi-session discovery, status-first se
 ## Acceptance criteria
 
 - Starting Herdr Menubar while multiple sessions are active shows all of them after bootstrap.
+- A successful initial scan with no sockets produces **No Herdr sessions running**; a failed or not-yet-completed scan does not.
 - Starting a new named session while the app runs adds it without restarting the app.
 - Attention count equals the sum of current `blocked` and `done` agents across connected sessions.
 - Duplicate pane IDs in separate sessions render and focus independently.
