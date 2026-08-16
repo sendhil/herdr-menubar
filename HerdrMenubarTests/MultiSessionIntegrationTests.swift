@@ -27,11 +27,15 @@ final class MultiSessionIntegrationTests: XCTestCase {
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
         let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
+        let notifications = IntegrationNotificationService()
+        let coordinator = IntegrationAttentionCoordinator()
         let store = await MainActor.run {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
-                wezTermFocuser: focuser
+                wezTermFocuser: focuser,
+                attentionCoordinator: coordinator,
+                notificationService: notifications
             )
         }
         await store.start()
@@ -109,11 +113,15 @@ final class MultiSessionIntegrationTests: XCTestCase {
             )
         }
         let preferencesFixture = try await MainActor.run { try IntegrationPreferencesFixture() }
+        let notifications = IntegrationNotificationService()
+        let coordinator = IntegrationAttentionCoordinator()
         let store = await MainActor.run {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
                 wezTermFocuser: wezTermFocuser,
+                attentionCoordinator: coordinator,
+                notificationService: notifications,
                 preferences: preferencesFixture.preferences
             )
         }
@@ -191,11 +199,15 @@ final class MultiSessionIntegrationTests: XCTestCase {
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
         let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
+        let notifications = IntegrationNotificationService()
+        let coordinator = IntegrationAttentionCoordinator()
         let store = await MainActor.run {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
-                wezTermFocuser: focuser
+                wezTermFocuser: focuser,
+                attentionCoordinator: coordinator,
+                notificationService: notifications
             )
         }
         await store.start()
@@ -252,6 +264,24 @@ private struct IntegrationClientFactory: SessionClientCreating {
             subscriptionRebuildDebounce: .milliseconds(10)
         )
     }
+}
+
+private actor IntegrationNotificationService: NativeNotificationServing {
+    func responses() async -> NotificationResponseSubscription { .finished() }
+    func requestAuthorization() async throws -> Bool { true }
+    func settings() async -> NotificationSystemSettings { .authorized }
+    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {}
+}
+
+private actor IntegrationAttentionCoordinator: AttentionNotificationCoordinating {
+    func reconcile(
+        session: SessionDescriptor,
+        items: [AgentMenuItem],
+        policy: NotificationDeliveryPolicy
+    ) {}
+    func unavailable(sessionID: SessionID) {}
+    func remove(sessionID: SessionID) {}
+    func reset() {}
 }
 
 @MainActor

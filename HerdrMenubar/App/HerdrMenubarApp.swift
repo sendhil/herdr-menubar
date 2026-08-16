@@ -40,12 +40,16 @@ struct HerdrMenubarApp: App {
             cli: wezTermCLI
         )
         let preferences = Preferences()
+        let notificationService = NativeNotificationService()
+        let attentionCoordinator = AttentionNotificationCoordinator(service: notificationService)
         _preferences = State(initialValue: preferences)
         _loginItemService = State(initialValue: LoginItemService())
         _store = State(initialValue: AgentStore(
             supervisor: supervisor,
             terminalActivator: TerminalActivationService(),
             wezTermFocuser: wezTermFocuser,
+            attentionCoordinator: attentionCoordinator,
+            notificationService: notificationService,
             preferences: preferences
         ))
         installedTerminals = TerminalCatalog().installedTerminals()
