@@ -247,7 +247,7 @@ private extension SessionSupervisor {
                 )
             } catch {
                 guard ownsLifecycle(generation), !Task.isCancelled else { return }
-                AppLog.synchronization.error("Session discovery failed: \(error.localizedDescription, privacy: .public)")
+                AppLog.synchronization.error("Session discovery failed: \(error.localizedDescription)")
                 outcome = ReconciliationOutcome(status: .failed, retriedSessionIDs: [])
             }
 
