@@ -44,6 +44,10 @@ struct BoundedProcessRunner: BoundedProcessRunning {
 
         do {
             try await execution.launch(invocation, observer: launchObserver)
+        } catch let error as BoundedProcessError {
+            await execution.closeHandles(token: token)
+            eventContinuation.finish()
+            throw error
         } catch {
             await execution.closeHandles(token: token)
             eventContinuation.finish()
@@ -166,6 +170,7 @@ private actor ProcessExecutionRecord {
         _ invocation: ProcessInvocation,
         observer: @Sendable (Int32) -> Void
     ) throws {
+        guard !Task.isCancelled else { throw BoundedProcessError.cancelled }
         var stdoutDescriptors: [Int32] = [-1, -1]
         var stderrDescriptors: [Int32] = [-1, -1]
         guard Darwin.pipe(&stdoutDescriptors) == 0 else {
@@ -193,6 +198,11 @@ private actor ProcessExecutionRecord {
             }
         }
 
+        try normalizePipeDescriptors(
+            stdout: &stdoutDescriptors,
+            stderr: &stderrDescriptors
+        )
+
         guard posix_spawn_file_actions_init(&actions) == 0,
               posix_spawnattr_init(&attributes) == 0,
               posix_spawnattr_setsigmask(&attributes, &signalMask) == 0,
@@ -212,6 +222,7 @@ private actor ProcessExecutionRecord {
 
         var childPID: pid_t = 0
         let executablePath = invocation.executableURL.path
+        guard !Task.isCancelled else { throw BoundedProcessError.cancelled }
         let spawnResult = spawn(
             executablePath: executablePath,
             arguments: invocation.arguments,
@@ -232,6 +243,30 @@ private actor ProcessExecutionRecord {
         stderrDescriptors[0] = -1
         pid = childPID
         observer(childPID)
+    }
+
+    private func normalizePipeDescriptors(
+        stdout: inout [Int32],
+        stderr: inout [Int32]
+    ) throws {
+        let originals = [stdout[0], stdout[1], stderr[0], stderr[1]]
+        var normalized: [Int32] = []
+        normalized.reserveCapacity(originals.count)
+
+        for descriptor in originals {
+            let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+            guard duplicate >= 0 else {
+                normalized.forEach { Darwin.close($0) }
+                throw BoundedProcessError.launchFailed
+            }
+            normalized.append(duplicate)
+        }
+
+        for index in stdout.indices { closeDescriptor(&stdout[index]) }
+        for index in stderr.indices { closeDescriptor(&stderr[index]) }
+        stdout = [normalized[0], normalized[1]]
+        stderr = [normalized[2], normalized[3]]
+        precondition((stdout + stderr).allSatisfy { $0 > STDERR_FILENO })
     }
 
     func startExitMonitor(token: UUID) -> Task<Void, Never> {
