@@ -284,6 +284,306 @@ final class SessionSupervisorTests: XCTestCase {
         XCTAssertEqual(maximumConcurrentCalls, 1)
     }
 
+    func testMissingSocketPublishesUnavailableAndClearsConnectionImmediately() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([pane("one")]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([]),
+            .success([])
+        ])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(.unavailable(.default, "Session socket unavailable"))
+        })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 3 })
+
+        do {
+            _ = try await supervisor.focus(sessionID: .default, paneID: "one")
+            XCTFail("Expected missing session to become unavailable immediately")
+        } catch {
+            XCTAssertEqual(error as? SessionSupervisorError, .sessionUnavailable("Default"))
+        }
+        let graceWaitCount = await sleeper.requestedDurations.filter { $0 == .seconds(10) }.count
+        let unavailableCount = await recorder.recorded.filter {
+            $0 == .unavailable(.default, "Session socket unavailable")
+        }.count
+        XCTAssertEqual(graceWaitCount, 1)
+        XCTAssertEqual(unavailableCount, 1)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testReappearanceWithinGraceKeepsClientAndRetriesIt() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([]),
+            .success([defaultDescriptor])
+        ])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await sleeper.hasWait(for: .seconds(10)) })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await client.retryCount == 1 })
+
+        await XCTAssertEqualAsync(await factory.makeCount, 1)
+        await XCTAssertEqualAsync(await client.retryCount, 1)
+        await XCTAssertFalseAsync(await sleeper.hasWait(for: .seconds(10)))
+        await supervisor.stop()
+    }
+
+    func testGraceExpiryStopsClientAwaitsEventConsumerThenPublishesRemoved() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [.success([defaultDescriptor]), .success([])])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await sleeper.hasWait(for: .seconds(10)) })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(10)))
+        await XCTAssertTrueAsync(await spinUntil { await recorder.recorded.contains(.removed(.default)) })
+
+        await XCTAssertEqualAsync(await client.stopCount, 1)
+        await XCTAssertTrueAsync(await client.streamTerminated)
+        let events = await recorder.recorded
+        let unavailableIndex = events.firstIndex(of: .unavailable(.default, "Session socket unavailable"))
+        let removedIndex = events.firstIndex(of: .removed(.default))
+        XCTAssertNotNil(unavailableIndex)
+        XCTAssertNotNil(removedIndex)
+        if let unavailableIndex, let removedIndex { XCTAssertLessThan(unavailableIndex, removedIndex) }
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testStopDuringGraceCleanupAwaitsInFlightRemoval() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        await client.setStopBlocked(true)
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [.success([defaultDescriptor]), .success([])])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await sleeper.hasWait(for: .seconds(10)) })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(10)))
+        await XCTAssertTrueAsync(await spinUntil { await client.stopStarted })
+
+        let stopped = AsyncFlag()
+        let stopTask = Task {
+            await supervisor.stop()
+            await stopped.set()
+        }
+        await Task.yield()
+        await XCTAssertFalseAsync(await stopped.value)
+        await XCTAssertFalseAsync(await recorder.finished.value)
+        await client.releaseStop()
+        await stopTask.value
+
+        await XCTAssertTrueAsync(await stopped.value)
+        await XCTAssertTrueAsync(await client.streamTerminated)
+        await XCTAssertTrueAsync(await recorder.finished.value)
+    }
+
+    func testReappearanceDuringBlockedRemovalKeepsNewRuntimeAndSuppressesOldRemovedEvent() async {
+        let oldClient = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([pane("old")]))])
+        await oldClient.setStopBlocked(true)
+        let replacement = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([pane("new")]))])
+        let factory = FakeSessionClientFactory(clients: [.default: oldClient])
+        await factory.enqueue(replacement, for: .default)
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([]),
+            .success([defaultDescriptor])
+        ])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await oldClient.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await sleeper.hasWait(for: .seconds(10)) })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(10)))
+        await XCTAssertTrueAsync(await spinUntil { await oldClient.stopStarted })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await replacement.startCount == 1 })
+        let replacementConnected = SessionSupervisorEvent.connected(
+            defaultDescriptor,
+            clientSnapshot([pane("new")])
+        )
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(replacementConnected)
+        })
+
+        await oldClient.releaseStop()
+        await XCTAssertTrueAsync(await spinUntil { await oldClient.streamTerminated })
+        await Task.yield()
+        await XCTAssertFalseAsync(await recorder.recorded.contains(.removed(.default)))
+        await XCTAssertEqualAsync(await factory.makeCount, 2)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testLateEventFromRemovedGenerationIsIgnored() async {
+        let oldClient = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        await oldClient.setStopBlocked(true)
+        let factory = FakeSessionClientFactory(clients: [.default: oldClient])
+        let discovery = FakeSessionDiscovery(results: [.success([defaultDescriptor]), .success([])])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await oldClient.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await sleeper.hasWait(for: .seconds(10)) })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(10)))
+        await XCTAssertTrueAsync(await spinUntil { await oldClient.stopStarted })
+        await oldClient.send(.snapshot(clientSnapshot([pane("late")])))
+        await Task.yield()
+
+        await XCTAssertFalseAsync(await recorder.recorded.contains(.snapshot(.default, clientSnapshot([pane("late")]))))
+        await oldClient.releaseStop()
+        await XCTAssertTrueAsync(await spinUntil { await recorder.recorded.contains(.removed(.default)) })
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testPresentButDisconnectedSocketIsNotRemoved() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([defaultDescriptor]),
+            .success([defaultDescriptor])
+        ])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await client.send(.disconnected("connection lost"))
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(.unavailable(.default, "connection lost"))
+        })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 2 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 3 })
+
+        await XCTAssertFalseAsync(await sleeper.requestedDurations.contains(.seconds(10)))
+        await XCTAssertFalseAsync(await recorder.recorded.contains(.removed(.default)))
+        await XCTAssertEqualAsync(await client.stopCount, 0)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testRetryRunsDiscoveryImmediatelyAndRetriesOnlyDisconnectedClients() async {
+        let connected = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let disconnected = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let disconnectedID = namedDescriptor.id
+        let factory = FakeSessionClientFactory(clients: [
+            .default: connected,
+            disconnectedID: disconnected
+        ])
+        let descriptors = [defaultDescriptor, namedDescriptor]
+        let discovery = FakeSessionDiscovery(results: [.success(descriptors), .success(descriptors)])
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await disconnected.startCount == 1 })
+        await disconnected.send(.disconnected("lost"))
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(.unavailable(disconnectedID, "lost"))
+        })
+        let retry = Task { await supervisor.retryUnavailable() }
+        await retry.value
+
+        await XCTAssertEqualAsync(await discovery.callCount, 2)
+        await XCTAssertEqualAsync(await connected.retryCount, 0)
+        await XCTAssertEqualAsync(await disconnected.retryCount, 1)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testCoalescedRetryCallersShareOutcomeAndRetryReappearedClientOnce() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([]),
+            .success([defaultDescriptor])
+        ])
+        await discovery.blockCall(2)
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 2 })
+        let firstRetry = Task { await supervisor.retryUnavailable() }
+        let secondRetry = Task { await supervisor.retryUnavailable() }
+        for _ in 0..<100 { await Task.yield() }
+        await XCTAssertEqualAsync(await discovery.maximumConcurrentCalls, 1)
+        await discovery.releaseCall(2)
+        await firstRetry.value
+        await secondRetry.value
+
+        await XCTAssertEqualAsync(await client.retryCount, 1)
+        await XCTAssertEqualAsync(await discovery.maximumConcurrentCalls, 1)
+        await XCTAssertEqualAsync(await discovery.callCount, 3)
+        await supervisor.stop()
+    }
+
+    func testDiscoveryFailureDoesNotPublishEmptySnapshotOrRemoveHealthyRuntime() async throws {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .failure(SupervisorTestError.expectedFailure)
+        ])
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await supervisor.retryUnavailable()
+        let focused = try await supervisor.focus(sessionID: .default, paneID: "healthy")
+
+        XCTAssertEqual(focused.paneID, "healthy")
+        await XCTAssertEqualAsync(await recorder.recorded.filter {
+            if case .discoverySnapshot = $0 { return true }
+            return false
+        }.count, 1)
+        await XCTAssertFalseAsync(await recorder.recorded.contains(.discoverySnapshot([])))
+        await XCTAssertEqualAsync(await client.stopCount, 0)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
     private var defaultDescriptor: SessionDescriptor {
         SessionDescriptor(id: .default, socketURL: URL(fileURLWithPath: "/tmp/default.sock"))
     }
@@ -305,10 +605,22 @@ final class SessionSupervisorTests: XCTestCase {
             removalGracePeriod: .seconds(10)
         )
     }
+
+    private func recordEvents(from supervisor: SessionSupervisor) async -> EventRecording {
+        let recorder = SessionEventRecorder()
+        let finished = AsyncFlag()
+        let stream = await supervisor.events()
+        let task = Task {
+            for await event in stream { await recorder.append(event) }
+            await finished.set()
+        }
+        return EventRecording(recorder: recorder, task: task, finished: finished)
+    }
 }
 
 private enum SupervisorTestError: Error {
     case exhausted
+    case expectedFailure
 }
 
 private actor FakeSessionDiscovery: SessionDiscovering {
@@ -356,6 +668,9 @@ private actor FakeSessionClient: SessionClientServing {
     private(set) var focusedPaneIDs: [String] = []
     private(set) var streamTerminated = false
     private(set) var focusIsAvailable = false
+    private(set) var stopStarted = false
+    private var stopIsBlocked = false
+    private var stopWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(eventsOnStart: [HerdrClientEvent] = []) {
         let pair = AsyncStream<HerdrClientEvent>.makeStream()
@@ -377,8 +692,12 @@ private actor FakeSessionClient: SessionClientServing {
         }
     }
 
-    func stop() {
+    func stop() async {
         stopCount += 1
+        stopStarted = true
+        if stopIsBlocked {
+            await withCheckedContinuation { stopWaiters.append($0) }
+        }
         focusIsAvailable = false
         continuation.finish()
     }
@@ -400,18 +719,28 @@ private actor FakeSessionClient: SessionClientServing {
         continuation.yield(event)
     }
 
+    func setStopBlocked(_ blocked: Bool) { stopIsBlocked = blocked }
+
+    func releaseStop() {
+        stopIsBlocked = false
+        let waiters = stopWaiters
+        stopWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
     private func markStreamTerminated() { streamTerminated = true }
 }
 
 private actor FakeSessionClientFactory: SessionClientCreating {
-    private var clients: [SessionID: FakeSessionClient]
+    private var availableClients: [SessionID: [FakeSessionClient]]
+    private var mostRecentClients: [SessionID: FakeSessionClient] = [:]
     private(set) var requestedDescriptors: [SessionDescriptor] = []
     private(set) var makeCount = 0
     private var blockedCalls: Set<Int> = []
     private var releases: [Int: CheckedContinuation<Void, Never>] = [:]
 
     init(clients: [SessionID: FakeSessionClient] = [:]) {
-        self.clients = clients
+        availableClients = clients.mapValues { [$0] }
     }
 
     func makeClient(for descriptor: SessionDescriptor) async -> any SessionClientServing {
@@ -421,13 +750,24 @@ private actor FakeSessionClientFactory: SessionClientCreating {
         if blockedCalls.contains(call) {
             await withCheckedContinuation { releases[call] = $0 }
         }
-        if let client = clients[descriptor.id] { return client }
-        let client = FakeSessionClient()
-        clients[descriptor.id] = client
+        let client: FakeSessionClient
+        if var available = availableClients[descriptor.id], !available.isEmpty {
+            client = available.removeFirst()
+            availableClients[descriptor.id] = available
+        } else {
+            client = FakeSessionClient()
+        }
+        mostRecentClients[descriptor.id] = client
         return client
     }
 
-    func client(for id: SessionID) -> FakeSessionClient? { clients[id] }
+    func client(for id: SessionID) -> FakeSessionClient? {
+        mostRecentClients[id] ?? availableClients[id]?.first
+    }
+
+    func enqueue(_ client: FakeSessionClient, for id: SessionID) {
+        availableClients[id, default: []].append(client)
+    }
     func blockCall(_ call: Int) { blockedCalls.insert(call) }
 
     func releaseCall(_ call: Int) {
@@ -437,17 +777,27 @@ private actor FakeSessionClientFactory: SessionClientCreating {
 }
 
 private actor SupervisorTestSleeper: Sleeper {
-    private var waits: [(UUID, CheckedContinuation<Void, any Error>)] = []
+    private struct Wait {
+        let id: UUID
+        let duration: Duration
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private var waits: [Wait] = []
     private(set) var waitCount = 0
     private(set) var cancellationCount = 0
+    private(set) var requestedDurations: [Duration] = []
     var activeWaitCount: Int { waits.count }
 
     func sleep(for duration: Duration) async throws {
         waitCount += 1
+        requestedDurations.append(duration)
         let id = UUID()
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try await withCheckedThrowingContinuation { waits.append((id, $0)) }
+            try await withCheckedThrowingContinuation {
+                waits.append(Wait(id: id, duration: duration, continuation: $0))
+            }
         } onCancel: {
             Task { await self.cancel(id) }
         }
@@ -455,17 +805,84 @@ private actor SupervisorTestSleeper: Sleeper {
 
     func releaseFirst() async {
         while waits.isEmpty { await Task.yield() }
-        waits.removeFirst().1.resume()
+        waits.removeFirst().continuation.resume()
+    }
+
+    func hasWait(for duration: Duration) -> Bool {
+        waits.contains { $0.duration == duration }
+    }
+
+    func releaseFirst(for duration: Duration) async -> Bool {
+        for _ in 0..<20_000 {
+            if let index = waits.firstIndex(where: { $0.duration == duration }) {
+                waits.remove(at: index).continuation.resume()
+                return true
+            }
+            await Task.yield()
+        }
+        return false
     }
 
     private func cancel(_ id: UUID) {
-        guard let index = waits.firstIndex(where: { $0.0 == id }) else { return }
+        guard let index = waits.firstIndex(where: { $0.id == id }) else { return }
         cancellationCount += 1
-        waits.remove(at: index).1.resume(throwing: CancellationError())
+        waits.remove(at: index).continuation.resume(throwing: CancellationError())
     }
 }
 
 private actor AsyncFlag {
     private(set) var value = false
     func set() { value = true }
+}
+
+private actor SessionEventRecorder {
+    private(set) var recorded: [SessionSupervisorEvent] = []
+    func append(_ event: SessionSupervisorEvent) { recorded.append(event) }
+}
+
+private struct EventRecording: Sendable {
+    let recorder: SessionEventRecorder
+    let task: Task<Void, Never>
+    let finished: AsyncFlag
+    var recorded: [SessionSupervisorEvent] { get async { await recorder.recorded } }
+}
+
+private func spinUntil(
+    attempts: Int = 20_000,
+    _ condition: @escaping @Sendable () async -> Bool
+) async -> Bool {
+    for _ in 0..<attempts {
+        if await condition() { return true }
+        await Task.yield()
+    }
+    return false
+}
+
+private func XCTAssertTrueAsync(
+    _ expression: @autoclosure () async -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    let value = await expression()
+    XCTAssertTrue(value, file: file, line: line)
+}
+
+private func XCTAssertFalseAsync(
+    _ expression: @autoclosure () async -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    let value = await expression()
+    XCTAssertFalse(value, file: file, line: line)
+}
+
+private func XCTAssertEqualAsync<T: Equatable>(
+    _ first: @autoclosure () async -> T,
+    _ second: @autoclosure () async -> T,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    let firstValue = await first()
+    let secondValue = await second()
+    XCTAssertEqual(firstValue, secondValue, file: file, line: line)
 }

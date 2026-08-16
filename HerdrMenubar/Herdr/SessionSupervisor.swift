@@ -62,6 +62,12 @@ actor SessionSupervisor {
         var graceTask: Task<Void, Never>?
     }
 
+    struct Removal {
+        let sessionID: SessionID
+        let runtimeGeneration: UInt64
+        let task: Task<Void, Never>
+    }
+
     private let discovery: any SessionDiscovering
     private let clientFactory: any SessionClientCreating
     private let sleeper: any Sleeper
@@ -82,6 +88,7 @@ actor SessionSupervisor {
     ] = [:]
     private var reconciliationTask: Task<Void, Never>?
     private var reconciliationTaskToken: UUID?
+    private var removalTasks: [UUID: Removal] = [:]
 
     init(
         discovery: any SessionDiscovering,
@@ -118,7 +125,11 @@ actor SessionSupervisor {
     }
 
     func stop() async {
-        guard running || discoveryLoopTask != nil || reconciliationTask != nil || !runtimes.isEmpty else {
+        guard running
+                || discoveryLoopTask != nil
+                || reconciliationTask != nil
+                || !runtimes.isEmpty
+                || !removalTasks.isEmpty else {
             return
         }
 
@@ -133,6 +144,8 @@ actor SessionSupervisor {
 
         let ownedRuntimes = Array(runtimes.values)
         runtimes.removeAll()
+        let ownedRemovals = Array(removalTasks.values)
+        removalTasks.removeAll()
 
         let stopped = ReconciliationOutcome(status: .stopped, retriedSessionIDs: [])
         let waiters = reconciliationWaiters.values.flatMap { $0 }
@@ -156,6 +169,9 @@ actor SessionSupervisor {
             await runtime.graceTask?.value
             await runtime.eventTask?.value
         }
+        for removal in ownedRemovals {
+            await removal.task.value
+        }
 
         let continuations = eventContinuations.values
         eventContinuations.removeAll()
@@ -166,9 +182,15 @@ actor SessionSupervisor {
         let outcome = await requestReconciliation()
         guard outcome.status == .applied else { return }
 
-        for id in outcome.retriedSessionIDs {
-            guard let runtime = runtimes[id], runtime.isPresent, !runtime.isConnected else { continue }
-            await runtime.client.retryNow()
+        let clients = runtimes.values.compactMap { runtime -> (any SessionClientServing)? in
+            guard runtime.isPresent,
+                  !runtime.isConnected,
+                  !outcome.retriedSessionIDs.contains(runtime.descriptor.id) else { return nil }
+            return runtime.client
+        }
+        for client in clients {
+            guard running else { return }
+            await client.retryNow()
         }
     }
 
@@ -283,24 +305,107 @@ private extension SessionSupervisor {
     ) async -> Set<SessionID> {
         publish(.discoverySnapshot(descriptors))
 
-        let existingIDs = Set(runtimes.keys)
+        var retriedSessionIDs: Set<SessionID> = []
         for descriptor in descriptors {
             if var runtime = runtimes[descriptor.id] {
+                let returnedDuringGrace = !runtime.isPresent
                 runtime.descriptor = descriptor
                 runtime.isPresent = true
                 runtime.graceTask?.cancel()
                 runtime.graceTask = nil
                 runtimes[descriptor.id] = runtime
+                if returnedDuringGrace {
+                    retriedSessionIDs.insert(descriptor.id)
+                    await runtime.client.retryNow()
+                    guard ownsLifecycle(generation), !Task.isCancelled else { break }
+                }
                 continue
             }
             await createRuntime(for: descriptor, lifecycleGeneration: generation)
             guard ownsLifecycle(generation), !Task.isCancelled else { break }
         }
 
-        return Set(descriptors.map(\.id)).intersection(existingIDs).filter {
-            guard let runtime = runtimes[$0] else { return false }
-            return runtime.isPresent && !runtime.isConnected
+        let discoveredIDs = Set(descriptors.map(\.id))
+        for id in Array(runtimes.keys) where !discoveredIDs.contains(id) {
+            markMissing(id, lifecycleGeneration: generation)
         }
+
+        return retriedSessionIDs
+    }
+
+    func markMissing(_ sessionID: SessionID, lifecycleGeneration lifecycle: UInt64) {
+        guard ownsLifecycle(lifecycle),
+              var runtime = runtimes[sessionID],
+              runtime.isPresent else { return }
+
+        runtime.isPresent = false
+        runtime.isConnected = false
+        let runtimeGeneration = runtime.generation
+        let graceTask = Task { [weak self, sleeper, removalGracePeriod] in
+            do {
+                try await sleeper.sleep(for: removalGracePeriod)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.graceExpired(
+                sessionID: sessionID,
+                runtimeGeneration: runtimeGeneration,
+                lifecycleGeneration: lifecycle
+            )
+        }
+        runtime.graceTask = graceTask
+        runtimes[sessionID] = runtime
+        publish(.unavailable(sessionID, "Session socket unavailable"))
+    }
+
+    func graceExpired(
+        sessionID: SessionID,
+        runtimeGeneration: UInt64,
+        lifecycleGeneration lifecycle: UInt64
+    ) {
+        guard ownsLifecycle(lifecycle),
+              let runtime = runtimes[sessionID],
+              runtime.generation == runtimeGeneration,
+              !runtime.isPresent else { return }
+
+        runtimes.removeValue(forKey: sessionID)
+        runtime.eventTask?.cancel()
+
+        let token = UUID()
+        let removalTask = Task { [weak self] in
+            await runtime.client.stop()
+            await runtime.eventTask?.value
+            await runtime.graceTask?.value
+            await self?.removalFinished(
+                sessionID: sessionID,
+                runtimeGeneration: runtimeGeneration,
+                lifecycleGeneration: lifecycle,
+                token: token
+            )
+        }
+        removalTasks[token] = Removal(
+            sessionID: sessionID,
+            runtimeGeneration: runtimeGeneration,
+            task: removalTask
+        )
+    }
+
+    func removalFinished(
+        sessionID: SessionID,
+        runtimeGeneration: UInt64,
+        lifecycleGeneration lifecycle: UInt64,
+        token: UUID
+    ) {
+        guard let removal = removalTasks[token],
+              removal.sessionID == sessionID,
+              removal.runtimeGeneration == runtimeGeneration else { return }
+        removalTasks.removeValue(forKey: token)
+
+        guard ownsLifecycle(lifecycle),
+              runtimes[sessionID]?.generation != runtimeGeneration else { return }
+        guard runtimes[sessionID] == nil else { return }
+        publish(.removed(sessionID))
     }
 
     func createRuntime(
