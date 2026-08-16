@@ -96,6 +96,11 @@ final class AgentStore {
     private let preferences: Preferences
     private var eventTask: Task<Void, Never>?
     private var eventGeneration = UUID()
+    private var startTask: Task<Void, Never>?
+    private var startToken: UUID?
+    private var startCallingSupervisorToken: UUID?
+    private var stopTask: Task<Void, Never>?
+    private var stopToken: UUID?
     private var isRunning = false
     private var hasCompletedDiscovery = false
     private var sessions: [SessionID: SessionPresentationState] = [:]
@@ -137,28 +142,76 @@ final class AgentStore {
         isRunning = true
         let generation = UUID()
         eventGeneration = generation
-        let events = await supervisor.events()
-        eventTask = Task { [weak self] in
-            for await event in events {
-                guard !Task.isCancelled else { return }
-                self?.consume(event, generation: generation)
+        let token = UUID()
+        let precedingStop = stopTask
+        startToken = token
+        let task = Task { [weak self] in
+            await precedingStop?.value
+            guard let self, self.ownsStart(generation: generation, token: token) else { return }
+
+            let events = await self.supervisor.events()
+            guard self.ownsStart(generation: generation, token: token) else { return }
+
+            self.eventTask = Task { [weak self] in
+                for await event in events {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(event, generation: generation)
+                }
+            }
+            self.startCallingSupervisorToken = token
+            await self.supervisor.start()
+            guard self.ownsStart(generation: generation, token: token) else { return }
+            self.startCallingSupervisorToken = nil
+        }
+        startTask = task
+        await task.value
+        if startToken == token {
+            startTask = nil
+            startToken = nil
+            if startCallingSupervisorToken == token {
+                startCallingSupervisorToken = nil
             }
         }
-        await supervisor.start()
     }
 
     func stop() async {
-        guard isRunning else { return }
+        if !isRunning, let stopTask {
+            await stopTask.value
+            return
+        }
+        guard isRunning || startTask != nil || eventTask != nil else { return }
+
         isRunning = false
         eventGeneration = UUID()
-        let task = eventTask
+        let startingSupervisor = startCallingSupervisorToken == startToken ? startTask : nil
+        startTask?.cancel()
+        startTask = nil
+        startToken = nil
+        startCallingSupervisorToken = nil
+
+        let consumer = eventTask
         eventTask = nil
-        task?.cancel()
-        await task?.value
-        await supervisor.stop()
+        consumer?.cancel()
         hasCompletedDiscovery = false
         sessions.removeAll()
         connectionState = .searching
+
+        let precedingStop = stopTask
+        let token = UUID()
+        let supervisor = self.supervisor
+        let task = Task {
+            await precedingStop?.value
+            await consumer?.value
+            await startingSupervisor?.value
+            await supervisor.stop()
+        }
+        stopToken = token
+        stopTask = task
+        await task.value
+        if stopToken == token {
+            stopTask = nil
+            stopToken = nil
+        }
     }
 
     func retry() async {
@@ -171,7 +224,7 @@ final class AgentStore {
         do {
             _ = try await supervisor.focus(sessionID: item.sessionID, paneID: item.paneID)
         } catch {
-            AppLog.systemActions.error("Pane focus failed in \(item.sessionName, privacy: .public): \(error.localizedDescription, privacy: .private)")
+            AppLog.systemActions.error("Pane focus failed: \(error.localizedDescription, privacy: .private)")
             transientError = "Could not focus pane in \(item.sessionName): \(error.localizedDescription)"
             return
         }
@@ -189,6 +242,10 @@ final class AgentStore {
 }
 
 private extension AgentStore {
+    func ownsStart(generation: UUID, token: UUID) -> Bool {
+        isRunning && eventGeneration == generation && startToken == token && !Task.isCancelled
+    }
+
     func consume(_ event: SessionSupervisorEvent, generation: UUID) {
         guard isRunning, eventGeneration == generation else { return }
         switch event {

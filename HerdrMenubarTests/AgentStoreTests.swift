@@ -187,6 +187,8 @@ final class AgentStoreTests: XCTestCase {
         }
         let streamTerminated = await supervisor.streamTerminated
         XCTAssertTrue(streamTerminated)
+        let stopObservedTerminatedStream = await supervisor.stopObservedTerminatedStream
+        XCTAssertTrue(stopObservedTerminatedStream)
 
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("stale", .blocked)])))
         for _ in 0..<10 { await Task.yield() }
@@ -205,6 +207,87 @@ final class AgentStoreTests: XCTestCase {
 
         let actions = await supervisor.lifecycleActions
         XCTAssertEqual(actions, ["events", "start"])
+        await store.stop()
+    }
+
+    func testStartAndStopRemainIdempotent() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+
+        await store.start()
+        await store.start()
+        await store.stop()
+        await store.stop()
+
+        let eventsCallCount = await supervisor.eventsCallCount
+        let startCount = await supervisor.startCount
+        let stopCount = await supervisor.stopCount
+        XCTAssertEqual(eventsCallCount, 1)
+        XCTAssertEqual(startCount, 1)
+        XCTAssertEqual(stopCount, 1)
+    }
+
+    func testStopWhileEventAcquisitionIsBlockedPreventsStaleStartAndLateEvents() async {
+        let supervisor = FakeSessionSupervisor(blockEvents: true)
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        let start = Task { await store.start() }
+        await waitUntil { await supervisor.eventsCallCount == 1 }
+
+        let stopped = AsyncFlag()
+        let stop = Task {
+            await store.stop()
+            await stopped.set()
+        }
+        await waitUntil { await stopped.value }
+        var startCount = await supervisor.startCount
+        let stopCount = await supervisor.stopCount
+        XCTAssertEqual(startCount, 0)
+        XCTAssertEqual(stopCount, 1)
+
+        await supervisor.releaseEvents()
+        await start.value
+        await stop.value
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("late", .done)])))
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(store.connectionState, .searching)
+        XCTAssertTrue(store.attentionSections.isEmpty)
+        startCount = await supervisor.startCount
+        XCTAssertEqual(startCount, 0)
+    }
+
+    func testRestartWaitsForInFlightStopThenOwnsNewLifecycle() async {
+        let supervisor = FakeSessionSupervisor(blockStop: true)
+        let store = AgentStore(supervisor: supervisor, terminalActivator: RecordingActivator())
+        await store.start()
+        var startCount = await supervisor.startCount
+        XCTAssertEqual(startCount, 1)
+
+        let stop = Task { await store.stop() }
+        await waitUntil { await supervisor.stopCount == 1 }
+        let restartEntered = AsyncFlag()
+        let restart = Task {
+            await restartEntered.set()
+            await store.start()
+        }
+        await waitUntil { await restartEntered.value }
+        for _ in 0..<10 { await Task.yield() }
+
+        var eventsCallCount = await supervisor.eventsCallCount
+        startCount = await supervisor.startCount
+        XCTAssertEqual(eventsCallCount, 1)
+        XCTAssertEqual(startCount, 1)
+
+        await supervisor.releaseStop()
+        await stop.value
+        await restart.value
+        eventsCallCount = await supervisor.eventsCallCount
+        startCount = await supervisor.startCount
+        XCTAssertEqual(eventsCallCount, 2)
+        XCTAssertEqual(startCount, 2)
+
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("new", .done)])))
+        await eventually { store.connectionState == .connected && store.attentionCount == 1 }
         await store.stop()
     }
 
@@ -356,6 +439,14 @@ final class AgentStoreTests: XCTestCase {
         while !condition(), clock.now < deadline { await Task.yield() }
         XCTAssertTrue(condition())
     }
+
+    private func waitUntil(_ condition: @escaping @Sendable () async -> Bool) async {
+        for _ in 0..<1_000 {
+            if await condition() { return }
+            await Task.yield()
+        }
+        XCTFail("Condition did not become true")
+    }
 }
 
 private struct FocusRequest: Equatable, Sendable {
@@ -370,40 +461,98 @@ private actor ActionSequence {
     func append(_ value: String) { values.append(value) }
 }
 
+private actor AsyncFlag {
+    private(set) var value = false
+    func set() { value = true }
+}
+
+private actor AsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        isOpen = true
+        let ownedWaiters = waiters
+        waiters.removeAll()
+        for waiter in ownedWaiters { waiter.resume() }
+    }
+}
+
+private final class StreamTerminationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var terminated = false
+
+    func markTerminated() {
+        lock.lock()
+        terminated = true
+        lock.unlock()
+    }
+
+    var isTerminated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return terminated
+    }
+}
+
 private actor FakeSessionSupervisor: SessionSupervising {
     private var continuation: AsyncStream<SessionSupervisorEvent>.Continuation?
     private(set) var lifecycleActions: [String] = []
+    private(set) var eventsCallCount = 0
+    private(set) var startCount = 0
     private(set) var retryCount = 0
     private(set) var stopCount = 0
     private(set) var refreshRequests: [SessionID] = []
     private(set) var focusRequests: [FocusRequest] = []
     private(set) var streamTerminated = false
+    private(set) var stopObservedTerminatedStream = false
     private let focusError: (any Error)?
     private let sequence: ActionSequence?
     private let focusAction: (@Sendable () async -> Void)?
+    private let eventsGate: AsyncGate?
+    private let stopGate: AsyncGate?
+    private let terminationProbe = StreamTerminationProbe()
 
     init(
         focusError: (any Error)? = nil,
         sequence: ActionSequence? = nil,
-        focusAction: (@Sendable () async -> Void)? = nil
+        focusAction: (@Sendable () async -> Void)? = nil,
+        blockEvents: Bool = false,
+        blockStop: Bool = false
     ) {
         self.focusError = focusError
         self.sequence = sequence
         self.focusAction = focusAction
+        eventsGate = blockEvents ? AsyncGate() : nil
+        stopGate = blockStop ? AsyncGate() : nil
     }
 
-    func events() -> AsyncStream<SessionSupervisorEvent> {
+    func events() async -> AsyncStream<SessionSupervisorEvent> {
         lifecycleActions.append("events")
+        eventsCallCount += 1
+        await eventsGate?.wait()
         let (stream, continuation) = AsyncStream<SessionSupervisorEvent>.makeStream()
+        let terminationProbe = self.terminationProbe
         continuation.onTermination = { [weak self] _ in
+            terminationProbe.markTerminated()
             Task { await self?.recordTermination() }
         }
         self.continuation = continuation
         return stream
     }
 
-    func start() { lifecycleActions.append("start") }
-    func stop() { stopCount += 1; continuation?.finish() }
+    func start() { lifecycleActions.append("start"); startCount += 1 }
+    func stop() async {
+        stopCount += 1
+        stopObservedTerminatedStream = terminationProbe.isTerminated
+        continuation?.finish()
+        await stopGate?.wait()
+    }
     func retryUnavailable() { retryCount += 1 }
 
     func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo {
@@ -420,6 +569,8 @@ private actor FakeSessionSupervisor: SessionSupervising {
     }
 
     func send(_ event: SessionSupervisorEvent) { continuation?.yield(event) }
+    func releaseEvents() async { await eventsGate?.release() }
+    func releaseStop() async { await stopGate?.release() }
     private func recordTermination() { streamTerminated = true }
 }
 
