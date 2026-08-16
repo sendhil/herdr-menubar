@@ -341,7 +341,9 @@ final class SessionSupervisorTests: XCTestCase {
 
         await XCTAssertEqualAsync(await factory.makeCount, 1)
         await XCTAssertEqualAsync(await client.retryCount, 1)
-        await XCTAssertFalseAsync(await sleeper.hasWait(for: .seconds(10)))
+        await XCTAssertTrueAsync(await spinUntil {
+            !(await sleeper.hasWait(for: .seconds(10)))
+        })
         await supervisor.stop()
     }
 
@@ -556,6 +558,117 @@ final class SessionSupervisorTests: XCTestCase {
         await XCTAssertEqualAsync(await discovery.maximumConcurrentCalls, 1)
         await XCTAssertEqualAsync(await discovery.callCount, 3)
         await supervisor.stop()
+    }
+
+    func testCoalescedRetryCallersRetryStableDisconnectedClientOncePerSharedOutcome() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([defaultDescriptor]),
+            .success([defaultDescriptor])
+        ])
+        await discovery.blockCall(2)
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await client.send(.disconnected("lost"))
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(.unavailable(.default, "lost"))
+        })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 2 })
+
+        let firstRetry = Task { await supervisor.retryUnavailable() }
+        let secondRetry = Task { await supervisor.retryUnavailable() }
+        for _ in 0..<100 { await Task.yield() }
+        await discovery.releaseCall(2)
+        await firstRetry.value
+        await secondRetry.value
+
+        await XCTAssertEqualAsync(await discovery.callCount, 3)
+        await XCTAssertEqualAsync(await client.retryCount, 1)
+
+        await supervisor.retryUnavailable()
+        await XCTAssertEqualAsync(await discovery.callCount, 4)
+        await XCTAssertEqualAsync(await client.retryCount, 2)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testCancelledRetryWaiterReturnsBeforeScanAndNeverRetriesClient() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [
+            .success([defaultDescriptor]),
+            .success([defaultDescriptor]),
+            .success([defaultDescriptor])
+        ])
+        await discovery.blockCall(2)
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+        let retryReturned = AsyncFlag()
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await client.send(.disconnected("lost"))
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(.unavailable(.default, "lost"))
+        })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 2 })
+
+        let retry = Task {
+            await supervisor.retryUnavailable()
+            await retryReturned.set()
+        }
+        for _ in 0..<100 { await Task.yield() }
+        retry.cancel()
+        let returnedBeforeScan = await spinUntil { await retryReturned.value }
+
+        XCTAssertTrue(returnedBeforeScan)
+        await XCTAssertEqualAsync(await client.retryCount, 0)
+        await discovery.releaseCall(2)
+        await retry.value
+        await XCTAssertTrueAsync(await spinUntil { await discovery.callCount == 3 })
+        await XCTAssertEqualAsync(await client.retryCount, 0)
+        await supervisor.stop()
+        await recorder.task.value
+    }
+
+    func testDisconnectedEventWhileMissingDoesNotPublishSecondUnavailableReason() async {
+        let client = FakeSessionClient(eventsOnStart: [.connected(clientSnapshot([]))])
+        let factory = FakeSessionClientFactory(clients: [.default: client])
+        let discovery = FakeSessionDiscovery(results: [.success([defaultDescriptor]), .success([])])
+        let sleeper = SupervisorTestSleeper()
+        let supervisor = makeSupervisor(discovery: discovery, factory: factory, sleeper: sleeper)
+        let recorder = await recordEvents(from: supervisor)
+
+        await supervisor.start()
+        await XCTAssertTrueAsync(await spinUntil { await client.startCount == 1 })
+        await XCTAssertTrueAsync(await sleeper.releaseFirst(for: .seconds(2)))
+        await XCTAssertTrueAsync(await spinUntil {
+            await recorder.recorded.contains(
+                .unavailable(.default, "Session socket unavailable")
+            )
+        })
+        await client.send(.disconnected("late transport close"))
+        for _ in 0..<20_000 { await Task.yield() }
+
+        let unavailableEvents = await recorder.recorded.filter {
+            if case .unavailable(.default, _) = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(
+            unavailableEvents,
+            [.unavailable(.default, "Session socket unavailable")]
+        )
+        await supervisor.stop()
+        await recorder.task.value
     }
 
     func testDiscoveryFailureDoesNotPublishEmptySnapshotOrRemoveHealthyRuntime() async throws {

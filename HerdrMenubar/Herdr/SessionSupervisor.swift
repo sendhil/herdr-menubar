@@ -42,11 +42,13 @@ enum SessionSupervisorError: LocalizedError, Equatable, Sendable {
 
 enum ReconciliationStatus: Sendable {
     case applied
+    case cancelled
     case failed
     case stopped
 }
 
 struct ReconciliationOutcome: Sendable {
+    let generation: UInt64
     let status: ReconciliationStatus
     let retriedSessionIDs: Set<SessionID>
 }
@@ -68,6 +70,11 @@ actor SessionSupervisor {
         let task: Task<Void, Never>
     }
 
+    struct ReconciliationWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<ReconciliationOutcome, Never>
+    }
+
     private let discovery: any SessionDiscovering
     private let clientFactory: any SessionClientCreating
     private let sleeper: any Sleeper
@@ -84,10 +91,11 @@ actor SessionSupervisor {
     private var requestedReconciliationGeneration: UInt64 = 0
     private var completedReconciliationGeneration: UInt64 = 0
     private var reconciliationWaiters: [
-        UInt64: [CheckedContinuation<ReconciliationOutcome, Never>]
+        UInt64: [ReconciliationWaiter]
     ] = [:]
     private var reconciliationTask: Task<Void, Never>?
     private var reconciliationTaskToken: UUID?
+    private var targetedRetryGenerations: Set<UInt64> = []
     private var removalTasks: [UUID: Removal] = [:]
 
     init(
@@ -147,10 +155,14 @@ actor SessionSupervisor {
         let ownedRemovals = Array(removalTasks.values)
         removalTasks.removeAll()
 
-        let stopped = ReconciliationOutcome(status: .stopped, retriedSessionIDs: [])
+        let stopped = ReconciliationOutcome(
+            generation: requestedReconciliationGeneration,
+            status: .stopped,
+            retriedSessionIDs: []
+        )
         let waiters = reconciliationWaiters.values.flatMap { $0 }
         reconciliationWaiters.removeAll()
-        for waiter in waiters { waiter.resume(returning: stopped) }
+        for waiter in waiters { waiter.continuation.resume(returning: stopped) }
 
         loopTask?.cancel()
         workerTask?.cancel()
@@ -180,7 +192,9 @@ actor SessionSupervisor {
 
     func retryUnavailable() async {
         let outcome = await requestReconciliation()
-        guard outcome.status == .applied else { return }
+        guard outcome.status == .applied, !Task.isCancelled else { return }
+        guard targetedRetryGenerations.insert(outcome.generation).inserted else { return }
+        let lifecycle = lifecycleGeneration
 
         let clients = runtimes.values.compactMap { runtime -> (any SessionClientServing)? in
             guard runtime.isPresent,
@@ -189,7 +203,7 @@ actor SessionSupervisor {
             return runtime.client
         }
         for client in clients {
-            guard running else { return }
+            guard ownsLifecycle(lifecycle), !Task.isCancelled else { return }
             await client.retryNow()
         }
     }
@@ -228,16 +242,64 @@ private extension SessionSupervisor {
 
     func requestReconciliation() async -> ReconciliationOutcome {
         guard running else {
-            return ReconciliationOutcome(status: .stopped, retriedSessionIDs: [])
+            return ReconciliationOutcome(
+                generation: requestedReconciliationGeneration,
+                status: .stopped,
+                retriedSessionIDs: []
+            )
+        }
+        guard !Task.isCancelled else {
+            return ReconciliationOutcome(
+                generation: requestedReconciliationGeneration,
+                status: .cancelled,
+                retriedSessionIDs: []
+            )
         }
 
         requestedReconciliationGeneration &+= 1
         let requestedGeneration = requestedReconciliationGeneration
         let lifecycle = lifecycleGeneration
-        return await withCheckedContinuation { continuation in
-            reconciliationWaiters[requestedGeneration, default: []].append(continuation)
-            startReconciliationWorkerIfNeeded(lifecycleGeneration: lifecycle)
+        let waiterID = UUID()
+        let supervisor = self
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: ReconciliationOutcome(
+                        generation: requestedGeneration,
+                        status: .cancelled,
+                        retriedSessionIDs: []
+                    ))
+                    return
+                }
+                reconciliationWaiters[requestedGeneration, default: []].append(
+                    ReconciliationWaiter(id: waiterID, continuation: continuation)
+                )
+                startReconciliationWorkerIfNeeded(lifecycleGeneration: lifecycle)
+            }
+        } onCancel: {
+            Task {
+                await supervisor.cancelReconciliationWaiter(
+                    generation: requestedGeneration,
+                    waiterID: waiterID
+                )
+            }
         }
+    }
+
+    func cancelReconciliationWaiter(generation: UInt64, waiterID: UUID) {
+        guard var waiters = reconciliationWaiters[generation],
+              let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
+        let waiter = waiters.remove(at: index)
+        if waiters.isEmpty {
+            reconciliationWaiters.removeValue(forKey: generation)
+        } else {
+            reconciliationWaiters[generation] = waiters
+        }
+        waiter.continuation.resume(returning: ReconciliationOutcome(
+            generation: generation,
+            status: .cancelled,
+            retriedSessionIDs: []
+        ))
     }
 
     func startReconciliationWorkerIfNeeded(lifecycleGeneration generation: UInt64) {
@@ -264,13 +326,18 @@ private extension SessionSupervisor {
                 )
                 guard ownsLifecycle(generation), !Task.isCancelled else { return }
                 outcome = ReconciliationOutcome(
+                    generation: capturedGeneration,
                     status: .applied,
                     retriedSessionIDs: retriedSessionIDs
                 )
             } catch {
                 guard ownsLifecycle(generation), !Task.isCancelled else { return }
                 AppLog.synchronization.error("Session discovery failed: \(error.localizedDescription)")
-                outcome = ReconciliationOutcome(status: .failed, retriedSessionIDs: [])
+                outcome = ReconciliationOutcome(
+                    generation: capturedGeneration,
+                    status: .failed,
+                    retriedSessionIDs: []
+                )
             }
 
             completeReconciliations(through: capturedGeneration, with: outcome)
@@ -293,7 +360,7 @@ private extension SessionSupervisor {
             .sorted()
         for key in satisfied {
             for waiter in reconciliationWaiters.removeValue(forKey: key) ?? [] {
-                waiter.resume(returning: outcome)
+                waiter.continuation.resume(returning: outcome)
             }
         }
         completedReconciliationGeneration = max(completedReconciliationGeneration, generation)
@@ -508,6 +575,7 @@ private extension SessionSupervisor {
             guard runtime.isPresent else { return }
             publish(.snapshot(sessionID, snapshot))
         case .disconnected(let reason):
+            guard runtime.isPresent else { return }
             runtime.isConnected = false
             runtimes[sessionID] = runtime
             publish(.unavailable(sessionID, reason))
