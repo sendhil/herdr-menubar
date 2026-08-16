@@ -33,6 +33,7 @@
 		B1000000000000000000000A /* SessionDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* SessionDiscoveryTests.swift */; };
 		B10000000000000000000002 /* SessionSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* SessionSupervisor.swift */; };
 		B10000000000000000000004 /* SessionSupervisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* SessionSupervisorTests.swift */; };
+		B10000000000000000000006 /* MultiSessionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* MultiSessionIntegrationTests.swift */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -81,6 +82,7 @@
 		B10000000000000000000009 /* SessionDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDiscoveryTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* SessionSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSupervisor.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* SessionSupervisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSupervisorTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* MultiSessionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiSessionIntegrationTests.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -122,6 +124,7 @@
 				12A000000000000000000011 /* JSONLineFramerTests.swift */,
 				B10000000000000000000009 /* SessionDiscoveryTests.swift */,
 				B10000000000000000000003 /* SessionSupervisorTests.swift */,
+				B10000000000000000000005 /* MultiSessionIntegrationTests.swift */,
 				12A000000000000000000016 /* HerdrConnectionTests.swift */,
 				12A000000000000000000018 /* HerdrClientTests.swift */,
 				12A000000000000000000036 /* HerdrClientTestSupport.swift */,
@@ -317,6 +320,7 @@
 				12A000000000000000000001 /* JSONLineFramerTests.swift in Sources */,
 				B1000000000000000000000A /* SessionDiscoveryTests.swift in Sources */,
 				B10000000000000000000004 /* SessionSupervisorTests.swift in Sources */,
+				B10000000000000000000006 /* MultiSessionIntegrationTests.swift in Sources */,
 				12A000000000000000000006 /* HerdrConnectionTests.swift in Sources */,
 				12A000000000000000000008 /* HerdrClientTests.swift in Sources */,
 				12A000000000000000000035 /* HerdrClientTestSupport.swift in Sources */,
