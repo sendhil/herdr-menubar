@@ -6,7 +6,7 @@
 
 Herdr Menubar already routes a selected agent row's `pane.focus` request to the correct Herdr session. It then activates WezTerm through macOS, but generic application activation cannot select the existing WezTerm tab that contains that session's attached Herdr client. With two Herdr sessions attached in two WezTerm tabs, the internal Herdr pane changes while WezTerm remains on whichever tab was already visible.
 
-This feature will add an on-demand `WezTermFocusAdapter` inside Herdr Menubar. After Herdr focuses the selected pane, the adapter will briefly mark that session's foreground attached client through Herdr's public `client.window_title.set` API, locate the exact marked pane with `wezterm cli list --format json`, activate it with `wezterm cli activate-pane --pane-id`, clear the marker, and bring WezTerm forward. The adapter is ordinary in-process Swift code invoked only by a row click. It is not a daemon, background process, poller, login item, or separately installed service.
+This feature will add an on-demand `WezTermFocusAdapter` inside Herdr Menubar. After Herdr focuses the selected pane, the adapter will briefly mark that session's foreground attached client through Herdr's public `client.window_title.set` API, locate the exact marked pane with `wezterm cli list --format json`, clear the marker, activate the matched pane with `wezterm cli activate-pane --pane-id`, and bring WezTerm forward. The adapter is ordinary in-process Swift code invoked only by a row click. It is not a daemon, background process, poller, login item, or separately installed service.
 
 ## Goals
 
@@ -89,7 +89,7 @@ It has one public operation conceptually equivalent to:
 func focusAttachedClient(sessionID: SessionID) async throws
 ```
 
-The live CLI runner resolves the executable from the installed WezTerm application bundle rather than interpolating a shell command or trusting arbitrary shell text. It invokes the executable directly with argument arrays.
+The live CLI runner resolves the installed WezTerm application bundle with `NSWorkspace`, then uses the documented scripting binary at `Contents/MacOS/wezterm`. It validates that this exact path is a regular executable file. WezTerm's bundle entry point is `wezterm-gui`, but that is not the CLI binary and must never be invoked for this operation. A missing or non-executable sibling CLI produces a typed unavailable error; production does not fall back to `$PATH`, a Homebrew prefix, or user-controlled shell text. The runner invokes the executable directly with argument arrays.
 
 `wezterm cli list --format json` is decoded into the minimal fields required for matching: `pane_id`, `tab_id`, `window_id`, and `title`. The adapter matches the marker by exact string equality and calls:
 
@@ -115,18 +115,20 @@ For a WezTerm selection:
 4. Send `client.window_title.set` through the same session runtime.
 5. If Herdr reports `no_foreground_client`, stop with the no-attached-tab error.
 6. Poll `wezterm cli list --format json` until one pane title exactly equals the marker or the one-second deadline expires.
-7. Activate the matched WezTerm pane ID.
-8. Clear the client window title through the same session runtime on a best-effort basis.
+7. Clear the client window title through the same session runtime before making the tab visible.
+8. Activate the matched WezTerm pane ID.
 9. Activate the configured WezTerm application through macOS.
-10. Refresh only the owning Herdr session.
+10. Refresh only the owning Herdr session in operation finalization.
 
-The marker-clear operation is attempted on every path after a successful set, including list failure, malformed output, no match, activation failure, task cancellation, or a superseding selection. Once a pane ID has been matched, title clearing may happen before the pane activation because the stable WezTerm pane ID is sufficient for the remaining command.
+The authoritative success order is therefore `marker set -> list/match -> marker clear -> activate-pane -> macOS activation -> refresh`. Clearing before activation prevents the user from seeing the temporary title after the target tab becomes visible. The marker-clear operation is also attempted on every failure path after a successful set, including list failure, malformed output, no match, task cancellation, or supersession. The stable matched WezTerm pane ID remains sufficient after clearing.
 
-The existing ordering remains authoritative: a Herdr pane-focus failure prevents any WezTerm operation or session refresh. A WezTerm targeting failure happens after Herdr has focused the server-side pane, so it reports that partial result precisely rather than claiming the entire focus failed.
+The existing first boundary remains authoritative: a Herdr pane-focus failure prevents any WezTerm operation or session refresh. Once `pane.focus` succeeds, the owning session is refreshed exactly once during operation finalization, even when title marking, list parsing, lookup, marker cleanup, `activate-pane`, macOS activation, cancellation, or supersession subsequently fails. This preserves Herdr's seen-state transition and the existing non-WezTerm behavior that refreshes after an application-activation failure. A WezTerm targeting failure reports the partial result precisely rather than claiming the server-side pane focus failed.
 
 ### Rapid repeated selections
 
-Row selection is asynchronous and main-actor reentrant. The store will use a selection generation or owned task so the latest click wins. A superseded selection must not activate its stale WezTerm pane or overwrite the newer selection's error. It must still attempt to clear any marker it successfully installed. Each marker is unique, so overlapping cleanup cannot match or activate another selection's pane.
+Row selection is asynchronous and main-actor reentrant. `AgentStore` will own one selection task and a selection generation. A new click invalidates and cancels the old generation, then **awaits the old task's complete finalization, including marker cleanup and any required owning-session refresh, before the new task may set a marker or send its own `pane.focus`**. After that barrier, the new operation revalidates that it is still the latest generation before proceeding.
+
+This serialization is required because `client.window_title.clear` is unconditional: uniqueness alone cannot prevent an old cleanup from clearing a newer marker on the same foreground client. At most one marker handshake is therefore active at a time across the app. The old operation checks cancellation and generation ownership before title matching, `activate-pane`, macOS activation, and user-visible error mutation. It cannot activate or publish an error after it is superseded. If its `pane.focus` already succeeded, it completes its scoped refresh before the successor begins; the successor's later pane focus is the final focus effect. `AgentStore.stop()` invalidates, cancels, and awaits the owned selection task before stopping the supervisor.
 
 ## Foreground-client semantics
 
@@ -141,8 +143,11 @@ The app does not cache a long-lived session-to-WezTerm mapping. A fresh handshak
 ## Timing and subprocess behavior
 
 - The lookup deadline is one second from successful marker installation.
-- Polling is cancellation-aware and uses a short bounded interval rather than busy waiting.
-- Each CLI invocation captures standard output and standard error with bounded memory.
+- Polling is cancellation-aware, waits 50 milliseconds between unsuccessful observations, and never busy waits.
+- Each `wezterm cli list --format json` invocation has a 500-millisecond deadline inside the one-second overall lookup deadline.
+- `wezterm cli activate-pane` has a one-second invocation deadline.
+- Each CLI invocation drains standard output and standard error concurrently and retains at most 256 KiB from each stream. Exceeding either limit terminates the process with a typed output-too-large error.
+- Cancellation or timeout first requests termination, waits at most 100 milliseconds, then sends `SIGKILL` if necessary and always waits for process exit before returning. Pipe readers are also canceled and awaited, so no subprocess or reader task escapes operation ownership.
 - Nonzero exit, launch failure, invalid UTF-8 or JSON, and schema mismatch become typed adapter errors.
 - Arguments are passed directly to `Process`; no shell, command interpolation, or user-controlled executable path is used.
 - The app starts no long-lived `wezterm` process. `list` and `activate-pane` exit after each command.
@@ -156,13 +161,15 @@ User-visible errors are concise and preserve session context without exposing so
 - Lookup timeout: use the same no-attached-tab message because no exact existing tab was observable.
 - WezTerm missing or CLI launch failure: `Focused the pane in <session>, but WezTerm could not be controlled.`
 - Malformed list output or pane activation failure: report a WezTerm-control error without raw command output.
-- Marker clear failure after successful activation: keep the focus success, log the cleanup failure privately, and retry cleanup only through bounded in-process ownership; do not open a tab or affect another session.
+- Marker clear failure before activation: make at most three clear attempts separated by 100 milliseconds and bounded by 500 milliseconds total, report a WezTerm-control error if cleanup still fails, and do not make the marked tab visible. Record the session as pending cleanup in memory. A later selection of that session gets one new bounded cleanup sequence before any new marker may be installed; if it still fails, the new handshake is rejected. No background task or persistence is introduced, and a different session may still be selected after the prior operation finalizes.
 
 Dynamic session names, pane identifiers, marker values, CLI output, executable paths, and underlying errors remain private in unified logging. The user-facing error may include the session display name, consistent with existing focus errors.
 
 ## State and persistence
 
 No mapping, marker, WezTerm pane ID, or selection state is written to disk. Herdr remains the source of truth for session and pane focus. WezTerm remains the source of truth for outer tab and pane identity. Herdr Menubar only correlates them during a click.
+
+The feature is verified against Herdr 0.7.3's `client.window_title.set` and `.clear` methods. Compatibility with an older server is not required. If a running server returns `method_not_found`, the app reports that the Herdr session must be updated for WezTerm tab focus; it does not fall back to title inference or tab creation.
 
 ## Testing
 
@@ -190,11 +197,12 @@ Duplicate exact marker matches should be treated as ambiguous rather than select
 
 ### Store orchestration tests
 
-- Assert `pane.focus -> marker set -> list/match -> activate-pane -> marker clear -> app activation -> owning-session refresh`.
+- Assert `pane.focus -> marker set -> list/match -> marker clear -> activate-pane -> app activation -> owning-session refresh`.
 - Assert another terminal selection retains generic app activation without WezTerm CLI calls.
 - Assert a Herdr focus failure prevents all terminal actions.
-- Assert a no-attached-client or lookup failure does not refresh or create a tab and shows the session-qualified partial-focus error.
-- Assert rapid clicks are latest-wins and stale operations cannot activate or overwrite errors.
+- Assert every successful `pane.focus` refreshes its owning session exactly once after success, no-attached-client, lookup failure, malformed output, marker-cleanup failure, pane-activation failure, macOS-activation failure, cancellation, and supersession; a failed `pane.focus` never refreshes.
+- Assert no failure path creates a tab and each shows the appropriate session-qualified partial-focus error only when its generation is current.
+- Assert rapid clicks serialize at the cleanup barrier, are latest-wins, and stale operations cannot clear a successor's marker, activate a pane, or overwrite errors after the successor begins.
 
 ### Subprocess integration
 
@@ -210,7 +218,7 @@ With a default and named Herdr session attached in two existing WezTerm tabs:
 - Two attached clients for one session select the most recently active client.
 - Detaching a session's only client yields the no-attached-tab error and creates no tab.
 - Rapid alternating clicks finish on the last selected row.
-- No temporary marker remains visible after success or failure.
+- No temporary marker remains after success and ordinary failure paths where Herdr still accepts the cleanup request. A forced title-clear transport failure reports the cleanup problem and demonstrates bounded retry; the smoke test does not claim that an unreachable client can always be cleaned remotely.
 
 ## Acceptance criteria
 
