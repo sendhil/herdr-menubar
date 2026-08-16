@@ -75,6 +75,17 @@ actor SessionSupervisor {
         let continuation: CheckedContinuation<ReconciliationOutcome, Never>
     }
 
+    struct TargetedRetryWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    struct TargetedRetryWork {
+        let token: UUID
+        let task: Task<Void, Never>
+        var waiters: [TargetedRetryWaiter]
+    }
+
     private let discovery: any SessionDiscovering
     private let clientFactory: any SessionClientCreating
     private let sleeper: any Sleeper
@@ -95,7 +106,8 @@ actor SessionSupervisor {
     ] = [:]
     private var reconciliationTask: Task<Void, Never>?
     private var reconciliationTaskToken: UUID?
-    private var targetedRetryGenerations: Set<UInt64> = []
+    private var targetedRetryHighWater: UInt64 = 0
+    private var targetedRetryTasks: [UInt64: TargetedRetryWork] = [:]
     private var removalTasks: [UUID: Removal] = [:]
 
     init(
@@ -137,6 +149,7 @@ actor SessionSupervisor {
                 || discoveryLoopTask != nil
                 || reconciliationTask != nil
                 || !runtimes.isEmpty
+                || !targetedRetryTasks.isEmpty
                 || !removalTasks.isEmpty else {
             return
         }
@@ -154,6 +167,8 @@ actor SessionSupervisor {
         runtimes.removeAll()
         let ownedRemovals = Array(removalTasks.values)
         removalTasks.removeAll()
+        let ownedTargetedRetries = Array(targetedRetryTasks.values)
+        targetedRetryTasks.removeAll()
 
         let stopped = ReconciliationOutcome(
             generation: requestedReconciliationGeneration,
@@ -163,9 +178,13 @@ actor SessionSupervisor {
         let waiters = reconciliationWaiters.values.flatMap { $0 }
         reconciliationWaiters.removeAll()
         for waiter in waiters { waiter.continuation.resume(returning: stopped) }
+        for work in ownedTargetedRetries {
+            for waiter in work.waiters { waiter.continuation.resume() }
+        }
 
         loopTask?.cancel()
         workerTask?.cancel()
+        for work in ownedTargetedRetries { work.task.cancel() }
         for runtime in ownedRuntimes {
             runtime.graceTask?.cancel()
             runtime.eventTask?.cancel()
@@ -184,6 +203,9 @@ actor SessionSupervisor {
         for removal in ownedRemovals {
             await removal.task.value
         }
+        for work in ownedTargetedRetries {
+            await work.task.value
+        }
 
         let continuations = eventContinuations.values
         eventContinuations.removeAll()
@@ -191,21 +213,12 @@ actor SessionSupervisor {
     }
 
     func retryUnavailable() async {
-        let outcome = await requestReconciliation()
-        guard outcome.status == .applied, !Task.isCancelled else { return }
-        guard targetedRetryGenerations.insert(outcome.generation).inserted else { return }
         let lifecycle = lifecycleGeneration
-
-        let clients = runtimes.values.compactMap { runtime -> (any SessionClientServing)? in
-            guard runtime.isPresent,
-                  !runtime.isConnected,
-                  !outcome.retriedSessionIDs.contains(runtime.descriptor.id) else { return nil }
-            return runtime.client
-        }
-        for client in clients {
-            guard ownsLifecycle(lifecycle), !Task.isCancelled else { return }
-            await client.retryNow()
-        }
+        let outcome = await requestReconciliation()
+        guard outcome.status == .applied,
+              !Task.isCancelled,
+              ownsLifecycle(lifecycle) else { return }
+        await waitForTargetedRetry(outcome: outcome, lifecycleGeneration: lifecycle)
     }
 
     func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo {
@@ -222,6 +235,92 @@ actor SessionSupervisor {
 }
 
 private extension SessionSupervisor {
+    func waitForTargetedRetry(
+        outcome: ReconciliationOutcome,
+        lifecycleGeneration lifecycle: UInt64
+    ) async {
+        let generation = outcome.generation
+        let waiterID = UUID()
+        let supervisor = self
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, ownsLifecycle(lifecycle) else {
+                    continuation.resume()
+                    return
+                }
+
+                if var work = targetedRetryTasks[generation] {
+                    work.waiters.append(
+                        TargetedRetryWaiter(id: waiterID, continuation: continuation)
+                    )
+                    targetedRetryTasks[generation] = work
+                    return
+                }
+
+                guard generation > targetedRetryHighWater else {
+                    continuation.resume()
+                    return
+                }
+
+                targetedRetryHighWater = generation
+                let clients = runtimes.values.compactMap { runtime -> (any SessionClientServing)? in
+                    guard runtime.isPresent,
+                          !runtime.isConnected,
+                          !outcome.retriedSessionIDs.contains(runtime.descriptor.id) else { return nil }
+                    return runtime.client
+                }
+                let token = UUID()
+                let task = Task {
+                    await supervisor.runTargetedRetry(
+                        clients: clients,
+                        lifecycleGeneration: lifecycle,
+                        reconciliationGeneration: generation,
+                        token: token
+                    )
+                }
+                targetedRetryTasks[generation] = TargetedRetryWork(
+                    token: token,
+                    task: task,
+                    waiters: [TargetedRetryWaiter(id: waiterID, continuation: continuation)]
+                )
+            }
+        } onCancel: {
+            Task {
+                await supervisor.cancelTargetedRetryWaiter(
+                    generation: generation,
+                    waiterID: waiterID
+                )
+            }
+        }
+    }
+
+    func cancelTargetedRetryWaiter(generation: UInt64, waiterID: UUID) {
+        guard var work = targetedRetryTasks[generation],
+              let index = work.waiters.firstIndex(where: { $0.id == waiterID }) else { return }
+        let waiter = work.waiters.remove(at: index)
+        targetedRetryTasks[generation] = work
+        waiter.continuation.resume()
+    }
+
+    func runTargetedRetry(
+        clients: [any SessionClientServing],
+        lifecycleGeneration lifecycle: UInt64,
+        reconciliationGeneration: UInt64,
+        token: UUID
+    ) async {
+        for client in clients {
+            guard ownsLifecycle(lifecycle), !Task.isCancelled else { break }
+            await client.retryNow()
+        }
+        targetedRetryFinished(generation: reconciliationGeneration, token: token)
+    }
+
+    func targetedRetryFinished(generation: UInt64, token: UUID) {
+        guard let work = targetedRetryTasks[generation], work.token == token else { return }
+        targetedRetryTasks.removeValue(forKey: generation)
+        for waiter in work.waiters { waiter.continuation.resume() }
+    }
+
     func runDiscoveryLoop(lifecycleGeneration generation: UInt64) async {
         defer {
             if lifecycleGeneration == generation {
