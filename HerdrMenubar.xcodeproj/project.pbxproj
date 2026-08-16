@@ -37,6 +37,8 @@
 		C10000000000000000000001 /* BoundedProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000007 /* BoundedProcessRunner.swift */; };
 		C10000000000000000000002 /* BoundedProcessRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000008 /* BoundedProcessRunnerTests.swift */; };
 		C10000000000000000000004 /* WezTermCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000003 /* WezTermCLI.swift */; };
+		C10000000000000000000005 /* WezTermFocusAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000000B /* WezTermFocusAdapter.swift */; };
+		C10000000000000000000006 /* WezTermFocusAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000000C /* WezTermFocusAdapterTests.swift */; };
 		C1000000000000000000000A /* WezTermCLITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000009 /* WezTermCLITests.swift */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
@@ -91,6 +93,8 @@
 		C10000000000000000000008 /* BoundedProcessRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedProcessRunnerTests.swift; sourceTree = "<group>"; };
 		C10000000000000000000003 /* WezTermCLI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermCLI.swift; sourceTree = "<group>"; };
 		C10000000000000000000009 /* WezTermCLITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermCLITests.swift; sourceTree = "<group>"; };
+		C1000000000000000000000B /* WezTermFocusAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermFocusAdapter.swift; sourceTree = "<group>"; };
+		C1000000000000000000000C /* WezTermFocusAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermFocusAdapterTests.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -130,6 +134,7 @@
 			children = (
 				C10000000000000000000008 /* BoundedProcessRunnerTests.swift */,
 				C10000000000000000000009 /* WezTermCLITests.swift */,
+				C1000000000000000000000C /* WezTermFocusAdapterTests.swift */,
 				CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */,
 				12A000000000000000000011 /* JSONLineFramerTests.swift */,
 				B10000000000000000000009 /* SessionDiscoveryTests.swift */,
@@ -159,6 +164,7 @@
 			children = (
 				C10000000000000000000007 /* BoundedProcessRunner.swift */,
 				C10000000000000000000003 /* WezTermCLI.swift */,
+				C1000000000000000000000B /* WezTermFocusAdapter.swift */,
 				12A000000000000000000024 /* Preferences.swift */,
 				12A000000000000000000025 /* TerminalActivationService.swift */,
 				12A000000000000000000028 /* LoginItemService.swift */,
@@ -308,6 +314,7 @@
 			files = (
 				C10000000000000000000001 /* BoundedProcessRunner.swift in Sources */,
 				C10000000000000000000004 /* WezTermCLI.swift in Sources */,
+				C10000000000000000000005 /* WezTermFocusAdapter.swift in Sources */,
 				7A31F428AE2B1D9232A24A46 /* APIModels.swift in Sources */,
 				12A000000000000000000003 /* JSONLineFramer.swift in Sources */,
 				B10000000000000000000008 /* SessionDiscovery.swift in Sources */,
@@ -332,6 +339,7 @@
 			files = (
 				C10000000000000000000002 /* BoundedProcessRunnerTests.swift in Sources */,
 				C1000000000000000000000A /* WezTermCLITests.swift in Sources */,
+				C10000000000000000000006 /* WezTermFocusAdapterTests.swift in Sources */,
 				723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */,
 				12A000000000000000000001 /* JSONLineFramerTests.swift in Sources */,
 				B1000000000000000000000A /* SessionDiscoveryTests.swift in Sources */,
