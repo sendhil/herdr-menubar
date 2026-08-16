@@ -298,6 +298,33 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertEqual(controllerState(fixture), initialState)
     }
 
+    func testCooperativeCancellationDuringAuthorizationPreservesControllerState() async {
+        let fixture = makeFixture(settings: .denied)
+        defer { fixture.removeDefaults() }
+        fixture.preferences.notificationsEnabled = true
+        await fixture.controller.refreshStatus()
+        await fixture.service.setSettings(.authorized)
+        await fixture.service.suspendNextAuthorizationUntilCancellation()
+        let initialState = controllerState(fixture)
+
+        let operation = Task {
+            try await fixture.controller.setNotificationsEnabled(true)
+        }
+        await fixture.service.waitForAuthorizationRequests(1)
+        XCTAssertTrue(fixture.controller.isChanging)
+
+        operation.cancel()
+        await XCTAssertThrowsErrorAsync(try await operation.value) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        XCTAssertFalse(fixture.controller.isChanging)
+        XCTAssertEqual(controllerState(fixture), initialState)
+        let authorizationRequests = await fixture.service.authorizationRequests
+        XCTAssertEqual(authorizationRequests, 1)
+        XCTAssertNil(fixture.controller.errorMessage)
+    }
+
     func testCancellationDuringPermissionSettingsReadPreservesControllerState() async {
         let fixture = makeFixture(settings: .denied)
         defer { fixture.removeDefaults() }
@@ -419,6 +446,7 @@ private actor FakeNotificationSettingsService: NativeNotificationServing {
     private var settingsValue: NotificationSystemSettings
     private var authorizationError: NotificationSettingsTestError?
     private var shouldGateAuthorization: Bool
+    private var authorizationCancellationWatchdogNanoseconds: UInt64?
     private var shouldGateNextSettings: Bool
     private var authorizationGate: CheckedContinuation<Void, Never>?
     private var settingsGate: CheckedContinuation<Void, Never>?
@@ -453,6 +481,10 @@ private actor FakeNotificationSettingsService: NativeNotificationServing {
             shouldGateAuthorization = false
             await withCheckedContinuation { authorizationGate = $0 }
         }
+        if let watchdog = authorizationCancellationWatchdogNanoseconds {
+            authorizationCancellationWatchdogNanoseconds = nil
+            try await Task.sleep(nanoseconds: watchdog)
+        }
         if let authorizationError { throw authorizationError }
         return authorizationResult
     }
@@ -480,6 +512,10 @@ private actor FakeNotificationSettingsService: NativeNotificationServing {
 
     func gateNextAuthorization() {
         shouldGateAuthorization = true
+    }
+
+    func suspendNextAuthorizationUntilCancellation() {
+        authorizationCancellationWatchdogNanoseconds = 5_000_000_000
     }
 
     func gateNextSettings() {
