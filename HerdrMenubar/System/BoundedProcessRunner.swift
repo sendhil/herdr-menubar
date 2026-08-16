@@ -35,6 +35,9 @@ struct BoundedProcessRunner: BoundedProcessRunning {
     }
 
     func run(_ invocation: ProcessInvocation) async throws -> ProcessResult {
+        guard !Task.isCancelled else {
+            throw BoundedProcessError.cancelled
+        }
         let (events, eventContinuation) = AsyncStream<ProcessEvent>.makeStream()
         let execution = ProcessExecutionRecord(eventContinuation: eventContinuation)
         let token = execution.token
@@ -42,11 +45,12 @@ struct BoundedProcessRunner: BoundedProcessRunning {
         do {
             try await execution.launch(invocation, observer: launchObserver)
         } catch {
-            await execution.closeHandlesAndClearHandler(token: token)
+            await execution.closeHandles(token: token)
             eventContinuation.finish()
             throw BoundedProcessError.launchFailed
         }
 
+        let exitMonitor = await execution.startExitMonitor(token: token)
         let readers = await execution.startReaders(
             stdoutLimit: invocation.stdoutLimit,
             stderrLimit: invocation.stderrLimit,
@@ -111,14 +115,15 @@ struct BoundedProcessRunner: BoundedProcessRunning {
             await execution.closeHandles(token: token)
             _ = await readers.stdout.result
             _ = await readers.stderr.result
-            await execution.clearTerminationHandler(token: token)
+            _ = await exitMonitor.result
             eventContinuation.finish()
             throw terminalError
         }
 
         _ = await readers.stdout.result
         _ = await readers.stderr.result
-        await execution.closeHandlesAndClearHandler(token: token)
+        _ = await exitMonitor.result
+        await execution.closeHandles(token: token)
         eventContinuation.finish()
 
         guard let stdout, let stderr, let exitStatus else {
@@ -145,11 +150,9 @@ private enum ProcessEvent: Sendable {
 private actor ProcessExecutionRecord {
     let token = UUID()
 
-    private let process = Process()
-    private let stdoutPipe = Pipe()
-    private let stderrPipe = Pipe()
-    private let stdoutHandle: FileHandle
-    private let stderrHandle: FileHandle
+    private var pid: pid_t?
+    private var stdoutHandle: FileHandle?
+    private var stderrHandle: FileHandle?
     private let termination = ProcessTerminationLatch()
     private let eventContinuation: AsyncStream<ProcessEvent>.Continuation
     private var terminalError: BoundedProcessError?
@@ -157,31 +160,87 @@ private actor ProcessExecutionRecord {
 
     init(eventContinuation: AsyncStream<ProcessEvent>.Continuation) {
         self.eventContinuation = eventContinuation
-        stdoutHandle = stdoutPipe.fileHandleForReading
-        stderrHandle = stderrPipe.fileHandleForReading
-        let termination = self.termination
-        let token = self.token
-        process.terminationHandler = { process in
-            let status = process.terminationStatus
-            termination.resume(status)
-            eventContinuation.yield(.exited(status, token))
-        }
     }
 
     func launch(
         _ invocation: ProcessInvocation,
         observer: @Sendable (Int32) -> Void
     ) throws {
-        process.executableURL = invocation.executableURL
-        process.arguments = invocation.arguments
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        do {
-            try process.run()
-        } catch {
+        var stdoutDescriptors: [Int32] = [-1, -1]
+        var stderrDescriptors: [Int32] = [-1, -1]
+        guard Darwin.pipe(&stdoutDescriptors) == 0 else {
             throw BoundedProcessError.launchFailed
         }
-        observer(process.processIdentifier)
+        guard Darwin.pipe(&stderrDescriptors) == 0 else {
+            closeDescriptor(&stdoutDescriptors[0])
+            closeDescriptor(&stdoutDescriptors[1])
+            throw BoundedProcessError.launchFailed
+        }
+
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        var signalMask = sigset_t()
+        sigemptyset(&signalMask)
+        var launched = false
+        defer {
+            if actions != nil { posix_spawn_file_actions_destroy(&actions) }
+            if attributes != nil { posix_spawnattr_destroy(&attributes) }
+            if !launched {
+                closeDescriptor(&stdoutDescriptors[0])
+                closeDescriptor(&stdoutDescriptors[1])
+                closeDescriptor(&stderrDescriptors[0])
+                closeDescriptor(&stderrDescriptors[1])
+            }
+        }
+
+        guard posix_spawn_file_actions_init(&actions) == 0,
+              posix_spawnattr_init(&attributes) == 0,
+              posix_spawnattr_setsigmask(&attributes, &signalMask) == 0,
+              posix_spawnattr_setflags(
+                  &attributes,
+                  Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK)
+              ) == 0,
+              posix_spawn_file_actions_adddup2(&actions, stdoutDescriptors[1], STDOUT_FILENO) == 0,
+              posix_spawn_file_actions_adddup2(&actions, stderrDescriptors[1], STDERR_FILENO) == 0,
+              posix_spawn_file_actions_addclose(&actions, stdoutDescriptors[0]) == 0,
+              posix_spawn_file_actions_addclose(&actions, stdoutDescriptors[1]) == 0,
+              posix_spawn_file_actions_addclose(&actions, stderrDescriptors[0]) == 0,
+              posix_spawn_file_actions_addclose(&actions, stderrDescriptors[1]) == 0
+        else {
+            throw BoundedProcessError.launchFailed
+        }
+
+        var childPID: pid_t = 0
+        let executablePath = invocation.executableURL.path
+        let spawnResult = spawn(
+            executablePath: executablePath,
+            arguments: invocation.arguments,
+            actions: &actions,
+            attributes: &attributes,
+            childPID: &childPID
+        )
+        guard spawnResult == 0 else {
+            throw BoundedProcessError.launchFailed
+        }
+
+        launched = true
+        closeDescriptor(&stdoutDescriptors[1])
+        closeDescriptor(&stderrDescriptors[1])
+        stdoutHandle = FileHandle(fileDescriptor: stdoutDescriptors[0], closeOnDealloc: true)
+        stderrHandle = FileHandle(fileDescriptor: stderrDescriptors[0], closeOnDealloc: true)
+        stdoutDescriptors[0] = -1
+        stderrDescriptors[0] = -1
+        pid = childPID
+        observer(childPID)
+    }
+
+    func startExitMonitor(token: UUID) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                if reapIfExited(token: token) { return }
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+        }
     }
 
     func startReaders(
@@ -189,8 +248,11 @@ private actor ProcessExecutionRecord {
         stderrLimit: Int,
         token: UUID
     ) -> (stdout: Task<Void, Never>, stderr: Task<Void, Never>) {
-        let stdoutHandle = self.stdoutHandle
-        let stderrHandle = self.stderrHandle
+        guard let stdoutHandle, let stderrHandle else {
+            let stdoutFailure = Task { _ = eventContinuation.yield(.failure(.launchFailed, token)) }
+            let stderrFailure = Task { _ = eventContinuation.yield(.failure(.launchFailed, token)) }
+            return (stdoutFailure, stderrFailure)
+        }
         let events = eventContinuation
         let stdoutTask = Task.detached {
             do {
@@ -230,13 +292,11 @@ private actor ProcessExecutionRecord {
     }
 
     func terminate(token: UUID) {
-        guard token == self.token, process.isRunning else { return }
-        process.terminate()
+        signalIfUnreaped(SIGTERM, token: token)
     }
 
     func forceKillIfRunning(token: UUID) {
-        guard token == self.token, process.isRunning else { return }
-        Darwin.kill(process.processIdentifier, SIGKILL)
+        signalIfUnreaped(SIGKILL, token: token)
     }
 
     func waitForTermination(token: UUID) async -> Int32? {
@@ -246,18 +306,85 @@ private actor ProcessExecutionRecord {
 
     func closeHandles(token: UUID) {
         guard token == self.token else { return }
-        try? stdoutHandle.close()
-        try? stderrHandle.close()
+        try? stdoutHandle?.close()
+        try? stderrHandle?.close()
+        stdoutHandle = nil
+        stderrHandle = nil
     }
 
-    func clearTerminationHandler(token: UUID) {
-        guard token == self.token else { return }
-        process.terminationHandler = nil
+    private func signalIfUnreaped(_ signal: Int32, token: UUID) {
+        guard token == self.token, !reapIfExited(token: token), let pid else { return }
+        Darwin.kill(pid, signal)
     }
 
-    func closeHandlesAndClearHandler(token: UUID) {
-        closeHandles(token: token)
-        clearTerminationHandler(token: token)
+    private func reapIfExited(token: UUID) -> Bool {
+        guard token == self.token else { return true }
+        guard let pid else { return true }
+        var status: Int32 = 0
+        let result = waitpid(pid, &status, WNOHANG)
+        if result == pid {
+            recordReaped(status: status, token: token)
+            return true
+        }
+        if result == -1, errno == EINTR {
+            return false
+        }
+        if result == -1 {
+            recordReaped(status: 1 << 8, token: token)
+            return true
+        }
+        return false
+    }
+
+    private func recordReaped(status: Int32, token: UUID) {
+        guard token == self.token, pid != nil else { return }
+        pid = nil
+        let exitStatus = decodedExitStatus(status)
+        termination.resume(exitStatus)
+        eventContinuation.yield(.exited(exitStatus, token))
+    }
+
+    private func decodedExitStatus(_ status: Int32) -> Int32 {
+        let terminatingSignal = status & 0x7f
+        if terminatingSignal == 0 {
+            return (status >> 8) & 0xff
+        }
+        return 128 + terminatingSignal
+    }
+
+    private func spawn(
+        executablePath: String,
+        arguments: [String],
+        actions: inout posix_spawn_file_actions_t?,
+        attributes: inout posix_spawnattr_t?,
+        childPID: inout pid_t
+    ) -> Int32 {
+        var argumentPointers = ([executablePath] + arguments).map { strdup($0) }
+        guard !argumentPointers.contains(where: { $0 == nil }) else {
+            argumentPointers.forEach { free($0) }
+            return ENOMEM
+        }
+        argumentPointers.append(nil)
+        defer { argumentPointers.forEach { free($0) } }
+
+        return executablePath.withCString { path in
+            argumentPointers.withUnsafeBufferPointer { argv in
+                posix_spawn(
+                    &childPID,
+                    path,
+                    &actions,
+                    &attributes,
+                    argv.baseAddress,
+                    environ
+                )
+            }
+        }
+    }
+
+    private func closeDescriptor(_ descriptor: inout Int32) {
+        guard descriptor >= 0 else { return }
+        Darwin.close(descriptor)
+        descriptor = -1
     }
 
     nonisolated private static func read(

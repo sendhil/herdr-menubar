@@ -4,6 +4,31 @@ import XCTest
 @testable import HerdrMenubar
 
 final class BoundedProcessRunnerTests: XCTestCase {
+    func testCancellationBeforeRunDoesNotLaunchProcess() async {
+        let gate = CancellationGate()
+        let pids = PIDRecorder()
+        let runner = BoundedProcessRunner(launchObserver: { pids.record($0) })
+        let request = invocation(command: "exit 0")
+        let task = Task {
+            await gate.wait()
+            return try await runner.run(request)
+        }
+        await gate.waitUntilBlocked()
+
+        task.cancel()
+        await gate.open()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation before launch")
+        } catch let error as BoundedProcessError {
+            XCTAssertEqual(error, .cancelled)
+        } catch {
+            XCTFail("Expected BoundedProcessError.cancelled, got \(error)")
+        }
+        XCTAssertTrue(pids.values.isEmpty)
+    }
+
     func testCapturesStdoutStderrAndExitStatusConcurrently() async throws {
         let runner = BoundedProcessRunner()
 
@@ -59,17 +84,32 @@ final class BoundedProcessRunnerTests: XCTestCase {
     }
 
     func testSimultaneousStdoutAndStderrOverflowTerminatesExactlyOnce() async {
+        let fixture: TemporaryExecutable
+        do {
+            fixture = try TemporaryExecutable(contents: Self.synchronizedOverflowFixture)
+        } catch {
+            return XCTFail("Could not create synchronized fixture: \(error)")
+        }
+        defer { fixture.remove() }
+        let termMarker = fixture.directoryURL.appendingPathComponent("term-count")
+        let readyMarker = fixture.directoryURL.appendingPathComponent("ready")
         let pids = PIDRecorder()
         let runner = BoundedProcessRunner(launchObserver: { pids.record($0) })
-        let request = invocation(
-            command: "while :; do printf '0123456789abcdef'; printf 'fedcba9876543210' >&2; done",
+        let request = ProcessInvocation(
+            executableURL: fixture.url,
+            arguments: [termMarker.path, readyMarker.path],
             deadline: .seconds(1),
             stdoutLimit: 64,
             stderrLimit: 64
         )
+        let task = Task { try await runner.run(request) }
+
+        await assertFileAppears(readyMarker, within: .seconds(1))
+        let clock = ContinuousClock()
+        let started = clock.now
 
         do {
-            _ = try await runner.run(request)
+            _ = try await task.value
             XCTFail("Expected one output limit to win the terminal-error race")
         } catch let error as BoundedProcessError {
             XCTAssertTrue(
@@ -80,6 +120,9 @@ final class BoundedProcessRunnerTests: XCTestCase {
             XCTFail("Expected BoundedProcessError, got \(error)")
         }
 
+        let elapsed = started.duration(to: clock.now)
+        XCTAssertLessThan(elapsed, .seconds(1))
+        XCTAssertEqual(try? String(contentsOf: termMarker, encoding: .utf8), "term\n")
         XCTAssertEqual(pids.values.count, 1)
         assertRecordedProcessWasReaped(pids)
     }
@@ -122,23 +165,91 @@ final class BoundedProcessRunnerTests: XCTestCase {
     func testChildIgnoringTerminateIsKilledAfterGraceAndReaped() async throws {
         let fixture = try TemporaryExecutable(contents: """
         #!/bin/sh
-        trap '' TERM
+        term_marker="$1"
+        ready_marker="$2"
+        trap 'printf "term\\n" >> "$term_marker"' TERM
+        printf ready > "$ready_marker"
         while :; do :; done
         """)
         defer { fixture.remove() }
+        let termMarker = fixture.directoryURL.appendingPathComponent("term-count")
+        let readyMarker = fixture.directoryURL.appendingPathComponent("ready")
         let pids = PIDRecorder()
         let runner = BoundedProcessRunner(launchObserver: { pids.record($0) })
         let request = ProcessInvocation(
             executableURL: fixture.url,
-            arguments: [],
-            deadline: .milliseconds(40),
+            arguments: [termMarker.path, readyMarker.path],
+            deadline: .seconds(5),
             stdoutLimit: 1_024,
             stderrLimit: 1_024
         )
+        let task = Task { try await runner.run(request) }
+        await assertFileAppears(readyMarker, within: .seconds(1))
+        let clock = ContinuousClock()
+        let cancelledAt = clock.now
 
-        await assertRun(request, with: runner, throws: .timedOut)
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch let error as BoundedProcessError {
+            XCTAssertEqual(error, .cancelled)
+        }
+        let elapsed = cancelledAt.duration(to: clock.now)
+        XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(90))
+        XCTAssertLessThan(elapsed, .seconds(1))
+        XCTAssertEqual(try String(contentsOf: termMarker, encoding: .utf8), "term\n")
         assertRecordedProcessWasReaped(pids)
     }
+
+    private func assertFileAppears(
+        _ url: URL,
+        within timeout: Duration,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !FileManager.default.fileExists(atPath: url.path), clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), file: file, line: line)
+    }
+
+    private static let synchronizedOverflowFixture = """
+    #!/usr/bin/python3
+    import os
+    import signal
+    import sys
+    import threading
+    import time
+
+    term_marker, ready_marker = sys.argv[1:3]
+
+    def on_term(_signal, _frame):
+        with open(term_marker, "ab", buffering=0) as marker:
+            marker.write(b"term\\n")
+
+    signal.signal(signal.SIGTERM, on_term)
+    barrier = threading.Barrier(3)
+
+    def write_stream(fd, byte):
+        barrier.wait()
+        os.write(fd, byte * 4096)
+
+    stdout_writer = threading.Thread(target=write_stream, args=(1, b"o"))
+    stderr_writer = threading.Thread(target=write_stream, args=(2, b"e"))
+    stdout_writer.start()
+    stderr_writer.start()
+    with open(ready_marker, "wb", buffering=0) as marker:
+        marker.write(b"ready")
+    barrier.wait()
+    stdout_writer.join()
+    stderr_writer.join()
+    while True:
+        time.sleep(0.01)
+    """
 
     private func invocation(
         command: String,
@@ -205,6 +316,33 @@ private final class PIDRecorder: @unchecked Sendable {
 
     func record(_ pid: Int32) {
         lock.withLock { storage.append(pid) }
+    }
+}
+
+private actor CancellationGate {
+    private var blocked = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var blockedContinuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        blocked = true
+        blockedContinuation?.resume()
+        blockedContinuation = nil
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilBlocked() async {
+        if blocked { return }
+        await withCheckedContinuation { continuation in
+            blockedContinuation = continuation
+        }
+    }
+
+    func open() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 
