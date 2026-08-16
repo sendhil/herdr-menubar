@@ -3,6 +3,26 @@ import XCTest
 @testable import HerdrMenubar
 
 final class HerdrClientTests: XCTestCase {
+    func testUsesConfiguredSocketForSubscriptionSnapshotMetadataAndFocus() async throws {
+        let url = URL(fileURLWithPath: "/tmp/session-alpha.sock")
+        let factory = FakeHerdrConnectionFactory()
+        let client = makeClient(factory: factory, socketURL: url)
+        let events = await client.events()
+        await client.start()
+        _ = await completeBootstrap(factory: factory, discovered: ["pane"], authoritative: ["pane"])
+        _ = await events.next()
+
+        let focus = Task { try await client.focus(paneID: "pane") }
+        let connection = await factory.connection(at: 5)
+        let request = await connection.nextSent()
+        await connection.reply(to: request, result: paneFocusResult(id: "pane"))
+        _ = try await focus.value
+
+        let connectedSocketURLs = await factory.connectedSocketURLs
+        XCTAssertEqual(Set(connectedSocketURLs), [url])
+        await client.stop()
+    }
+
     func testBootstrapReconcilesPaneAddedBetweenInitialAndPostSubscriptionLists() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
@@ -608,8 +628,8 @@ extension HerdrClientTests {
         let sleeper = ControlledSleeper()
         let factory = FakeHerdrConnectionFactory()
         let client = HerdrClient(
+            socketURL: URL(fileURLWithPath: "/tmp/fake-herdr.sock"),
             connectionFactory: factory,
-            pathResolver: FakePathResolver(),
             backoff: BackoffPolicy(delays: [.milliseconds(1)], jitter: { 0 }),
             sleeper: sleeper
         )
@@ -642,8 +662,8 @@ extension HerdrClientTests {
     func testTimeoutCoversConnectSendAndReceiveAsOneOrdinaryRequestDeadline() async throws {
         let factory = FakeHerdrConnectionFactory(sendDelays: [.milliseconds(35)])
         let client = HerdrClient(
+            socketURL: URL(fileURLWithPath: "/tmp/fake-herdr.sock"),
             connectionFactory: factory,
-            pathResolver: FakePathResolver(),
             backoff: BackoffPolicy(delays: [.seconds(15)], jitter: { 0 }),
             sleeper: ControlledSleeper(),
             requestTimeout: .milliseconds(60)
@@ -728,8 +748,8 @@ extension HerdrClientTests {
     ) async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = HerdrClient(
+            socketURL: URL(fileURLWithPath: "/tmp/fake-herdr.sock"),
             connectionFactory: factory,
-            pathResolver: FakePathResolver(),
             backoff: .immediate,
             sleeper: ImmediateSleeper(),
             requestTimeout: .milliseconds(25)
@@ -818,10 +838,14 @@ extension HerdrClientTests {
         await client.stop()
     }
 
-    private func makeClient(factory: FakeHerdrConnectionFactory, debounce: Duration = .zero) -> HerdrClient {
+    private func makeClient(
+        factory: FakeHerdrConnectionFactory,
+        socketURL: URL = URL(fileURLWithPath: "/tmp/fake-herdr.sock"),
+        debounce: Duration = .zero
+    ) -> HerdrClient {
         HerdrClient(
+            socketURL: socketURL,
             connectionFactory: factory,
-            pathResolver: FakePathResolver(),
             backoff: .immediate,
             sleeper: ImmediateSleeper(),
             subscriptionRebuildDebounce: debounce

@@ -62,8 +62,8 @@ actor HerdrClient {
         "pane.agent_detected", "workspace.renamed", "tab.renamed"
     ]
 
+    private let socketURL: URL
     private let connectionFactory: any HerdrConnectionFactory
-    private let pathResolver: any SocketPathResolving
     private let backoff: BackoffPolicy
     private let sleeper: any Sleeper
     private let requestTimeout: Duration
@@ -85,19 +85,27 @@ actor HerdrClient {
     private var lifecycleGeneration = UUID()
 
     init(
+        socketURL: URL,
         connectionFactory: any HerdrConnectionFactory = NWHerdrConnectionFactory(),
-        pathResolver: any SocketPathResolving = SocketPathResolver(),
         backoff: BackoffPolicy = BackoffPolicy(),
         sleeper: any Sleeper = TaskSleeper(),
         requestTimeout: Duration = .seconds(5),
         subscriptionRebuildDebounce: Duration = .milliseconds(100)
     ) {
+        self.socketURL = socketURL
         self.connectionFactory = connectionFactory
-        self.pathResolver = pathResolver
         self.backoff = backoff
         self.sleeper = sleeper
         self.requestTimeout = requestTimeout
         self.subscriptionRebuildDebounce = subscriptionRebuildDebounce
+    }
+
+    init() {
+        let root = SessionDiscovery.configurationRoot(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+        )
+        self.init(socketURL: root.appending(path: "herdr.sock"))
     }
 
     func events() -> AsyncStream<HerdrClientEvent> {
@@ -265,8 +273,7 @@ actor HerdrClient {
 
 private extension HerdrClient {
     func makeSubscription(paneIDs: [String]) async throws -> (connection: any HerdrConnection, token: UUID) {
-        let socketURL = pathResolver.resolve()
-        return try await withTimeout { [connectionFactory] in
+        return try await withTimeout { [connectionFactory, socketURL] in
             let connection = try await connectionFactory.connect(to: socketURL)
             do {
                 let requestID = UUID().uuidString
@@ -554,8 +561,7 @@ private extension HerdrClient {
         as type: Result.Type
     ) async throws -> Result
     where Params: Encodable & Sendable, Result: Decodable & Sendable {
-        let socketURL = pathResolver.resolve()
-        return try await withTimeout { [connectionFactory] in
+        return try await withTimeout { [connectionFactory, socketURL] in
             let connection = try await connectionFactory.connect(to: socketURL)
             do {
                 let requestID = UUID().uuidString

@@ -1,23 +1,20 @@
 import Foundation
 @testable import HerdrMenubar
 
-struct FakePathResolver: SocketPathResolving {
-    func resolve(environment: [String: String], homeDirectory: URL) -> URL {
-        URL(fileURLWithPath: "/tmp/fake-herdr.sock")
-    }
-}
-
 actor FakeHerdrConnectionFactory: HerdrConnectionFactory {
     private var connections: [FakeHerdrConnection] = []
+    private var socketURLs: [URL] = []
     private var waiters: [Int: [CheckedContinuation<FakeHerdrConnection, Never>]] = [:]
     private let sendDelays: [Duration]
 
     init(sendDelays: [Duration] = []) { self.sendDelays = sendDelays }
     var connectionCount: Int { connections.count }
+    var connectedSocketURLs: [URL] { socketURLs }
 
     func connect(to socketURL: URL) async throws -> any HerdrConnection {
         let index = connections.count
         let connection = FakeHerdrConnection(sendDelay: sendDelays.indices.contains(index) ? sendDelays[index] : .zero)
+        socketURLs.append(socketURL)
         connections.append(connection)
         for waiter in waiters.removeValue(forKey: index) ?? [] { waiter.resume(returning: connection) }
         return connection

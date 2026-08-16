@@ -8,9 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		12A000000000000000000001 /* JSONLineFramerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000011 /* JSONLineFramerTests.swift */; };
-		12A000000000000000000002 /* SocketPathResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000012 /* SocketPathResolverTests.swift */; };
 		12A000000000000000000003 /* JSONLineFramer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000013 /* JSONLineFramer.swift */; };
-		12A000000000000000000004 /* SocketPathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000014 /* SocketPathResolver.swift */; };
 		12A000000000000000000005 /* HerdrConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000015 /* HerdrConnection.swift */; };
 		12A000000000000000000006 /* HerdrConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000016 /* HerdrConnectionTests.swift */; };
 		12A000000000000000000007 /* HerdrClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000017 /* HerdrClient.swift */; };
@@ -55,9 +53,7 @@
 
 /* Begin PBXFileReference section */
 		12A000000000000000000011 /* JSONLineFramerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLineFramerTests.swift; sourceTree = "<group>"; };
-		12A000000000000000000012 /* SocketPathResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketPathResolverTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000013 /* JSONLineFramer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLineFramer.swift; sourceTree = "<group>"; };
-		12A000000000000000000014 /* SocketPathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketPathResolver.swift; sourceTree = "<group>"; };
 		12A000000000000000000015 /* HerdrConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrConnection.swift; sourceTree = "<group>"; };
 		12A000000000000000000016 /* HerdrConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrConnectionTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000017 /* HerdrClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrClient.swift; sourceTree = "<group>"; };
@@ -121,7 +117,6 @@
 				CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */,
 				12A000000000000000000011 /* JSONLineFramerTests.swift */,
 				B10000000000000000000009 /* SessionDiscoveryTests.swift */,
-				12A000000000000000000012 /* SocketPathResolverTests.swift */,
 				12A000000000000000000016 /* HerdrConnectionTests.swift */,
 				12A000000000000000000018 /* HerdrClientTests.swift */,
 				12A000000000000000000036 /* HerdrClientTestSupport.swift */,
@@ -168,7 +163,6 @@
 				FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */,
 				12A000000000000000000013 /* JSONLineFramer.swift */,
 				B10000000000000000000007 /* SessionDiscovery.swift */,
-				12A000000000000000000014 /* SocketPathResolver.swift */,
 				12A000000000000000000015 /* HerdrConnection.swift */,
 				12A000000000000000000017 /* HerdrClient.swift */,
 			);
@@ -294,7 +288,6 @@
 				7A31F428AE2B1D9232A24A46 /* APIModels.swift in Sources */,
 				12A000000000000000000003 /* JSONLineFramer.swift in Sources */,
 				B10000000000000000000008 /* SessionDiscovery.swift in Sources */,
-				12A000000000000000000004 /* SocketPathResolver.swift in Sources */,
 				12A000000000000000000005 /* HerdrConnection.swift in Sources */,
 				12A000000000000000000007 /* HerdrClient.swift in Sources */,
 				12A00000000000000000000A /* AgentStore.swift in Sources */,
@@ -316,7 +309,6 @@
 				723E0430D863B28D36368507 /* APIModelsTests.swift in Sources */,
 				12A000000000000000000001 /* JSONLineFramerTests.swift in Sources */,
 				B1000000000000000000000A /* SessionDiscoveryTests.swift in Sources */,
-				12A000000000000000000002 /* SocketPathResolverTests.swift in Sources */,
 				12A000000000000000000006 /* HerdrConnectionTests.swift in Sources */,
 				12A000000000000000000008 /* HerdrClientTests.swift in Sources */,
 				12A000000000000000000035 /* HerdrClientTestSupport.swift in Sources */,
