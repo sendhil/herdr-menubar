@@ -259,6 +259,97 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertTrue(fixture.controller.isEnabled)
     }
 
+    func testCancellationDuringAuthorizationPreservesControllerState() async {
+        let fixture = makeFixture(
+            settings: .denied,
+            authorizationError: .sensitive("preexisting-error")
+        )
+        defer { fixture.removeDefaults() }
+
+        await XCTAssertThrowsErrorAsync(
+            try await fixture.controller.setNotificationsEnabled(true)
+        ) { error in
+            XCTAssertEqual(
+                error as? NotificationSettingsTestError,
+                .sensitive("preexisting-error")
+            )
+        }
+        fixture.preferences.notificationsEnabled = true
+        await fixture.controller.refreshStatus()
+        await fixture.service.setAuthorizationError(nil)
+        await fixture.service.setSettings(.authorized)
+        await fixture.service.gateNextAuthorization()
+        let initialState = controllerState(fixture)
+        XCTAssertEqual(initialState.errorMessage, "Could not enable notifications.")
+
+        let operation = Task {
+            try await fixture.controller.setNotificationsEnabled(true)
+        }
+        await fixture.service.waitForAuthorizationRequests(2)
+        XCTAssertTrue(fixture.controller.isChanging)
+
+        operation.cancel()
+        await fixture.service.releaseAuthorization()
+        await XCTAssertThrowsErrorAsync(try await operation.value) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        XCTAssertFalse(fixture.controller.isChanging)
+        XCTAssertEqual(controllerState(fixture), initialState)
+    }
+
+    func testCancellationDuringPermissionSettingsReadPreservesControllerState() async {
+        let fixture = makeFixture(settings: .denied)
+        defer { fixture.removeDefaults() }
+        fixture.preferences.notificationsEnabled = true
+        await fixture.controller.refreshStatus()
+        await fixture.service.setSettings(.authorized)
+        await fixture.service.gateNextSettings()
+        let initialState = controllerState(fixture)
+
+        let operation = Task {
+            try await fixture.controller.setNotificationsEnabled(true)
+        }
+        await fixture.service.waitForSettingsRequests(2)
+        XCTAssertTrue(fixture.controller.isChanging)
+
+        operation.cancel()
+        await fixture.service.releaseSettings()
+        await XCTAssertThrowsErrorAsync(try await operation.value) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        XCTAssertFalse(fixture.controller.isChanging)
+        XCTAssertEqual(controllerState(fixture), initialState)
+    }
+
+    func testCancellationDuringRefreshDiscardsSettingsResult() async {
+        let fixture = makeFixture(settings: .denied)
+        defer { fixture.removeDefaults() }
+        await fixture.controller.refreshStatus()
+        await fixture.service.setSettings(.authorized)
+        await fixture.service.gateNextSettings()
+
+        let refresh = Task { await fixture.controller.refreshStatus() }
+        await fixture.service.waitForSettingsRequests(2)
+
+        refresh.cancel()
+        await fixture.service.releaseSettings()
+        await refresh.value
+
+        XCTAssertEqual(fixture.controller.systemSettings, .denied)
+    }
+
+    private func controllerState(
+        _ fixture: NotificationSettingsFixture
+    ) -> NotificationSettingsControllerState {
+        NotificationSettingsControllerState(
+            notificationsEnabled: fixture.controller.isEnabled,
+            systemSettings: fixture.controller.systemSettings,
+            errorMessage: fixture.controller.errorMessage
+        )
+    }
+
     private func makeFixture(
         authorizationResult: Bool = true,
         settings: NotificationSystemSettings = .notDetermined,
@@ -314,13 +405,19 @@ private enum NotificationSettingsTestError: Error, Equatable {
     case sensitive(String)
 }
 
+private struct NotificationSettingsControllerState: Equatable {
+    let notificationsEnabled: Bool
+    let systemSettings: NotificationSystemSettings
+    let errorMessage: String?
+}
+
 private actor FakeNotificationSettingsService: NativeNotificationServing {
     private(set) var authorizationRequests = 0
     private(set) var settingsRequests = 0
 
     private var authorizationResult: Bool
     private var settingsValue: NotificationSystemSettings
-    private let authorizationError: NotificationSettingsTestError?
+    private var authorizationError: NotificationSettingsTestError?
     private var shouldGateAuthorization: Bool
     private var shouldGateNextSettings: Bool
     private var authorizationGate: CheckedContinuation<Void, Never>?
@@ -375,6 +472,18 @@ private actor FakeNotificationSettingsService: NativeNotificationServing {
 
     func setSettings(_ settings: NotificationSystemSettings) {
         settingsValue = settings
+    }
+
+    func setAuthorizationError(_ error: NotificationSettingsTestError?) {
+        authorizationError = error
+    }
+
+    func gateNextAuthorization() {
+        shouldGateAuthorization = true
+    }
+
+    func gateNextSettings() {
+        shouldGateNextSettings = true
     }
 
     func waitForAuthorizationRequests(_ count: Int) async {

@@ -43,7 +43,9 @@ final class NotificationSettingsController {
         refreshGeneration &+= 1
         let generation = refreshGeneration
         let settings = await service.settings()
-        guard activePermissionOperation == nil, refreshGeneration == generation else { return }
+        guard !Task.isCancelled,
+              activePermissionOperation == nil,
+              refreshGeneration == generation else { return }
         systemSettings = settings
     }
 
@@ -62,7 +64,6 @@ final class NotificationSettingsController {
         activePermissionOperation = operationID
         refreshGeneration &+= 1
         isChanging = true
-        errorMessage = nil
         defer {
             if activePermissionOperation == operationID {
                 activePermissionOperation = nil
@@ -72,12 +73,17 @@ final class NotificationSettingsController {
 
         do {
             let granted = try await service.requestAuthorization()
+            try Task.checkCancellation()
             guard activePermissionOperation == operationID else { return }
             let settings = await service.settings()
+            try Task.checkCancellation()
             guard activePermissionOperation == operationID else { return }
             systemSettings = settings
             preferences.notificationsEnabled = granted
                 && settings.authorization == .authorized
+            errorMessage = nil
+        } catch let error as CancellationError {
+            throw error
         } catch {
             guard activePermissionOperation == operationID else { throw error }
             preferences.notificationsEnabled = false
