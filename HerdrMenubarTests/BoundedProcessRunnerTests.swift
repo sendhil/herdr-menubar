@@ -18,39 +18,46 @@ final class BoundedProcessRunnerTests: XCTestCase {
         task.cancel()
         await gate.open()
 
-        guard let outcome = await boundedResult(of: task, launchedPIDs: pids) else { return }
-        switch outcome {
-        case .success:
+        do {
+            _ = try await task.value
             XCTFail("Expected cancellation before launch")
-        case let .failure(error as BoundedProcessError):
+        } catch let error as BoundedProcessError {
             XCTAssertEqual(error, .cancelled)
-        case let .failure(error):
+        } catch {
             XCTFail("Expected BoundedProcessError.cancelled, got \(error)")
         }
         XCTAssertTrue(pids.values.isEmpty)
     }
 
-    func testWatchdogReturnsOnTimeoutWithoutAwaitingHungTask() async {
+    func testOwnedOperationSecondaryTimeoutDisposesTargetAfterControlledRelease() async {
         let gate = CancellationGate()
-        let task = Task<ProcessResult, Error> {
+        var sentinel: LifecycleSentinel? = LifecycleSentinel()
+        let weakSentinel = WeakReference(sentinel!)
+        var operation: BoundedProcessOperation? = BoundedProcessOperation.start { [sentinel] in
             await gate.wait()
+            _ = sentinel
             return ProcessResult(stdout: Data(), stderr: Data(), exitStatus: 0)
         }
+        let weakControl = WeakReference(operation!.state)
+        sentinel = nil
         await gate.waitUntilBlocked()
-        let watchdog = ProcessTaskWatchdog(task: task)
 
-        let timedOut = await watchdog.wait(for: .milliseconds(20))
+        let firstTimeout = await operation?.wait(for: Duration.milliseconds(20))
+        XCTAssertNil(firstTimeout)
+        operation?.cancel()
+        let secondaryTimeout = await operation?.wait(for: Duration.milliseconds(20))
+        XCTAssertNil(secondaryTimeout)
 
-        XCTAssertNil(timedOut)
         await gate.open()
-        guard let completed = await watchdog.wait(for: .seconds(1)) else {
-            return XCTFail("Controlled task did not finish after gate opened")
+        guard let completion = await operation?.wait(for: Duration.seconds(1)) else {
+            return XCTFail("Controlled operation did not finish after release")
         }
-        guard case let .success(result) = completed else {
-            return XCTFail("Expected controlled task success")
+        guard case .success = completion else {
+            return XCTFail("Expected controlled operation success")
         }
-        XCTAssertEqual(result.exitStatus, 0)
-        await watchdog.finish()
+        operation = nil
+        await assertEventuallyReleased { weakSentinel.value }
+        await assertEventuallyReleased { weakControl.value }
     }
 
     func testCapturesStdoutStderrAndExitStatusConcurrently() async throws {
@@ -74,9 +81,9 @@ final class BoundedProcessRunnerTests: XCTestCase {
         let request = invocation(
             command: "printf 'closed stdout'; printf 'closed stderr' >&2"
         )
-        let task = Task { try await runner.run(request) }
+        let operation = runner.start(request)
 
-        let outcome = await boundedResult(of: task, launchedPIDs: pids)
+        let outcome = await boundedResult(of: operation)
         backup.restore()
         guard let outcome else { return }
         let result = try outcome.get()
@@ -112,7 +119,7 @@ final class BoundedProcessRunnerTests: XCTestCase {
             stderrLimit: 100_000
         )
 
-        await assertRun(request, with: runner, launchedPIDs: pids, throws: .stdoutLimitExceeded)
+        await assertRun(request, with: runner, throws: .stdoutLimitExceeded)
         assertRecordedProcessWasReaped(pids)
     }
 
@@ -126,7 +133,7 @@ final class BoundedProcessRunnerTests: XCTestCase {
             stderrLimit: 64
         )
 
-        await assertRun(request, with: runner, launchedPIDs: pids, throws: .stderrLimitExceeded)
+        await assertRun(request, with: runner, throws: .stderrLimitExceeded)
         assertRecordedProcessWasReaped(pids)
     }
 
@@ -149,13 +156,13 @@ final class BoundedProcessRunnerTests: XCTestCase {
             stdoutLimit: 64,
             stderrLimit: 64
         )
-        let task = Task { try await runner.run(request) }
+        let operation = runner.start(request)
 
         await assertFileAppears(readyMarker, within: .seconds(1))
         let clock = ContinuousClock()
         let started = clock.now
 
-        guard let outcome = await boundedResult(of: task, launchedPIDs: pids) else { return }
+        guard let outcome = await boundedResult(of: operation) else { return }
         switch outcome {
         case .success:
             XCTFail("Expected one output limit to win the terminal-error race")
@@ -183,7 +190,7 @@ final class BoundedProcessRunnerTests: XCTestCase {
             deadline: .milliseconds(40)
         )
 
-        await assertRun(request, with: runner, launchedPIDs: pids, throws: .timedOut)
+        await assertRun(request, with: runner, throws: .timedOut)
         assertRecordedProcessWasReaped(pids)
     }
 
@@ -194,12 +201,12 @@ final class BoundedProcessRunnerTests: XCTestCase {
             command: "while :; do :; done",
             deadline: .seconds(5)
         )
-        let task = Task { try await runner.run(request) }
+        let operation = runner.start(request)
         await waitForLaunch(pids)
 
-        task.cancel()
+        operation.cancel()
 
-        guard let outcome = await boundedResult(of: task, launchedPIDs: pids) else { return }
+        guard let outcome = await boundedResult(of: operation) else { return }
         switch outcome {
         case .success:
             XCTFail("Expected cancellation")
@@ -232,14 +239,14 @@ final class BoundedProcessRunnerTests: XCTestCase {
             stdoutLimit: 1_024,
             stderrLimit: 1_024
         )
-        let task = Task { try await runner.run(request) }
+        let operation = runner.start(request)
         await assertFileAppears(readyMarker, within: .seconds(1))
         let clock = ContinuousClock()
         let cancelledAt = clock.now
 
-        task.cancel()
+        operation.cancel()
 
-        guard let outcome = await boundedResult(of: task, launchedPIDs: pids) else { return }
+        guard let outcome = await boundedResult(of: operation) else { return }
         switch outcome {
         case .success:
             XCTFail("Expected cancellation")
@@ -321,15 +328,13 @@ final class BoundedProcessRunnerTests: XCTestCase {
     private func assertRun(
         _ invocation: ProcessInvocation,
         with runner: BoundedProcessRunner,
-        launchedPIDs: PIDRecorder? = nil,
         throws expected: BoundedProcessError,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
-        let task = Task { try await runner.run(invocation) }
+        let operation = runner.start(invocation)
         guard let outcome = await boundedResult(
-            of: task,
-            launchedPIDs: launchedPIDs ?? PIDRecorder(),
+            of: operation,
             file: file,
             line: line
         ) else { return }
@@ -344,27 +349,33 @@ final class BoundedProcessRunnerTests: XCTestCase {
     }
 
     private func boundedResult(
-        of task: Task<ProcessResult, Error>,
-        launchedPIDs: PIDRecorder,
+        of operation: BoundedProcessOperation,
         within timeout: Duration = .seconds(2),
         file: StaticString = #filePath,
         line: UInt = #line
     ) async -> Result<ProcessResult, Error>? {
-        let watchdog = ProcessTaskWatchdog(task: task)
-        if let result = await watchdog.wait(for: timeout) {
-            await watchdog.finish()
-            return result
-        }
+        if let result = await operation.wait(for: timeout) { return result }
 
         XCTFail("Subprocess runner exceeded hard watchdog", file: file, line: line)
-        task.cancel()
-        launchedPIDs.values.forEach { _ = kill($0, SIGKILL) }
-        guard let cleanupResult = await watchdog.wait(for: .seconds(1)) else {
+        operation.cancel()
+        guard let cleanupResult = await operation.wait(for: .seconds(1)) else {
             XCTFail("Subprocess runner did not finish after emergency cleanup", file: file, line: line)
             return nil
         }
-        await watchdog.finish()
         return cleanupResult
+    }
+
+    private func assertEventuallyReleased(
+        _ object: @escaping @Sendable () -> AnyObject?,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        while object() != nil, clock.now < deadline {
+            await Task.yield()
+        }
+        XCTAssertNil(object(), file: file, line: line)
     }
 
     private func waitForLaunch(_ recorder: PIDRecorder) async {
@@ -403,63 +414,18 @@ private final class PIDRecorder: @unchecked Sendable {
     }
 }
 
-private final class ProcessTaskWatchdog: @unchecked Sendable {
-    typealias RunnerResult = Result<ProcessResult, Error>
+private final class LifecycleSentinel: @unchecked Sendable {}
 
+private final class WeakReference<Value: AnyObject>: @unchecked Sendable {
     private let lock = NSLock()
-    private var completedResult: RunnerResult?
-    private var waiters: [UUID: CheckedContinuation<RunnerResult?, Never>] = [:]
-    private var observer: Task<Void, Never>?
+    private weak var storage: Value?
 
-    init(task: Task<ProcessResult, Error>) {
-        observer = nil
-        observer = Task { [weak self] in
-            let result = await task.result
-            self?.complete(with: result)
-        }
+    init(_ value: Value) {
+        storage = value
     }
 
-    func wait(for timeout: Duration) async -> RunnerResult? {
-        let waiterID = UUID()
-        return await withCheckedContinuation { continuation in
-            let immediate = lock.withLock { () -> RunnerResult? in
-                if let completedResult { return completedResult }
-                waiters[waiterID] = continuation
-                return nil
-            }
-            if let immediate {
-                continuation.resume(returning: immediate)
-                return
-            }
-
-            let components = timeout.components
-            let seconds = Double(components.seconds)
-                + Double(components.attoseconds) / 1_000_000_000_000_000_000
-            DispatchQueue.global().asyncAfter(deadline: .now() + max(0, seconds)) { [weak self] in
-                self?.timeOut(waiterID)
-            }
-        }
-    }
-
-    func finish() async {
-        guard let observer else { return }
-        await observer.value
-    }
-
-    private func complete(with result: RunnerResult) {
-        let continuations = lock.withLock { () -> [CheckedContinuation<RunnerResult?, Never>] in
-            guard completedResult == nil else { return [] }
-            completedResult = result
-            let continuations = Array(waiters.values)
-            waiters.removeAll()
-            return continuations
-        }
-        continuations.forEach { $0.resume(returning: result) }
-    }
-
-    private func timeOut(_ waiterID: UUID) {
-        let continuation = lock.withLock { waiters.removeValue(forKey: waiterID) }
-        continuation?.resume(returning: nil)
+    var value: Value? {
+        lock.withLock { storage }
     }
 }
 

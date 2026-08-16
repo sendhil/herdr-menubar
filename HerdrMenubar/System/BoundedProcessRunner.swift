@@ -27,6 +27,32 @@ protocol BoundedProcessRunning: Sendable {
     func run(_ invocation: ProcessInvocation) async throws -> ProcessResult
 }
 
+struct BoundedProcessOperation: Sendable {
+    typealias RunnerResult = Result<ProcessResult, Error>
+
+    let state: BoundedProcessOperationState
+
+    static func start(
+        _ operation: @escaping @Sendable () async throws -> ProcessResult
+    ) -> BoundedProcessOperation {
+        let state = BoundedProcessOperationState()
+        state.start(operation)
+        return BoundedProcessOperation(state: state)
+    }
+
+    func cancel() {
+        state.cancel()
+    }
+
+    func value() async throws -> ProcessResult {
+        try await state.value().get()
+    }
+
+    func wait(for timeout: Duration) async -> RunnerResult? {
+        await state.wait(for: timeout)
+    }
+}
+
 struct BoundedProcessRunner: BoundedProcessRunning {
     private let launchObserver: @Sendable (Int32) -> Void
 
@@ -35,6 +61,24 @@ struct BoundedProcessRunner: BoundedProcessRunning {
     }
 
     func run(_ invocation: ProcessInvocation) async throws -> ProcessResult {
+        guard !Task.isCancelled else {
+            throw BoundedProcessError.cancelled
+        }
+        let operation = start(invocation)
+        return try await withTaskCancellationHandler {
+            try await operation.value()
+        } onCancel: {
+            operation.cancel()
+        }
+    }
+
+    func start(_ invocation: ProcessInvocation) -> BoundedProcessOperation {
+        BoundedProcessOperation.start {
+            try await execute(invocation)
+        }
+    }
+
+    private func execute(_ invocation: ProcessInvocation) async throws -> ProcessResult {
         guard !Task.isCancelled else {
             throw BoundedProcessError.cancelled
         }
@@ -148,6 +192,94 @@ private enum ProcessEvent: Sendable {
         case let .stdout(_, token), let .stderr(_, token), let .exited(_, token), let .failure(_, token):
             token
         }
+    }
+}
+
+final class BoundedProcessOperationState: @unchecked Sendable {
+    typealias RunnerResult = Result<ProcessResult, Error>
+
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+    private var completedResult: RunnerResult?
+    private var valueWaiters: [CheckedContinuation<RunnerResult, Never>] = []
+    private var timedWaiters: [UUID: CheckedContinuation<RunnerResult?, Never>] = [:]
+
+    func start(
+        _ operation: @escaping @Sendable () async throws -> ProcessResult
+    ) {
+        lock.lock()
+        precondition(task == nil && completedResult == nil)
+        task = Task { [self] in
+            let result: RunnerResult
+            do {
+                result = .success(try await operation())
+            } catch {
+                result = .failure(error)
+            }
+            complete(with: result)
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        let task = lock.withLock { self.task }
+        task?.cancel()
+    }
+
+    func value() async -> RunnerResult {
+        await withCheckedContinuation { continuation in
+            let immediate = lock.withLock { () -> RunnerResult? in
+                if let completedResult { return completedResult }
+                valueWaiters.append(continuation)
+                return nil
+            }
+            immediate.map { continuation.resume(returning: $0) }
+        }
+    }
+
+    func wait(for timeout: Duration) async -> RunnerResult? {
+        let waiterID = UUID()
+        return await withCheckedContinuation { continuation in
+            let immediate = lock.withLock { () -> RunnerResult? in
+                if let completedResult { return completedResult }
+                timedWaiters[waiterID] = continuation
+                return nil
+            }
+            if let immediate {
+                continuation.resume(returning: immediate)
+                return
+            }
+
+            let components = timeout.components
+            let seconds = Double(components.seconds)
+                + Double(components.attoseconds) / 1_000_000_000_000_000_000
+            DispatchQueue.global().asyncAfter(deadline: .now() + max(0, seconds)) { [weak self] in
+                self?.timeOut(waiterID)
+            }
+        }
+    }
+
+    private func complete(with result: RunnerResult) {
+        let waiters = lock.withLock { () -> (
+            [CheckedContinuation<RunnerResult, Never>],
+            [CheckedContinuation<RunnerResult?, Never>]
+        ) in
+            guard completedResult == nil else { return ([], []) }
+            completedResult = result
+            task = nil
+            let values = valueWaiters
+            let timed = Array(timedWaiters.values)
+            valueWaiters.removeAll()
+            timedWaiters.removeAll()
+            return (values, timed)
+        }
+        waiters.0.forEach { $0.resume(returning: result) }
+        waiters.1.forEach { $0.resume(returning: result) }
+    }
+
+    private func timeOut(_ waiterID: UUID) {
+        let continuation = lock.withLock { timedWaiters.removeValue(forKey: waiterID) }
+        continuation?.resume(returning: nil)
     }
 }
 
