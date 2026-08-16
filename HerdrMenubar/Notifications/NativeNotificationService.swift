@@ -266,6 +266,7 @@ private final class NotificationResponseBroker: @unchecked Sendable {
                 enum Action {
                     case suspend
                     case resume(Target?)
+                    case terminateDuplicate(Waiter)
                 }
 
                 let action = lock.withLock { () -> Action in
@@ -285,9 +286,9 @@ private final class NotificationResponseBroker: @unchecked Sendable {
                         subscriber = Subscriber(mailbox: initialMailbox, waiter: nil)
                     }
 
-                    guard subscriber.waiter == nil else {
-                        subscribers[subscriptionID] = subscriber
-                        return .resume(nil)
+                    if let existingWaiter = subscriber.waiter {
+                        subscribers.removeValue(forKey: subscriptionID)
+                        return .terminateDuplicate(existingWaiter)
                     }
                     if !subscriber.mailbox.isEmpty {
                         let target = subscriber.mailbox.removeFirst()
@@ -299,8 +300,14 @@ private final class NotificationResponseBroker: @unchecked Sendable {
                     return .suspend
                 }
 
-                if case .resume(let target) = action {
+                switch action {
+                case .suspend:
+                    break
+                case .resume(let target):
                     continuation.resume(returning: target)
+                case .terminateDuplicate(let existingWaiter):
+                    existingWaiter.resume(returning: nil)
+                    continuation.resume(returning: nil)
                 }
             }
         } onCancel: {
