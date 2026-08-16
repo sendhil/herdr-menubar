@@ -109,7 +109,7 @@ Each client still owns exactly one socket path, long-lived subscription, short-l
 
 ### `AgentStore`
 
-The main-actor store consumes supervisor events and maintains session-indexed presentation state. Each entry contains the descriptor, connection state, and most recent authoritative menu items. A disconnected or unavailable event clears only that session's items. The store also records whether it has received its first successful `discoverySnapshot`; an empty first snapshot is the authoritative **No Herdr sessions running** state.
+The main-actor store consumes supervisor events and maintains session-indexed presentation state. Each entry contains the descriptor, connection state, and most recent authoritative menu items. A disconnected or unavailable event clears only that session's items. The store also records whether it has received its first successful `discoverySnapshot`. This snapshot reports currently present socket descriptors but does not directly delete store entries: grace-period sessions remain unavailable until the supervisor emits `removed`. An empty snapshot produces **No Herdr sessions running** only when the store has no retained grace-period entries.
 
 The store derives aggregate menu sections and the attention count. It does not scan the filesystem, own clients, parse protocol messages, or retain stale snapshots.
 
