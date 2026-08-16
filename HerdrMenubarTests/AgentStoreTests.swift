@@ -480,37 +480,93 @@ final class AgentStoreTests: XCTestCase {
 
     func testNotificationTargetIsAbandonedWhenCompletedDiscoveryOmitsSession() async {
         let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
         let notifications = RecordingNotificationService()
-        let store = makeStore(supervisor: supervisor, notificationService: notifications)
+        let focuser = RecordingWezTermFocuser(
+            blockedCalls: [1], checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator()
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            attentionCoordinator: coordinator,
+            notificationService: notifications
+        )
+        await store.start()
+
+        let precedingSelection = Task {
+            await store.select(AgentMenuItem(
+                session: defaultDescriptor, pane: pane("pre", .working)
+            ))
+        }
+        await focuser.waitForCalls(1)
         await notifications.send(NotificationSelectionTarget(
             sessionID: .named("work"), paneID: "p"
         ))
-        await store.start()
+        await focuser.waitForCancellations(1)
+        await focuser.releaseBlockedCalls()
+        await precedingSelection.value
+        await supervisor.waitForRefreshRequests(1)
+
         await supervisor.send(.discoverySnapshot([]))
         await eventually { store.transientError == "work is unavailable" }
 
         await supervisor.send(.connected(workDescriptor, snapshot([pane("p", .done)])))
-        for _ in 0..<20 { await Task.yield() }
+        await coordinator.waitForReconciliations(1)
+        await supervisor.send(.unavailable(.named("work"), "event barrier"))
+        await coordinator.waitForUnavailableCalls(1)
         let focusRequests = await supervisor.focusRequests
-        XCTAssertEqual(focusRequests, [])
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .default, paneID: "pre")
+        ])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         await store.stop()
     }
 
     func testMatchingRemovalAbandonsPendingNotificationTarget() async {
         let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
         let notifications = RecordingNotificationService()
-        let store = makeStore(supervisor: supervisor, notificationService: notifications)
+        let focuser = RecordingWezTermFocuser(
+            blockedCalls: [1], checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator()
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            attentionCoordinator: coordinator,
+            notificationService: notifications
+        )
         await store.start()
         await supervisor.send(.discoverySnapshot([workDescriptor]))
+
+        let precedingSelection = Task {
+            await store.select(AgentMenuItem(
+                session: defaultDescriptor, pane: pane("pre", .working)
+            ))
+        }
+        await focuser.waitForCalls(1)
         await notifications.send(NotificationSelectionTarget(
             sessionID: .named("work"), paneID: "p"
         ))
+        await focuser.waitForCancellations(1)
+        await focuser.releaseBlockedCalls()
+        await precedingSelection.value
+        await supervisor.waitForRefreshRequests(1)
+
         await supervisor.send(.removed(.named("work")))
         await supervisor.send(.connected(workDescriptor, snapshot([pane("p", .done)])))
-        for _ in 0..<50 { await Task.yield() }
+        await coordinator.waitForReconciliations(1)
+        await supervisor.send(.unavailable(.named("work"), "event barrier"))
+        await coordinator.waitForUnavailableCalls(1)
 
         let focusRequests = await supervisor.focusRequests
-        XCTAssertEqual(focusRequests, [])
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .default, paneID: "pre")
+        ])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         await store.stop()
     }
 
