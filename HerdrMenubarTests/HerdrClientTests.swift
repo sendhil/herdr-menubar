@@ -165,6 +165,57 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+    func testClientWindowTitleTransportFailureInvalidatesLiveSession() async {
+        let url = URL(fileURLWithPath: "/tmp/title-transport-session.sock")
+        let factory = FakeHerdrConnectionFactory()
+        let client = HerdrClient(
+            socketURL: url,
+            connectionFactory: factory,
+            backoff: BackoffPolicy(delays: [.seconds(15)], jitter: { 0 }),
+            sleeper: ControlledSleeper()
+        )
+        let events = await client.events()
+        await client.start()
+        let subscription = await completeBootstrap(
+            factory: factory,
+            discovered: ["pane"],
+            authoritative: ["pane"]
+        )
+        _ = await events.next()
+
+        let task = Task { try await client.setClientWindowTitle("marker") }
+        let connection = await factory.connection(at: 5)
+        let request = await connection.nextSent()
+        XCTAssertEqual(request.method, "client.window_title.set")
+        await connection.fail(TransportError.receiveFailed("title socket failed"))
+
+        do {
+            _ = try await task.value
+            await client.stop()
+            return XCTFail("Expected title transport failure")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .receiveFailed("title socket failed"))
+        } catch {
+            await client.stop()
+            return XCTFail("Expected TransportError, got \(error)")
+        }
+
+        guard await subscription.isClosed else {
+            await client.stop()
+            return XCTFail("A title transport failure must invalidate the live subscription")
+        }
+        guard case .disconnected = await events.next() else {
+            await client.stop()
+            return XCTFail("Expected title transport failure to publish disconnection")
+        }
+        let titleConnectionClosed = await connection.isClosed
+        XCTAssertTrue(titleConnectionClosed)
+        let connectedSocketURLs = await factory.connectedSocketURLs
+        XCTAssertEqual(connectedSocketURLs.count, 6)
+        XCTAssertEqual(Set(connectedSocketURLs), [url])
+        await client.stop()
+    }
+
     func testBootstrapReconcilesPaneAddedBetweenInitialAndPostSubscriptionLists() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
