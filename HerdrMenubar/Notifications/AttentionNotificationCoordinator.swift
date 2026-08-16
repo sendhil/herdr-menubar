@@ -14,7 +14,16 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
         items: [AgentMenuItem],
         policy: NotificationDeliveryPolicy
     ) async {
-        let current = Dictionary(uniqueKeysWithValues: items.map { ($0.paneID, $0.status) })
+        var canonicalByPaneID: [String: AgentMenuItem] = [:]
+        // The last occurrence in an authoritative snapshot wins for a duplicate pane ID.
+        for item in items {
+            canonicalByPaneID[item.paneID] = item
+        }
+        let canonicalItems = canonicalByPaneID.values.sorted(by: AgentMenuItem.labelOrder)
+        var current: [String: AgentStatus] = [:]
+        for item in canonicalItems {
+            current[item.paneID] = item.status
+        }
         guard baselinedSessions.contains(session.id) else {
             baselinedSessions.insert(session.id)
             statuses[session.id] = current
@@ -25,9 +34,10 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
         statuses[session.id] = current
         guard policy.notificationsEnabled else { return }
 
-        for item in items.sorted(by: AgentMenuItem.labelOrder) {
+        for item in canonicalItems {
             guard item.status == .blocked || item.status == .done else { continue }
             guard previous[item.paneID] != item.status else { continue }
+            guard !Task.isCancelled else { return }
             do {
                 try await service.deliver(
                     AttentionNotificationEvent(
@@ -41,7 +51,10 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
                     ),
                     sound: policy.soundEnabled
                 )
+            } catch is CancellationError {
+                return
             } catch {
+                guard !Task.isCancelled else { return }
                 AppLog.systemActions.error(
                     "Notification delivery failed: \(error.localizedDescription, privacy: .private)"
                 )

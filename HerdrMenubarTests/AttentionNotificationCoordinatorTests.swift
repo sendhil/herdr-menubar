@@ -137,6 +137,119 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(deliveries.map(\.event.status), [.blocked])
     }
 
+    func testDuplicatePaneIDsUseLastAuthoritativeOccurrenceForHistoryAndDeliverAtMostOnce() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(service: service)
+        let session = descriptor("work")
+        let policy = enabledPolicy()
+
+        await coordinator.reconcile(
+            session: session,
+            items: [
+                item(session, "p", .blocked, title: "Stale baseline"),
+                item(session, "p", .working, title: "Canonical baseline")
+            ],
+            policy: policy
+        )
+        await coordinator.reconcile(
+            session: session,
+            items: [
+                item(session, "p", .blocked, title: "Stale update"),
+                item(session, "p", .done, title: "Canonical update")
+            ],
+            policy: policy
+        )
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "p", .done, title: "Later snapshot")],
+            policy: policy
+        )
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.target.paneID), ["p"])
+        XCTAssertEqual(deliveries.map(\.event.status), [.done])
+        XCTAssertEqual(deliveries.map(\.event.visibleLabel), ["Canonical update · Pi"])
+    }
+
+    func testCancellationDuringFirstDeliveryReturnsWithoutAttemptingRemainingDeliveries() async {
+        let service = ControlledNotificationService(firstDeliveryBehavior: .suspendUntilCancelled)
+        let coordinator = AttentionNotificationCoordinator(service: service)
+        let session = descriptor("work")
+        let policy = enabledPolicy()
+
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "a", .working), item(session, "b", .working)],
+            policy: policy
+        )
+        let reconcileTask = Task {
+            await coordinator.reconcile(
+                session: session,
+                items: [item(session, "a", .blocked), item(session, "b", .done)],
+                policy: policy
+            )
+        }
+
+        await service.waitForFirstAttempt()
+        reconcileTask.cancel()
+        await reconcileTask.value
+
+        let attempts = await service.attemptedPaneIDs
+        XCTAssertEqual(attempts, ["a"])
+    }
+
+    func testShuffledAttentionItemsDeliverInLabelOrderWithPaneIDTieBreaker() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(service: service)
+        let session = descriptor("work")
+        let policy = enabledPolicy()
+
+        await coordinator.reconcile(
+            session: session,
+            items: [
+                item(session, "z", .working, title: "Zulu"),
+                item(session, "b", .working, title: "Alpha"),
+                item(session, "a", .working, title: "alpha")
+            ],
+            policy: policy
+        )
+        await coordinator.reconcile(
+            session: session,
+            items: [
+                item(session, "z", .blocked, title: "Zulu"),
+                item(session, "b", .done, title: "Alpha"),
+                item(session, "a", .blocked, title: "alpha")
+            ],
+            policy: policy
+        )
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.target.paneID), ["a", "b", "z"])
+    }
+
+    func testGenuineDeliveryErrorIsIsolatedAndLaterDeliveryStillSucceeds() async {
+        let service = ControlledNotificationService(firstDeliveryBehavior: .throwSchedulingError)
+        let coordinator = AttentionNotificationCoordinator(service: service)
+        let session = descriptor("work")
+        let policy = enabledPolicy()
+
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "a", .working), item(session, "b", .working)],
+            policy: policy
+        )
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "b", .done), item(session, "a", .blocked)],
+            policy: policy
+        )
+
+        let attempts = await service.attemptedPaneIDs
+        let delivered = await service.deliveredPaneIDs
+        XCTAssertEqual(attempts, ["a", "b"])
+        XCTAssertEqual(delivered, ["b"])
+    }
+
     func testDuplicatePaneIDsAreIndependentAcrossSessions() async {
         let service = RecordingNotificationService()
         let coordinator = AttentionNotificationCoordinator(service: service)
@@ -280,6 +393,69 @@ private actor RecordingNotificationService: NativeNotificationServing {
     func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
         deliveries.append(Delivery(event: event, sound: sound))
     }
+}
+
+private actor ControlledNotificationService: NativeNotificationServing {
+    enum FirstDeliveryBehavior: Sendable {
+        case suspendUntilCancelled
+        case throwSchedulingError
+    }
+
+    private let firstDeliveryBehavior: FirstDeliveryBehavior
+    private let firstAttemptSignal = TestSignal()
+    private(set) var attemptedPaneIDs: [String] = []
+    private(set) var deliveredPaneIDs: [String] = []
+
+    init(firstDeliveryBehavior: FirstDeliveryBehavior) {
+        self.firstDeliveryBehavior = firstDeliveryBehavior
+    }
+
+    func responses() async -> AsyncStream<NotificationSelectionTarget> {
+        AsyncStream { $0.finish() }
+    }
+
+    func requestAuthorization() async throws -> Bool { true }
+
+    func settings() async -> NotificationSystemSettings { .authorized }
+
+    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
+        attemptedPaneIDs.append(event.target.paneID)
+        if attemptedPaneIDs.count == 1 {
+            await firstAttemptSignal.signal()
+            switch firstDeliveryBehavior {
+            case .suspendUntilCancelled:
+                try await Task.sleep(for: .seconds(30))
+            case .throwSchedulingError:
+                throw TestDeliveryError.scheduling
+            }
+        }
+        deliveredPaneIDs.append(event.target.paneID)
+    }
+
+    func waitForFirstAttempt() async {
+        await firstAttemptSignal.wait()
+    }
+}
+
+private actor TestSignal {
+    private var isSignaled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isSignaled else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func signal() {
+        isSignaled = true
+        let ownedWaiters = waiters
+        waiters.removeAll()
+        for waiter in ownedWaiters { waiter.resume() }
+    }
+}
+
+private enum TestDeliveryError: Error {
+    case scheduling
 }
 
 private func descriptor(_ name: String) -> SessionDescriptor {
