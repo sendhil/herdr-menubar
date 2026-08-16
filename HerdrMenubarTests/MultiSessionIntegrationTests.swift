@@ -26,8 +26,13 @@ final class MultiSessionIntegrationTests: XCTestCase {
             discoveryInterval: .seconds(30)
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
+        let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
         let store = await MainActor.run {
-            AgentStore(supervisor: supervisor, terminalActivator: activator)
+            AgentStore(
+                supervisor: supervisor,
+                terminalActivator: activator,
+                wezTermFocuser: focuser
+            )
         }
         await store.start()
 
@@ -92,8 +97,13 @@ final class MultiSessionIntegrationTests: XCTestCase {
             removalGracePeriod: .seconds(10)
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
+        let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
         let store = await MainActor.run {
-            AgentStore(supervisor: supervisor, terminalActivator: activator)
+            AgentStore(
+                supervisor: supervisor,
+                terminalActivator: activator,
+                wezTermFocuser: focuser
+            )
         }
         await store.start()
         await eventually {
@@ -157,6 +167,20 @@ private final class IntegrationRecordingActivator: TerminalActivating {
 
     func activate(bundleIdentifier: String) async throws {
         activationCount += 1
+    }
+}
+
+@MainActor
+private final class IntegrationRecordingWezTermFocuser: WezTermSessionFocusing {
+    private(set) var focusedSessionIDs: [SessionID] = []
+    private(set) var forgottenSessionIDs: [SessionID] = []
+
+    func focusAttachedClient(sessionID: SessionID) async throws {
+        focusedSessionIDs.append(sessionID)
+    }
+
+    func forget(sessionID: SessionID) {
+        forgottenSessionIDs.append(sessionID)
     }
 }
 

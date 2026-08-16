@@ -29,10 +29,15 @@ struct HerdrMenubarApp: App {
     private let installedTerminals: [TerminalApp]
 
     init() {
-        let discovery = SessionDiscovery()
         let supervisor = SessionSupervisor(
-            discovery: discovery,
+            discovery: SessionDiscovery(),
             clientFactory: LiveSessionClientFactory()
+        )
+        let processRunner = BoundedProcessRunner()
+        let wezTermCLI = LiveWezTermCLI(runner: processRunner)
+        let wezTermFocuser = LiveWezTermFocusAdapter(
+            supervisor: supervisor,
+            cli: wezTermCLI
         )
         let preferences = Preferences()
         _preferences = State(initialValue: preferences)
@@ -40,6 +45,7 @@ struct HerdrMenubarApp: App {
         _store = State(initialValue: AgentStore(
             supervisor: supervisor,
             terminalActivator: TerminalActivationService(),
+            wezTermFocuser: wezTermFocuser,
             preferences: preferences
         ))
         installedTerminals = TerminalCatalog().installedTerminals()
