@@ -59,7 +59,7 @@ The window explains that both shortcuts work globally and that the latest-notifi
 
 Each recorder initially displays no assignment. Recording a valid combination saves and activates it immediately. Recording a replacement unregisters the old listener before the new listener becomes active. Clearing a recorder removes the persisted assignment and unregisters it immediately.
 
-A shortcut that conflicts with the other Herdr shortcut or with a conflict the recorder can identify is rejected without replacing the prior valid assignment. The recorder presents the package's standard validation explanation. If macOS rejects global registration because another application owns the combination, an assignment controller detects that the saved candidate is inactive, restores the prior valid assignment, and presents concise inline feedback even when the owning application cannot be named.
+A shortcut that conflicts with the other Herdr shortcut, a currently enabled system shortcut, or an application menu item is rejected without replacing the prior valid assignment. The settings window presents concise inline feedback. If macOS rejects global registration because another application owns the combination, an assignment controller detects that the saved candidate is inactive, restores the prior valid assignment, and reports that the shortcut is unavailable even when the owning application cannot be named.
 
 ### Toggle Herdr Menu
 
@@ -90,20 +90,22 @@ If the owning session is temporarily unavailable, the target is held through the
 
 ## Selected Approach
 
-### AppKit status item plus `KeyboardShortcuts`
+### AppKit status item, `KeyboardShortcuts` registration, and a native recorder
 
-Use an AppKit `NSStatusItem` and `NSMenu` for the menu shell, and the open-source `KeyboardShortcuts` Swift package for global registration and recorder UI. The package is added as an exact Swift Package dependency and exposes only the two named application shortcuts.
+Use an AppKit `NSStatusItem` and `NSMenu` for the menu shell, the open-source `KeyboardShortcuts` Swift package for global registration and persistence, and a small in-repository AppKit recorder control. The package is added as an exact Swift Package dependency and exposes only the two named application shortcuts.
 
 This approach is selected because:
 
 - AppKit owns supported programmatic menu presentation and cancellation.
 - Native `NSMenu` preserves menu behavior without Accessibility automation.
-- `KeyboardShortcuts` provides a purpose-built Swift recorder, persistence, registration, conflict handling, and lifecycle behavior without permission prompts.
+- `KeyboardShortcuts` provides Swift shortcut values, persistence, system-conflict detection, Carbon registration, and event lifecycle behavior without permission prompts.
 - The package supports shortcuts while an `NSMenu` is tracking, which is required for toggle-to-close.
+- The local recorder avoids a confirmed `KeyboardShortcuts.Recorder` failure on macOS 26/27 while retaining the package's smaller, working registration surface.
 
 The alternatives were rejected:
 
-- **AppKit status item plus custom Carbon registrar and recorder:** viable, but it recreates key-code translation, modifier display, persistence, conflict behavior, and lifecycle code already provided by a focused dependency.
+- **Custom Carbon registrar as well as a custom recorder:** viable, but it recreates registration, persistence, and event lifecycle code still provided correctly by the focused dependency.
+- **A fork containing upstream recorder patches:** smaller locally, but it would make this single-user app depend on an unreviewed third-party fork for a control simple enough to own directly.
 - **Keep `MenuBarExtra` and simulate a click:** SwiftUI exposes no supported programmatic open/close API for the current menu-bar scene. Mouse-coordinate or Accessibility automation would be fragile and would introduce an inappropriate permission requirement.
 
 ## Architecture
@@ -171,7 +173,7 @@ The controller defines two stable `KeyboardShortcuts.Name` values with no defaul
 
 The two event-consumer tasks are installed once per runtime generation even when no shortcut is assigned. The package registers and unregisters the underlying Carbon hotkey as the saved value changes. App activation does not duplicate consumers; controller shutdown cancels and awaits both streams. Callback arrival during shutdown or before composition completes is ignored through the runtime lifecycle token.
 
-`ShortcutAssignmentController` wraps the package's `getShortcut`, `setShortcut`, `isEnabled(for:)`, validation, and change notifications behind a testable registrar seam. It remembers the last known-good value for each name. Known system/menu conflicts and duplication between the two Herdr shortcuts are rejected by recorder validation before saving. After a non-empty candidate is saved, the controller checks `isEnabled(for:)`, which verifies that a handler-backed Carbon registration exists. If registration failed, it immediately restores the remembered prior value and publishes an inline unavailable message. If the prior value is empty, rollback clears the failed candidate. Clearing intentionally skips this enabled check.
+`ShortcutAssignmentController` wraps the package's `getShortcut`, `setShortcut`, `isEnabled(for:)`, `Shortcut.isTakenBySystem`, and change notifications behind a testable registrar seam. It remembers the last known-good value for each name. Known system conflicts, application-main-menu conflicts, and duplication between the two Herdr shortcuts are rejected by controller validation before saving. After a non-empty candidate is saved, the controller checks `isEnabled(for:)`, which verifies that a handler-backed Carbon registration exists. If registration failed, it immediately restores the remembered prior value and publishes an inline unavailable message. If the prior value is empty, rollback clears the failed candidate. Clearing intentionally skips this enabled check.
 
 At startup, a persisted assignment that cannot currently register remains persisted and visible but is reported as unavailable; there is no fabricated prior value to restore. Application activation makes one bounded re-registration attempt and clears the error only after `isEnabled(for:)` succeeds. The package owns persisted key code and modifier values in `UserDefaults`. Herdr Menubar does not persist human-readable keystrokes or duplicate the package's storage.
 
@@ -179,7 +181,9 @@ At startup, a persisted assignment that cannot currently register remains persis
 
 `KeyboardShortcutSettingsWindowController` retains one `NSWindow` containing a SwiftUI `KeyboardShortcutSettingsView`. Repeated menu actions bring the existing window forward rather than create duplicates. The window uses standard title-bar closing, is released only with the application controller, and does not change the app's agent/menu-bar activation policy.
 
-The SwiftUI view uses the package's recorder controls for the two stable names. A small validation layer prevents the two Herdr actions from retaining the same combination and preserves the prior valid assignment when a new recording is rejected. Recorder validation uses the package's standard explanatory alert; post-save Carbon registration failures appear as inline status in the window. The recorders expose explicit clear controls and accessible labels.
+The SwiftUI view uses `NativeShortcutRecorder`, an `NSViewRepresentable` around a small custom `NSControl`, for each stable name. Clicking the control makes it first responder; its `keyDown(with:)` converts the local key event with the package's public `KeyboardShortcuts.Shortcut(event:)` initializer. Escape cancels recording without mutation, Delete or Backspace clears, and a valid key combination is passed to `ShortcutAssignmentController`. The control is not a text field, installs no global or local event monitor, and cannot insert typed characters into the window.
+
+The recorder displays the package shortcut's public description, has an explicit SwiftUI Clear button, and exposes an accessibility label and current value. The controller rejects a bare ordinary character, system conflicts, main-menu conflicts, and duplication between the two Herdr actions before saving. Function keys may be recorded without modifiers; ordinary keys require at least Command, Control, or Option. Validation and post-save Carbon failures appear as inline status while preserving the prior valid assignment.
 
 ### Latest notification target
 
@@ -242,7 +246,7 @@ The latest target is empty at every process launch even when Notification Center
 - A target held during reconnection does not produce an immediate error; permanent removal uses the existing session-qualified transient error shown on the next menu open.
 - A stale pane, Herdr focus failure, partial WezTerm-control failure, terminal activation failure, and refresh behavior remain exactly as defined by the existing selection path.
 - No focus fallback, tab creation, or session substitution occurs.
-- A recorder-detected shortcut conflict leaves the previous valid assignment active and uses the package's standard explanation.
+- A recorder-detected shortcut conflict leaves the previous valid assignment active and shows an inline explanation.
 - If macOS refuses a newly recorded global registration, post-save verification rolls back to the prior valid assignment and displays a settings-window error. A persisted startup assignment that is currently unavailable remains visible and is retried on application activation.
 - Dynamic session names, pane IDs, labels, notification targets, shortcut event details, and underlying system errors remain private in unified logging.
 - Persisted shortcut data contains only the package's key code and modifier representation. Notification targets are never persisted.
@@ -259,6 +263,8 @@ The latest target is empty at every process launch even when Notification Center
 - A post-save `isEnabled(for:)` failure restores the prior valid assignment and exposes concise inline help.
 - A failed first assignment rolls back to unassigned.
 - A persisted startup assignment that cannot register remains visible, reports unavailable, and retries without duplicating consumers on application activation.
+- The native recorder accepts first responder on click, captures key events without a field editor, cancels on Escape, clears on Delete and the explicit Clear button, and never inserts text.
+- Bare ordinary keys, system conflicts, application-menu conflicts, and duplication are rejected without replacing the prior assignment; unmodified function keys are accepted.
 - Repeated app activation and controller refresh do not duplicate callbacks.
 - Controller shutdown removes callbacks and ignores late events.
 
@@ -320,7 +326,9 @@ SSH transport receives its own unit, tunnel, host-key, reconnect-confirmation, m
 
 ## Dependency and Compatibility
 
-Add [`sindresorhus/KeyboardShortcuts`](https://github.com/sindresorhus/KeyboardShortcuts) as an exact Swift Package dependency at the reviewed release (3.0.1 at design time). Commit `Package.resolved` or the Xcode project's equivalent pin so builds are reproducible. The dependency is used only for recording, persistence, conflict reporting, and registration; it does not own menu, notification, session, or selection state.
+Add [`sindresorhus/KeyboardShortcuts`](https://github.com/sindresorhus/KeyboardShortcuts) as an exact Swift Package dependency at the reviewed release (3.0.1 at design time). Commit `Package.resolved` or the Xcode project's equivalent pin so builds are reproducible. The dependency is used only for shortcut value conversion/display, persistence, system-conflict detection, registration, and event delivery; it does not own recorder UI, menu, notification, session, or selection state.
+
+Do not instantiate `KeyboardShortcuts.Recorder` or `RecorderCocoa`. Upstream issue [#241](https://github.com/sindresorhus/KeyboardShortcuts/issues/241) documents three recorder defects verified against 3.0.1 on macOS 26/27, including lost event-monitor ownership, editing-session teardown, and a consumed clear-button mouse-up. Herdr Menubar targets macOS 26 and therefore owns the narrow first-responder recorder described above instead of pinning an unreviewed fork.
 
 The feature targets the project's existing macOS deployment and Swift versions. Backward compatibility with prior internal `MenuBarExtra` composition is not required because this is a single-user application, but visible menu behavior and saved non-shortcut preferences must migrate unchanged.
 
