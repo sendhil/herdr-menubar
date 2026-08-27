@@ -191,7 +191,7 @@ The SwiftUI view uses the package's recorder controls for the two stable names. 
 
 `NativeNotificationServing.deliver` returns an explicit `NotificationDeliveryResult`: `.accepted` only after `UserNotificationCenterBacking.add` completes, or `.suppressed` when current authorization or alert settings prevent submission. Thrown scheduling failures remain failures. The coordinator records only `.accepted`.
 
-`AttentionNotificationCoordinator` receives the target store behind a narrow recording protocol. Before its first delivery suspension for a reconciliation, it synchronously creates the complete ordered candidate-event list and assigns a monotonic ordinal to every candidate. This prevents actor reentrancy from changing logical source order. After each delivery returns `.accepted`, the coordinator asks the store to record the target with its ordinal. The store's monotonic comparison prevents an older slow delivery completion from overwriting a newer accepted event. A cancellation observed after `.accepted` does not skip that record. `.suppressed` and thrown delivery never advance the store's accepted ordinal.
+`AttentionNotificationCoordinator` receives the target store behind a narrow recording protocol. It synchronously computes each reconciliation's ordered candidate-event list before its first delivery suspension, but assigns a monotonic ordinal immediately before submitting each individual event to `deliver`. The ordinal therefore follows actual submission order even when another reconciliation enters the actor while an earlier delivery is suspended. After delivery returns `.accepted`, the coordinator asks the store to record the target with its ordinal. The store's monotonic comparison prevents a slow older submission from overwriting a later-submitted accepted event. A cancellation observed after `.accepted` does not skip that record. `.suppressed` and thrown delivery never advance the store's accepted ordinal.
 
 The shortcut controller treats the target as opaque. It neither inspects `SessionID` nor caches a menu row. This keeps the shortcut compatible with a future host-qualified remote target.
 
@@ -228,7 +228,7 @@ The latest target is empty at every process launch even when Notification Center
 
 ### Races
 
-- **Delivery versus shortcut press:** a press reads either the prior complete target or the newly recorded complete target; no partial state exists. A gated older completion cannot overwrite a logically newer accepted ordinal.
+- **Delivery versus shortcut press:** a press reads either the prior complete target or the newly recorded complete target; no partial state exists. A gated older submission cannot overwrite a later-submitted accepted ordinal, while an event submitted after that gate resumes receives a new higher ordinal.
 - **Notification click versus shortcut press:** both enter the existing selection generation; the later accepted selection wins.
 - **Menu row versus shortcut press:** the same global latest-selection-wins rule applies.
 - **Reconnect versus press:** the store retains one exact pending target through grace and never falls back.
@@ -285,6 +285,7 @@ The menu-presentation builder and status-item driver are protocol-backed so thes
 - `.accepted` is returned only after the backend add succeeds; disabled delivery, authorization rejection, disabled system alerts, `.suppressed`, service failure, baseline reconciliation, and repeated attention state do not change the target.
 - A newer successful delivery atomically replaces the older target.
 - An older gated delivery that completes after a newer accepted event cannot overwrite the newer ordinal.
+- In the three-event overlap `a1` suspended, `b1` submitted and accepted, then `a1` accepted and `a2` submitted, `a2` receives the highest ordinal and becomes the latest target; neither `a1` nor completion timing can restore an older submission.
 - Multiple sessions with duplicate pane IDs remain distinct through the composite target.
 - Repeated shortcut presses reuse the same target.
 - No current-run target performs no store operation and publishes no error.
