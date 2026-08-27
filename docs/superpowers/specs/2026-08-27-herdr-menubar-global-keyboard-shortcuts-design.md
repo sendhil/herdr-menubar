@@ -59,7 +59,7 @@ The window explains that both shortcuts work globally and that the latest-notifi
 
 Each recorder initially displays no assignment. Recording a valid combination saves and activates it immediately. Recording a replacement unregisters the old listener before the new listener becomes active. Clearing a recorder removes the persisted assignment and unregisters it immediately.
 
-A shortcut that conflicts with the other Herdr shortcut or with a conflict the recorder can identify is rejected without replacing the prior valid assignment. The UI presents concise inline conflict feedback. Shortcuts unavailable because another application already owns the combination may be rejected by macOS even when that application cannot be named.
+A shortcut that conflicts with the other Herdr shortcut or with a conflict the recorder can identify is rejected without replacing the prior valid assignment. The recorder presents the package's standard validation explanation. If macOS rejects global registration because another application owns the combination, an assignment controller detects that the saved candidate is inactive, restores the prior valid assignment, and presents concise inline feedback even when the owning application cannot be named.
 
 ### Toggle Herdr Menu
 
@@ -75,7 +75,7 @@ The opened menu is the same native menu shown by clicking the menu-bar item. Key
 
 ### Focus Latest Notification
 
-After macOS accepts delivery of a Herdr notification, its exact `NotificationSelectionTarget` becomes the in-memory latest target. A later successfully delivered notification replaces it. Delivery failure, disabled notifications, denied authorization, initial baselines, and suppressed transition events do not update the target.
+After macOS accepts delivery of a Herdr notification request, its exact `NotificationSelectionTarget` becomes the in-memory latest target. A later logically newer accepted notification replaces it. Delivery failure, disabled notifications, denied authorization, disabled system alerts, initial baselines, and suppressed transition events do not update the target.
 
 Pressing the configured shortcut routes that target through the same `AgentStore` selection entry point used by a notification click:
 
@@ -110,30 +110,33 @@ The alternatives were rejected:
 
 ### Application composition
 
-The SwiftUI `App` remains the composition root and continues to install `HerdrAppDelegate`. Instead of declaring a `MenuBarExtra`, it retains three main-actor application-lifetime controllers:
+`ApplicationRuntime` becomes the explicit `@MainActor` composition and lifecycle owner. `HerdrAppDelegate` constructs and strongly retains exactly one runtime. The SwiftUI `App` installs that delegate through `NSApplicationDelegateAdaptor` and supplies an inert `Settings { EmptyView() }` scene solely to satisfy the `App` scene contract; it no longer owns startup work through a view `.task`.
+
+The runtime retains three application-lifetime controllers:
 
 1. `StatusItemController` owns the `NSStatusItem`, `NSMenu`, menu delegate state, and native menu actions.
 2. `GlobalShortcutController` binds the two named shortcuts to injected actions.
 3. `KeyboardShortcutSettingsWindowController` owns one reusable settings window hosting the SwiftUI recorder view.
 
-`AgentStore`, `Preferences`, `NotificationSettingsController`, `LoginItemService`, and the installed-terminal catalog remain single shared instances. The app delegate's stop barrier remains authoritative during termination.
+`AgentStore`, `Preferences`, `NotificationSettingsController`, `LoginItemService`, and the installed-terminal catalog remain single shared instances owned by the runtime. The app delegate's runtime stop barrier is authoritative during termination.
 
-Startup ordering is:
+`applicationDidFinishLaunching` calls the runtime's idempotent `start()` method. Startup ordering is:
 
 1. Construct the existing monitoring and notification graph.
 2. Construct the latest-target store and inject it into notification coordination.
 3. Install the status item and menu.
 4. Register any persisted shortcuts.
 5. Install application delegate references and refresh settings.
-6. Start `AgentStore` synchronization outside tests.
+6. Arm runtime-owned model observation.
+7. Start `AgentStore` synchronization outside tests.
 
-Shutdown first disables shortcut callbacks, closes menu tracking and the settings window, and then awaits the existing store shutdown. No shortcut callback may start selection or reopen UI after shutdown begins.
+`applicationDidBecomeActive` asks the runtime to refresh login, notification, and unavailable-shortcut state. `applicationShouldTerminate` returns `.terminateLater`, starts exactly one runtime stop, and replies only after it completes. Shutdown first invalidates the runtime lifecycle token, cancels and awaits both shortcut event consumers, closes menu tracking and the settings window, cancels model observation, resets the latest target, and then awaits the existing store shutdown. No shortcut callback may start selection or reopen UI after shutdown begins. Repeated start and stop calls are idempotent, and a start cannot overtake an in-flight stop.
 
 ### `StatusItemController`
 
 `StatusItemController` is `@MainActor` and owns exactly one variable-length `NSStatusItem`. It derives button appearance and accessibility text from the existing `MenuBarIconPresentation` and `MenuBarIcon.accessibilityValue` logic so disconnected, clear, and attention-count states retain their meaning.
 
-The controller rebuilds or updates its `NSMenu` from the same observable state currently consumed by `StatusMenu`:
+The controller rebuilds or updates its `NSMenu` from an immutable presentation snapshot derived from the same observable state currently consumed by `StatusMenu`:
 
 - attention sections and session-qualified agent rows;
 - working sections;
@@ -148,10 +151,12 @@ The controller rebuilds or updates its `NSMenu` from the same observable state c
 
 Native menu-item represented objects or stable action tokens carry exact session-and-pane identity. Dynamic session names and pane labels are presentation only and are never used for routing.
 
+`ApplicationRuntime` installs a re-arming `withObservationTracking` adapter on the main actor. Every observation pass reads all store and settings fields needed for the icon and menu into one immutable snapshot, applies status-item icon and accessibility changes immediately, and caches the newest menu snapshot. When the menu is not tracking, the controller may rebuild immediately. While it is tracking, structural mutation is deferred and only a dirty flag is set. `menuWillOpen` applies the newest snapshot before display; `menuDidClose` applies any snapshot that became dirty while tracking. Shutdown invalidates observation ownership so a queued re-arm cannot retain or mutate a stopped runtime.
+
 The menu controller implements `NSMenuDelegate` and records open state only from `menuWillOpen` and `menuDidClose`. Its shortcut action runs on the main actor:
 
 - if open, call `cancelTracking()` on the owned menu;
-- if closed, invoke the owned status-item button's normal menu action.
+- if closed, invoke `statusItem.button?.performClick(nil)` so the owned button performs its normal attached-menu action.
 
 It does not infer state from key presses or mouse events. AppKit delegate callbacks remain the source of truth when the user opens, dismisses, or switches away from the menu.
 
@@ -159,30 +164,34 @@ The existing SwiftUI `StatusMenu` shell is removed after parity tests cover all 
 
 ### `GlobalShortcutController`
 
-The controller defines two stable `KeyboardShortcuts.Name` values with no default shortcuts. It registers one callback per currently assigned name and injects closures rather than retaining business logic:
+The controller defines two stable `KeyboardShortcuts.Name` values with no default shortcuts. It owns one package `events(for:)` consumer per name, filters for key-up events, and injects closures rather than retaining business logic:
 
 - `toggleMenu` calls `StatusItemController.toggleMenu()` on the main actor.
 - `focusLatestNotification` asks the target store for its current value and passes it to the store's target-selection entry point.
 
-Registration is idempotent. Reassignment removes the previous callback before installing the replacement, app activation does not duplicate handlers, and controller shutdown removes all handlers. Callback arrival during shutdown or before composition completes is ignored through a lifecycle token.
+The two event-consumer tasks are installed once per runtime generation even when no shortcut is assigned. The package registers and unregisters the underlying Carbon hotkey as the saved value changes. App activation does not duplicate consumers; controller shutdown cancels and awaits both streams. Callback arrival during shutdown or before composition completes is ignored through the runtime lifecycle token.
 
-The package owns persisted key code and modifier values in `UserDefaults`. Herdr Menubar does not persist human-readable keystrokes or duplicate the package's storage.
+`ShortcutAssignmentController` wraps the package's `getShortcut`, `setShortcut`, `isEnabled(for:)`, validation, and change notifications behind a testable registrar seam. It remembers the last known-good value for each name. Known system/menu conflicts and duplication between the two Herdr shortcuts are rejected by recorder validation before saving. After a non-empty candidate is saved, the controller checks `isEnabled(for:)`, which verifies that a handler-backed Carbon registration exists. If registration failed, it immediately restores the remembered prior value and publishes an inline unavailable message. If the prior value is empty, rollback clears the failed candidate. Clearing intentionally skips this enabled check.
+
+At startup, a persisted assignment that cannot currently register remains persisted and visible but is reported as unavailable; there is no fabricated prior value to restore. Application activation makes one bounded re-registration attempt and clears the error only after `isEnabled(for:)` succeeds. The package owns persisted key code and modifier values in `UserDefaults`. Herdr Menubar does not persist human-readable keystrokes or duplicate the package's storage.
 
 ### Settings window
 
 `KeyboardShortcutSettingsWindowController` retains one `NSWindow` containing a SwiftUI `KeyboardShortcutSettingsView`. Repeated menu actions bring the existing window forward rather than create duplicates. The window uses standard title-bar closing, is released only with the application controller, and does not change the app's agent/menu-bar activation policy.
 
-The SwiftUI view uses the package's recorder controls for the two stable names. A small validation layer prevents the two Herdr actions from retaining the same combination and preserves the prior valid assignment when a new recording is rejected. The recorders expose explicit clear controls and accessible labels.
+The SwiftUI view uses the package's recorder controls for the two stable names. A small validation layer prevents the two Herdr actions from retaining the same combination and preserves the prior valid assignment when a new recording is rejected. Recorder validation uses the package's standard explanatory alert; post-save Carbon registration failures appear as inline status in the window. The recorders expose explicit clear controls and accessible labels.
 
 ### Latest notification target
 
-`LatestNotificationTargetStore` owns zero or one `NotificationSelectionTarget`. It is in-memory, concurrency-safe, and has only three operations:
+`LatestNotificationTargetStore` owns zero or one logical delivery ordinal and `NotificationSelectionTarget`. It is in-memory, concurrency-safe, and has only three operations:
 
-- record a target after successful notification delivery;
+- conditionally record an accepted target and ordinal when the ordinal is newer than the current accepted ordinal;
 - read the current target for a shortcut press; and
 - reset during application teardown.
 
-`AttentionNotificationCoordinator` receives this store behind a narrow recording protocol. After `NativeNotificationService.deliver` returns successfully, the coordinator records that event's target before processing another delivery. The coordinator actor's existing serialization defines newest-delivery order. A cancellation observed after successful delivery does not skip recording the accepted target.
+`NativeNotificationServing.deliver` returns an explicit `NotificationDeliveryResult`: `.accepted` only after `UserNotificationCenterBacking.add` completes, or `.suppressed` when current authorization or alert settings prevent submission. Thrown scheduling failures remain failures. The coordinator records only `.accepted`.
+
+`AttentionNotificationCoordinator` receives the target store behind a narrow recording protocol. Before its first delivery suspension for a reconciliation, it synchronously creates the complete ordered candidate-event list and assigns a monotonic ordinal to every candidate. This prevents actor reentrancy from changing logical source order. After each delivery returns `.accepted`, the coordinator asks the store to record the target with its ordinal. The store's monotonic comparison prevents an older slow delivery completion from overwriting a newer accepted event. A cancellation observed after `.accepted` does not skip that record. `.suppressed` and thrown delivery never advance the store's accepted ordinal.
 
 The shortcut controller treats the target as opaque. It neither inspects `SessionID` nor caches a menu row. This keeps the shortcut compatible with a future host-qualified remote target.
 
@@ -219,7 +228,7 @@ The latest target is empty at every process launch even when Notification Center
 
 ### Races
 
-- **Delivery versus shortcut press:** a press reads either the prior complete target or the newly recorded complete target; no partial state exists.
+- **Delivery versus shortcut press:** a press reads either the prior complete target or the newly recorded complete target; no partial state exists. A gated older completion cannot overwrite a logically newer accepted ordinal.
 - **Notification click versus shortcut press:** both enter the existing selection generation; the later accepted selection wins.
 - **Menu row versus shortcut press:** the same global latest-selection-wins rule applies.
 - **Reconnect versus press:** the store retains one exact pending target through grace and never falls back.
@@ -233,8 +242,8 @@ The latest target is empty at every process launch even when Notification Center
 - A target held during reconnection does not produce an immediate error; permanent removal uses the existing session-qualified transient error shown on the next menu open.
 - A stale pane, Herdr focus failure, partial WezTerm-control failure, terminal activation failure, and refresh behavior remain exactly as defined by the existing selection path.
 - No focus fallback, tab creation, or session substitution occurs.
-- A shortcut conflict leaves the previous valid assignment active and displays a settings-window error.
-- If macOS refuses global registration, the recorder reports that the combination is unavailable and the old valid assignment remains active.
+- A recorder-detected shortcut conflict leaves the previous valid assignment active and uses the package's standard explanation.
+- If macOS refuses a newly recorded global registration, post-save verification rolls back to the prior valid assignment and displays a settings-window error. A persisted startup assignment that is currently unavailable remains visible and is retried on application activation.
 - Dynamic session names, pane IDs, labels, notification targets, shortcut event details, and underlying system errors remain private in unified logging.
 - Persisted shortcut data contains only the package's key code and modifier representation. Notification targets are never persisted.
 - The feature requests neither Accessibility nor Input Monitoring permission and performs no event tap, synthetic click, shell invocation, or keyboard-content capture.
@@ -245,9 +254,11 @@ The latest target is empty at every process launch even when Notification Center
 
 - Both names are unassigned on first launch with empty defaults.
 - Recording, replacing, clearing, and reloading each assignment behaves independently.
-- Replacing unregisters the old callback before the new one becomes active.
+- Replacing causes the package to unregister the old Carbon hotkey before registering the candidate while retaining exactly one event consumer.
 - A conflict between the two Herdr actions is rejected while preserving the prior valid assignment.
-- A registrar-reported unavailable combination preserves the prior valid assignment and exposes concise help.
+- A post-save `isEnabled(for:)` failure restores the prior valid assignment and exposes concise inline help.
+- A failed first assignment rolls back to unassigned.
+- A persisted startup assignment that cannot register remains visible, reports unavailable, and retries without duplicating consumers on application activation.
 - Repeated app activation and controller refresh do not duplicate callbacks.
 - Controller shutdown removes callbacks and ignores late events.
 
@@ -263,14 +274,17 @@ The package is wrapped behind a narrow registrar seam. Unit tests use a determin
 - Rapid alternating presses leave state equal to the final AppKit delegate callback.
 - Mouse-open followed by shortcut-close and shortcut-open followed by mouse-dismiss both reconcile correctly.
 - Reopening while settings change reflects current observable state without restarting monitoring.
+- Observation re-arms after every relevant model change, refreshes the icon immediately, and cannot mutate after runtime shutdown.
+- Menu structure is not mutated during tracking; a dirty snapshot is applied on close and before the next open.
 
 The menu-presentation builder and status-item driver are protocol-backed so these tests do not depend on clicking the user's real menu bar.
 
 ### Latest-target tests
 
 - Only a successfully delivered notification records a target.
-- Disabled delivery, authorization rejection, service failure, baseline reconciliation, and repeated attention state do not change it.
+- `.accepted` is returned only after the backend add succeeds; disabled delivery, authorization rejection, disabled system alerts, `.suppressed`, service failure, baseline reconciliation, and repeated attention state do not change the target.
 - A newer successful delivery atomically replaces the older target.
+- An older gated delivery that completes after a newer accepted event cannot overwrite the newer ordinal.
 - Multiple sessions with duplicate pane IDs remain distinct through the composite target.
 - Repeated shortcut presses reuse the same target.
 - No current-run target performs no store operation and publishes no error.
@@ -285,6 +299,7 @@ The menu-presentation builder and status-item driver are protocol-backed so thes
 - A newer menu selection, notification click, or shortcut press supersedes stale selection work.
 - Repeated presses do not queue multiple future selections during reconnection.
 - Stop cancels and awaits in-flight selection; restart accepts only callbacks from the new lifecycle.
+- Application runtime start/stop tests prove the delegate launch hook replaces the removed view task, shortcut and observation consumers are canceled before store stop, settings/menu close, and a restart cannot overtake shutdown.
 
 Race tests use explicit gates and observable barriers rather than sleeps or fixed `Task.yield()` counts.
 
