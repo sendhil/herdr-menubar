@@ -5,6 +5,87 @@ import XCTest
 
 final class MultiSessionIntegrationTests: XCTestCase {
     @MainActor
+    func testShortcutCannotObserveDeliveryBeforeAcceptedResultReturns() async {
+        let deliveryGate = IntegrationNotificationDeliveryGate()
+        let notifications = IntegrationNotificationService(deliveryReturnGate: deliveryGate)
+        let latestTargetStore = LatestNotificationTargetStore()
+        let observedLatestTarget = IntegrationObservedLatestTargetStore(
+            wrapping: latestTargetStore
+        )
+        let coordinator = AttentionNotificationCoordinator(
+            service: notifications,
+            latestTargetRecorder: latestTargetStore
+        )
+        let registrar = IntegrationShortcutRegistrar()
+        var routedTargets: [NotificationSelectionTarget] = []
+        var routedExpectation: XCTestExpectation?
+        let shortcutController = GlobalShortcutController(
+            registrar: registrar,
+            latestTarget: observedLatestTarget,
+            toggleMenu: {},
+            selectTarget: { target in
+                routedTargets.append(target)
+                routedExpectation?.fulfill()
+            }
+        )
+        let session = SessionDescriptor(
+            id: .named("work"),
+            socketURL: URL(fileURLWithPath: "/tmp/integration-accepted-target.sock")
+        )
+        let expectedTarget = NotificationSelectionTarget(
+            sessionID: session.id,
+            paneID: "duplicate"
+        )
+        let policy = NotificationDeliveryPolicy(
+            notificationsEnabled: true,
+            soundEnabled: false
+        )
+        await coordinator.reconcile(
+            session: session,
+            items: [AgentMenuItem(
+                session: session,
+                pane: integrationPane("duplicate", .working)
+            )],
+            policy: policy
+        )
+        shortcutController.start()
+
+        let acceptingDelivery = Task {
+            await coordinator.reconcile(
+                session: session,
+                items: [AgentMenuItem(
+                    session: session,
+                    pane: integrationPane("duplicate", .blocked)
+                )],
+                policy: policy
+            )
+        }
+        await deliveryGate.waitUntilDeliveryReturnIsPaused()
+        let appendedDeliveries = await notifications.deliveries
+        XCTAssertEqual(appendedDeliveries.map(\.event.target), [expectedTarget])
+        let targetBeforeAcceptedReturn = await latestTargetStore.latest()
+        XCTAssertNil(targetBeforeAcceptedReturn)
+
+        registrar.send(.keyUp, for: .focusLatestNotification)
+        await observedLatestTarget.waitForLookups(1)
+        XCTAssertEqual(routedTargets, [])
+
+        await deliveryGate.releaseDeliveryReturn()
+        await acceptingDelivery.value
+        let targetAfterAcceptedReturn = await latestTargetStore.latest()
+        XCTAssertEqual(targetAfterAcceptedReturn, expectedTarget)
+
+        routedExpectation = expectation(description: "accepted target routed")
+        registrar.send(.keyUp, for: .focusLatestNotification)
+        await observedLatestTarget.waitForLookups(2)
+        if let routedExpectation {
+            await fulfillment(of: [routedExpectation], timeout: 1)
+        }
+        XCTAssertEqual(routedTargets, [expectedTarget])
+        await shortcutController.stop()
+    }
+
+    @MainActor
     func testAcceptedTargetsRouteRepeatedGlobalFocusAcrossTwoServersAndReconnectGrace() async throws {
         let root = try makeTemporaryHerdrRoot()
         let defaultURL = root.appending(path: "herdr.sock")
@@ -33,9 +114,12 @@ final class MultiSessionIntegrationTests: XCTestCase {
         )
         let notifications = IntegrationNotificationService()
         let latestTargetStore = LatestNotificationTargetStore()
+        let observedLatestTarget = IntegrationObservedLatestTargetStore(
+            wrapping: latestTargetStore
+        )
         let coordinator = AttentionNotificationCoordinator(
             service: notifications,
-            latestTargetRecorder: latestTargetStore
+            latestTargetRecorder: observedLatestTarget
         )
         let activator = IntegrationRecordingActivator()
         let focuser = IntegrationRecordingWezTermFocuser()
@@ -56,7 +140,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         var routeExpectations: [XCTestExpectation] = []
         let shortcutController = GlobalShortcutController(
             registrar: registrar,
-            latestTarget: latestTargetStore,
+            latestTarget: observedLatestTarget,
             toggleMenu: { statusController.toggle() },
             selectTarget: { target in
                 routedTargets.append(target)
@@ -85,15 +169,26 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await defaultServer.setPanes([integrationPane("duplicate", .blocked)])
         await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
         await eventually { await notifications.deliveries.count == 1 }
+        let defaultTarget = NotificationSelectionTarget(
+            sessionID: .default,
+            paneID: "duplicate"
+        )
+        await observedLatestTarget.waitForLatest(defaultTarget)
+        let latestAfterDefaultDelivery = await latestTargetStore.latest()
+        XCTAssertEqual(latestAfterDefaultDelivery, defaultTarget)
         await namedServer?.setPanes([integrationPane("duplicate", .blocked)])
         await namedServer?.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
         await eventually { await notifications.deliveries.count == 2 }
+        let namedTarget = NotificationSelectionTarget(
+            sessionID: .named("work"),
+            paneID: "duplicate"
+        )
+        await observedLatestTarget.waitForLatest(namedTarget)
+        let latestAfterNamedDelivery = await latestTargetStore.latest()
+        XCTAssertEqual(latestAfterNamedDelivery, namedTarget)
         let initialDeliveries = await notifications.deliveries
         let initialDeliveryTargets = initialDeliveries.map(\.event.target)
-        XCTAssertEqual(initialDeliveryTargets, [
-            NotificationSelectionTarget(sessionID: .default, paneID: "duplicate"),
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate")
-        ])
+        XCTAssertEqual(initialDeliveryTargets, [defaultTarget, namedTarget])
 
         guard let initialNamedServer = namedServer else {
             return XCTFail("Expected named server")
@@ -122,6 +217,9 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await defaultServer.setPanes([integrationPane("duplicate", .done)])
         await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .done)
         await eventually { await notifications.deliveries.count == 3 }
+        await observedLatestTarget.waitForLatest(defaultTarget)
+        let latestAfterNewerDefaultDelivery = await latestTargetStore.latest()
+        XCTAssertEqual(latestAfterNewerDefaultDelivery, defaultTarget)
         let defaultSelectionRefreshBaseline = await defaultServer.paneListRequestCount
         let namedFocusBaseline = await initialNamedServer.focusedPaneIDs.count
         let routedDefault = expectation(description: "newer default shortcut route")
@@ -140,10 +238,13 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await namedServer?.setPanes([integrationPane("duplicate", .done)])
         await namedServer?.pushAgentStatusEvent(paneID: "duplicate", status: .done)
         await eventually { await notifications.deliveries.count == 4 }
+        await observedLatestTarget.waitForLatest(namedTarget)
+        let latestAfterNewerNamedDelivery = await latestTargetStore.latest()
+        XCTAssertEqual(latestAfterNewerNamedDelivery, namedTarget)
         let latestDeliveredTarget = await notifications.deliveries.last?.event.target
         XCTAssertEqual(
             latestDeliveredTarget,
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate")
+            namedTarget
         )
 
         namedServer?.stop()
@@ -731,6 +832,95 @@ private struct IntegrationNotificationDelivery: Equatable, Sendable {
     let sound: Bool
 }
 
+private actor IntegrationNotificationDeliveryGate {
+    private var isPaused = false
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pauseDeliveryReturn() async {
+        isPaused = true
+        let ownedArrivalWaiters = arrivalWaiters
+        arrivalWaiters.removeAll()
+        for waiter in ownedArrivalWaiters { waiter.resume() }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilDeliveryReturnIsPaused() async {
+        guard !isPaused else { return }
+        await withCheckedContinuation { arrivalWaiters.append($0) }
+    }
+
+    func releaseDeliveryReturn() {
+        isPaused = false
+        let ownedReleaseWaiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in ownedReleaseWaiters { waiter.resume() }
+    }
+}
+
+private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetRecording {
+    private struct LookupWaiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private struct TargetWaiter {
+        let target: NotificationSelectionTarget
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private let wrapped: any LatestNotificationTargetRecording
+    private var observedLatestTarget: NotificationSelectionTarget?
+    private var lookupCount = 0
+    private var lookupWaiters: [LookupWaiter] = []
+    private var targetWaiters: [TargetWaiter] = []
+
+    init(wrapping wrapped: any LatestNotificationTargetRecording) {
+        self.wrapped = wrapped
+    }
+
+    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) async {
+        await wrapped.record(target, ordinal: ordinal)
+        observedLatestTarget = await wrapped.latest()
+        let ready = targetWaiters.filter { $0.target == observedLatestTarget }
+        targetWaiters.removeAll { $0.target == observedLatestTarget }
+        for waiter in ready { waiter.continuation.resume() }
+    }
+
+    func latest() async -> NotificationSelectionTarget? {
+        let target = await wrapped.latest()
+        lookupCount += 1
+        let ready = lookupWaiters.filter { $0.count <= lookupCount }
+        lookupWaiters.removeAll { $0.count <= lookupCount }
+        for waiter in ready { waiter.continuation.resume() }
+        return target
+    }
+
+    func reset() async {
+        await wrapped.reset()
+        observedLatestTarget = nil
+    }
+
+    func sealAndReset() async {
+        await wrapped.sealAndReset()
+        observedLatestTarget = nil
+    }
+
+    func waitForLookups(_ count: Int) async {
+        guard lookupCount < count else { return }
+        await withCheckedContinuation { continuation in
+            lookupWaiters.append(LookupWaiter(count: count, continuation: continuation))
+        }
+    }
+
+    func waitForLatest(_ target: NotificationSelectionTarget) async {
+        guard observedLatestTarget != target else { return }
+        await withCheckedContinuation { continuation in
+            targetWaiters.append(TargetWaiter(target: target, continuation: continuation))
+        }
+    }
+}
+
 @MainActor
 private final class IntegrationShortcutRegistrar: ShortcutRegistering {
     private var continuations: [
@@ -795,9 +985,14 @@ private actor IntegrationNotificationService: NativeNotificationServing {
     private(set) var deliveries: [IntegrationNotificationDelivery] = []
     private var responseContinuation: AsyncStream<NotificationSelectionTarget>.Continuation?
     private let deliveryResult: NotificationDeliveryResult
+    private let deliveryReturnGate: IntegrationNotificationDeliveryGate?
 
-    init(deliveryResult: NotificationDeliveryResult = .accepted) {
+    init(
+        deliveryResult: NotificationDeliveryResult = .accepted,
+        deliveryReturnGate: IntegrationNotificationDeliveryGate? = nil
+    ) {
         self.deliveryResult = deliveryResult
+        self.deliveryReturnGate = deliveryReturnGate
     }
 
     func responses() async -> NotificationResponseSubscription {
@@ -823,6 +1018,9 @@ private actor IntegrationNotificationService: NativeNotificationServing {
         sound: Bool
     ) async throws -> NotificationDeliveryResult {
         deliveries.append(IntegrationNotificationDelivery(event: event, sound: sound))
+        if let deliveryReturnGate {
+            await deliveryReturnGate.pauseDeliveryReturn()
+        }
         return deliveryResult
     }
 }
