@@ -281,10 +281,17 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(action(in: retry), .retryUnavailable)
         XCTAssertTrue(menu.items[7].isSeparatorItem)
 
-        renderer.performAction(agent)
-        renderer.performAction(toggle)
-        renderer.performAction(terminalChoice)
-        renderer.performAction(retry)
+        let actionableItems = actionableItems(in: menu)
+        XCTAssertEqual(actionableItems, [agent, toggle, terminalChoice, retry])
+        for item in actionableItems {
+            XCTAssertEqual(item.action, #selector(NativeStatusMenuRenderer.performAction(_:)))
+            XCTAssertTrue(item.target === renderer)
+            XCTAssertTrue(NSApplication.shared.sendAction(
+                try XCTUnwrap(item.action),
+                to: item.target,
+                from: item
+            ))
+        }
         XCTAssertEqual(received, [
             .select(target),
             .setSound(false),
@@ -293,7 +300,7 @@ final class StatusItemControllerTests: XCTestCase {
         ])
     }
 
-    func testNativeIconApplicationPreservesExactAttentionCountAndAccessibility() {
+    func testNativeIconApplicationPreservesExactAttentionCountAndAccessibility() throws {
         let button = NSButton()
         let snapshot = presentation(12, node: .heading("TWELVE"))
 
@@ -306,6 +313,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(button.title, "12")
         XCTAssertEqual(button.alphaValue, 1)
         XCTAssertEqual(button.imagePosition, .imageLeading)
+        XCTAssertTrue(try XCTUnwrap(button.image).isTemplate)
         XCTAssertEqual(button.accessibilityLabel(), "Herdr")
         XCTAssertEqual(button.accessibilityValue() as? String, "snapshot 12")
     }
@@ -352,6 +360,17 @@ private func presentation(_ count: Int, node: StatusMenuNode) -> StatusItemPrese
 @MainActor
 private func action(in item: NSMenuItem) -> StatusMenuAction? {
     (item.representedObject as? StatusMenuActionToken)?.action
+}
+
+@MainActor
+private func actionableItems(in menu: NSMenu) -> [NSMenuItem] {
+    menu.items.flatMap { item in
+        var result = item.representedObject is StatusMenuActionToken ? [item] : []
+        if let submenu = item.submenu {
+            result.append(contentsOf: actionableItems(in: submenu))
+        }
+        return result
+    }
 }
 
 @MainActor
