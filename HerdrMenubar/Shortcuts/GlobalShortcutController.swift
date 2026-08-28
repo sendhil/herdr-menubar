@@ -8,6 +8,7 @@ final class GlobalShortcutController {
     private let selectTarget: @MainActor (NotificationSelectionTarget) -> Void
     private var generation: UUID?
     private var tasks: [Task<Void, Never>] = []
+    private var stopTask: Task<Void, Never>?
 
     init(
         registrar: any ShortcutRegistering,
@@ -22,7 +23,7 @@ final class GlobalShortcutController {
     }
 
     func start() {
-        guard generation == nil else { return }
+        guard generation == nil, stopTask == nil else { return }
         let token = UUID()
         generation = token
         tasks = ShortcutAction.allCases.map { action in
@@ -43,13 +44,23 @@ final class GlobalShortcutController {
     }
 
     func stop() async {
+        if let stopTask {
+            await stopTask.value
+            return
+        }
+        guard generation != nil || !tasks.isEmpty else { return }
         generation = nil
         let stoppingTasks = tasks
         stoppingTasks.forEach { $0.cancel() }
-        for task in stoppingTasks {
-            await task.value
+        let drainTask = Task {
+            for task in stoppingTasks {
+                await task.value
+            }
         }
+        stopTask = drainTask
+        await drainTask.value
         tasks.removeAll()
+        stopTask = nil
     }
 
     private func handle(_ action: ShortcutAction, token: UUID) async {

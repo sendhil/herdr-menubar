@@ -171,13 +171,16 @@ final class GlobalShortcutControllerTests: XCTestCase {
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: target, blocksNextLookup: true)
         var selectedTargets: [NotificationSelectionTarget] = []
+        let toggleConsumed = expectation(description: "toggle consumer entered stream")
         let controller = GlobalShortcutController(
             registrar: registrar,
             latestTarget: latestTarget,
-            toggleMenu: {},
+            toggleMenu: { toggleConsumed.fulfill() },
             selectTarget: { selectedTargets.append($0) }
         )
         controller.start()
+        registrar.send(.keyUp, for: .toggleMenu)
+        await fulfillment(of: [toggleConsumed], timeout: 1)
         registrar.send(.keyUp, for: .focusLatestNotification)
         await latestTarget.waitForLookups(1)
 
@@ -190,11 +193,99 @@ final class GlobalShortcutControllerTests: XCTestCase {
         XCTAssertFalse(stopCompleted)
         await latestTarget.releaseLookup()
         await stopping.value
+        await registrar.waitForTerminations(2)
 
         XCTAssertTrue(stopCompleted)
         XCTAssertTrue(selectedTargets.isEmpty)
         let terminationCount = await registrar.terminationCount()
         XCTAssertEqual(terminationCount, 2)
+    }
+
+    func testStartDuringSharedStopWaitsForOldShutdownBeforeInstallingRestartConsumers() async {
+        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "gated")
+        let registrar = GlobalShortcutRegistrarFake()
+        let latestTarget = GlobalShortcutTargetFake(target: target, blocksNextLookup: true)
+        var toggleCount = 0
+        var selectedTargets: [NotificationSelectionTarget] = []
+        let initialToggle = expectation(description: "initial toggle consumer entered stream")
+        let restartedToggle = expectation(description: "restarted toggle consumer handled event")
+        let restartedSelection = expectation(description: "restarted focus consumer handled event")
+        let controller = GlobalShortcutController(
+            registrar: registrar,
+            latestTarget: latestTarget,
+            toggleMenu: {
+                toggleCount += 1
+                if toggleCount == 1 {
+                    initialToggle.fulfill()
+                } else if toggleCount == 2 {
+                    restartedToggle.fulfill()
+                }
+            },
+            selectTarget: {
+                selectedTargets.append($0)
+                restartedSelection.fulfill()
+            }
+        )
+        controller.start()
+        registrar.send(.keyUp, for: .toggleMenu)
+        await fulfillment(of: [initialToggle], timeout: 1)
+        registrar.send(.keyUp, for: .focusLatestNotification)
+        await latestTarget.waitForLookups(1)
+
+        var firstStopCompleted = false
+        let firstStopping = Task {
+            await controller.stop()
+            firstStopCompleted = true
+        }
+        await registrar.waitForTerminations(1)
+        let secondStopEntered = expectation(description: "second stop joined shutdown")
+        var secondStopCompleted = false
+        let secondStopping = Task {
+            secondStopEntered.fulfill()
+            await controller.stop()
+            secondStopCompleted = true
+        }
+        await fulfillment(of: [secondStopEntered], timeout: 1)
+
+        controller.start()
+
+        XCTAssertEqual(registrar.eventRequests, ShortcutAction.allCases)
+        XCTAssertFalse(firstStopCompleted)
+        XCTAssertFalse(secondStopCompleted)
+
+        await latestTarget.releaseLookup()
+        await firstStopping.value
+        await secondStopping.value
+        await registrar.waitForTerminations(2)
+        XCTAssertTrue(firstStopCompleted)
+        XCTAssertTrue(secondStopCompleted)
+        guard registrar.eventRequests == ShortcutAction.allCases else {
+            await controller.stop()
+            registrar.send(.keyUp, for: .toggleMenu, streamIndex: 1)
+            registrar.send(.keyUp, for: .focusLatestNotification, streamIndex: 1)
+            await registrar.waitForTerminations(4)
+            return
+        }
+
+        controller.start()
+        XCTAssertEqual(
+            registrar.eventRequests,
+            ShortcutAction.allCases + ShortcutAction.allCases
+        )
+        controller.start()
+        XCTAssertEqual(registrar.eventRequests.count, 4)
+        registrar.send(.keyUp, for: .toggleMenu, streamIndex: 1)
+        registrar.send(.keyUp, for: .focusLatestNotification, streamIndex: 1)
+        await fulfillment(of: [restartedToggle, restartedSelection], timeout: 1)
+
+        XCTAssertEqual(toggleCount, 2)
+        XCTAssertEqual(selectedTargets, [target])
+
+        await controller.stop()
+        await controller.stop()
+        await registrar.waitForTerminations(4)
+        let terminationCount = await registrar.terminationCount()
+        XCTAssertEqual(terminationCount, 4)
     }
 
     func testRestartAcceptsOnlyEventsFromNewGeneration() async {
