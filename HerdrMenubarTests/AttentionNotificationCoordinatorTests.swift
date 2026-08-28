@@ -303,9 +303,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testCancellationAfterNoncooperativeFirstDeliverySucceedsStillStopsRemainingDeliveries() async {
         let service = ControlledNotificationService(firstDeliveryBehavior: .suspendUntilReleased)
+        let recorder = RecordingLatestNotificationTargetRecorder()
         let coordinator = AttentionNotificationCoordinator(
             service: service,
-            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+            latestTargetRecorder: recorder
         )
         let session = descriptor("work")
         let policy = enabledPolicy()
@@ -330,8 +331,14 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
         let attempts = await service.attemptedPaneIDs
         let delivered = await service.deliveredPaneIDs
+        let recorderCalls = await recorder.calls
+        let latestTarget = await recorder.latest()
         XCTAssertEqual(attempts, ["a"])
         XCTAssertEqual(delivered, ["a"])
+        XCTAssertEqual(recorderCalls, [
+            .init(target: target(session, "a"), ordinal: 1)
+        ])
+        XCTAssertEqual(latestTarget, target(session, "a"))
     }
 
     func testShuffledAttentionItemsDeliverInLabelOrderWithPaneIDTieBreaker() async {
