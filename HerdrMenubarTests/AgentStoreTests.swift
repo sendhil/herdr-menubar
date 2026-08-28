@@ -372,7 +372,7 @@ final class AgentStoreTests: XCTestCase {
         )
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("other", .done)])))
-        await coordinator.waitForReconciliationCalls(1)
+        await coordinator.waitForReconciliations(1)
 
         let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "p2")
         store.select(target)
@@ -397,7 +397,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator)
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("old", .done)])))
-        await coordinator.waitForReconciliationCalls(1)
+        await coordinator.waitForReconciliations(1)
         await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
         await coordinator.waitForUnavailableCalls(1)
 
@@ -406,12 +406,12 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.discoverySnapshot([]))
         await supervisor.send(.discoverySnapshot([]))
         await supervisor.send(.connected(workDescriptor, snapshot([pane("different", .working)])))
-        await coordinator.waitForReconciliationCalls(2)
+        await coordinator.waitForReconciliations(2)
         await supervisor.waitForFocusRequests(1)
         await supervisor.waitForRefreshRequests(1)
 
         await supervisor.send(.snapshot(.named("work"), snapshot([pane("different", .done)])))
-        await coordinator.waitForReconciliationCalls(3)
+        await coordinator.waitForReconciliations(3)
         let focusRequests = await supervisor.focusRequests
         XCTAssertEqual(focusRequests, [
             FocusRequest(sessionID: .named("work"), paneID: "exact")
@@ -445,7 +445,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await supervisor.send(.discoverySnapshot([defaultDescriptor]))
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("fallback", .done)])))
-        await coordinator.waitForReconciliationCalls(1)
+        await coordinator.waitForReconciliations(1)
 
         store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "missing"))
 
@@ -474,7 +474,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("old", .done)])))
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("new", .done)])))
-        await coordinator.waitForReconciliationCalls(2)
+        await coordinator.waitForReconciliations(2)
 
         store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "old"))
         await focuser.waitForCalls(1)
@@ -513,7 +513,7 @@ final class AgentStoreTests: XCTestCase {
 
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("stale", .done)])))
-        await coordinator.waitForReconciliationCalls(1)
+        await coordinator.waitForReconciliations(1)
         await store.select(AgentMenuItem(
             session: defaultDescriptor,
             pane: pane("fresh", .working)
@@ -1768,7 +1768,6 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
     private(set) var removedSessionIDs: [SessionID] = []
     private(set) var resetCount = 0
     private let reconciliationSignal = AsyncCountSignal()
-    private let reconciliationCallSignal = AsyncCountSignal()
     private let unavailableSignal = AsyncCountSignal()
     private let removalSignal = AsyncCountSignal()
 
@@ -1778,7 +1777,6 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
         policy: NotificationDeliveryPolicy
     ) async {
         reconciliations.append(Reconciliation(session: session, items: items, policy: policy))
-        await reconciliationCallSignal.record()
         await reconciliationSignal.record()
     }
 
@@ -1798,10 +1796,6 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
 
     func waitForReconciliations(_ count: Int) async {
         await reconciliationSignal.wait(for: count)
-    }
-
-    func waitForReconciliationCalls(_ count: Int) async {
-        await reconciliationCallSignal.wait(for: count)
     }
 
     func waitForUnavailableCalls(_ count: Int) async {
