@@ -4,8 +4,105 @@ import XCTest
 @testable import HerdrMenubar
 
 final class MultiSessionIntegrationTests: XCTestCase {
+    func testShortcutSignalWaitsTimeOutWhenExpectedSignalsNeverArrive() async {
+        let target = NotificationSelectionTarget(
+            sessionID: .named("missing"),
+            paneID: "missing"
+        )
+        let observedLatestTarget = IntegrationObservedLatestTargetStore(
+            wrapping: LatestNotificationTargetStore()
+        )
+        let deliveryGate = IntegrationNotificationDeliveryGate()
+        addTeardownBlock {
+            await deliveryGate.finish()
+            await observedLatestTarget.finish()
+        }
+        let start = ContinuousClock.now
+
+        do {
+            try await observedLatestTarget.waitForLatest(target, timeout: .milliseconds(20))
+            XCTFail("Expected a bounded missing-latest-target error")
+        } catch let error as IntegrationAttentionObserverError {
+            XCTAssertEqual(error, .timedOut(.latestTarget))
+        } catch {
+            XCTFail("Unexpected missing-latest-target error: \(error)")
+        }
+
+        do {
+            try await observedLatestTarget.waitForLookups(1, timeout: .milliseconds(20))
+            XCTFail("Expected a bounded missing-lookup error")
+        } catch let error as IntegrationAttentionObserverError {
+            XCTAssertEqual(error, .timedOut(.latestTargetLookup))
+        } catch {
+            XCTFail("Unexpected missing-lookup error: \(error)")
+        }
+
+        do {
+            try await deliveryGate.waitUntilDeliveryReturnIsPaused(timeout: .milliseconds(20))
+            XCTFail("Expected a bounded missing-delivery-pause error")
+        } catch let error as IntegrationAttentionObserverError {
+            XCTAssertEqual(error, .timedOut(.deliveryPause))
+        } catch {
+            XCTFail("Unexpected missing-delivery-pause error: \(error)")
+        }
+
+        XCTAssertLessThan(start.duration(to: .now), .seconds(1))
+        await observedLatestTarget.finish()
+        await deliveryGate.finish()
+    }
+
+    func testShortcutFixtureFinishReleasesPausedDeliveryAndPendingSignalWaits() async throws {
+        let target = NotificationSelectionTarget(
+            sessionID: .named("never-recorded"),
+            paneID: "never-recorded"
+        )
+        let observedLatestTarget = IntegrationObservedLatestTargetStore(
+            wrapping: LatestNotificationTargetStore()
+        )
+        let deliveryGate = IntegrationNotificationDeliveryGate()
+        addTeardownBlock {
+            await deliveryGate.finish()
+            await observedLatestTarget.finish()
+        }
+        let pausedDelivery = Task {
+            try await deliveryGate.pauseDeliveryReturn(timeout: .seconds(1))
+        }
+        try await deliveryGate.waitUntilDeliveryReturnIsPaused(timeout: .seconds(1))
+        let latestWait = Task {
+            try await observedLatestTarget.waitForLatest(target, timeout: .seconds(1))
+        }
+        let lookupWait = Task {
+            try await observedLatestTarget.waitForLookups(1, timeout: .seconds(1))
+        }
+        try await observedLatestTarget.waitUntilWaitersArePending(
+            latest: 1,
+            lookups: 1,
+            timeout: .seconds(1)
+        )
+
+        await deliveryGate.finish()
+        await deliveryGate.finish()
+        await observedLatestTarget.finish()
+        await observedLatestTarget.finish()
+
+        for task in [pausedDelivery, latestWait, lookupWait] {
+            do {
+                try await task.value
+                XCTFail("Expected finish to release the pending fixture wait")
+            } catch let error as IntegrationAttentionObserverError {
+                XCTAssertEqual(error, .finished)
+            } catch {
+                XCTFail("Unexpected fixture-finish error: \(error)")
+            }
+        }
+        let deliveryWaiterCount = await deliveryGate.pendingWaiterCount
+        let signalWaiterCount = await observedLatestTarget.pendingWaiterCount
+        XCTAssertEqual(deliveryWaiterCount, 0)
+        XCTAssertEqual(signalWaiterCount, 0)
+    }
+
     @MainActor
-    func testShortcutCannotObserveDeliveryBeforeAcceptedResultReturns() async {
+    func testShortcutCannotObserveDeliveryBeforeAcceptedResultReturns() async throws {
         let deliveryGate = IntegrationNotificationDeliveryGate()
         let notifications = IntegrationNotificationService(deliveryReturnGate: deliveryGate)
         let latestTargetStore = LatestNotificationTargetStore()
@@ -28,6 +125,12 @@ final class MultiSessionIntegrationTests: XCTestCase {
                 routedExpectation?.fulfill()
             }
         )
+        addTeardownBlock {
+            await deliveryGate.finish()
+            await observedLatestTarget.finish()
+            await MainActor.run { registrar.finish() }
+            await shortcutController.stop()
+        }
         let session = SessionDescriptor(
             id: .named("work"),
             socketURL: URL(fileURLWithPath: "/tmp/integration-accepted-target.sock")
@@ -60,14 +163,14 @@ final class MultiSessionIntegrationTests: XCTestCase {
                 policy: policy
             )
         }
-        await deliveryGate.waitUntilDeliveryReturnIsPaused()
+        try await deliveryGate.waitUntilDeliveryReturnIsPaused(timeout: .seconds(1))
         let appendedDeliveries = await notifications.deliveries
         XCTAssertEqual(appendedDeliveries.map(\.event.target), [expectedTarget])
         let targetBeforeAcceptedReturn = await latestTargetStore.latest()
         XCTAssertNil(targetBeforeAcceptedReturn)
 
         registrar.send(.keyUp, for: .focusLatestNotification)
-        await observedLatestTarget.waitForLookups(1)
+        try await observedLatestTarget.waitForLookups(1, timeout: .seconds(1))
         XCTAssertEqual(routedTargets, [])
 
         await deliveryGate.releaseDeliveryReturn()
@@ -77,7 +180,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
 
         routedExpectation = expectation(description: "accepted target routed")
         registrar.send(.keyUp, for: .focusLatestNotification)
-        await observedLatestTarget.waitForLookups(2)
+        try await observedLatestTarget.waitForLookups(2, timeout: .seconds(1))
         if let routedExpectation {
             await fulfillment(of: [routedExpectation], timeout: 1)
         }
@@ -151,6 +254,8 @@ final class MultiSessionIntegrationTests: XCTestCase {
             }
         )
         addTeardownBlock {
+            await observedLatestTarget.finish()
+            await MainActor.run { registrar.finish() }
             await shortcutController.stop()
             await store.stop()
             await MainActor.run {
@@ -173,7 +278,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
             sessionID: .default,
             paneID: "duplicate"
         )
-        await observedLatestTarget.waitForLatest(defaultTarget)
+        try await observedLatestTarget.waitForLatest(defaultTarget, timeout: .seconds(1))
         let latestAfterDefaultDelivery = await latestTargetStore.latest()
         XCTAssertEqual(latestAfterDefaultDelivery, defaultTarget)
         await namedServer?.setPanes([integrationPane("duplicate", .blocked)])
@@ -183,7 +288,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
             sessionID: .named("work"),
             paneID: "duplicate"
         )
-        await observedLatestTarget.waitForLatest(namedTarget)
+        try await observedLatestTarget.waitForLatest(namedTarget, timeout: .seconds(1))
         let latestAfterNamedDelivery = await latestTargetStore.latest()
         XCTAssertEqual(latestAfterNamedDelivery, namedTarget)
         let initialDeliveries = await notifications.deliveries
@@ -217,7 +322,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await defaultServer.setPanes([integrationPane("duplicate", .done)])
         await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .done)
         await eventually { await notifications.deliveries.count == 3 }
-        await observedLatestTarget.waitForLatest(defaultTarget)
+        try await observedLatestTarget.waitForLatest(defaultTarget, timeout: .seconds(1))
         let latestAfterNewerDefaultDelivery = await latestTargetStore.latest()
         XCTAssertEqual(latestAfterNewerDefaultDelivery, defaultTarget)
         let defaultSelectionRefreshBaseline = await defaultServer.paneListRequestCount
@@ -238,7 +343,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await namedServer?.setPanes([integrationPane("duplicate", .done)])
         await namedServer?.pushAgentStatusEvent(paneID: "duplicate", status: .done)
         await eventually { await notifications.deliveries.count == 4 }
-        await observedLatestTarget.waitForLatest(namedTarget)
+        try await observedLatestTarget.waitForLatest(namedTarget, timeout: .seconds(1))
         let latestAfterNewerNamedDelivery = await latestTargetStore.latest()
         XCTAssertEqual(latestAfterNewerNamedDelivery, namedTarget)
         let latestDeliveredTarget = await notifications.deliveries.last?.event.target
@@ -293,6 +398,8 @@ final class MultiSessionIntegrationTests: XCTestCase {
         XCTAssertEqual(statusDriver.performClickCount, 1)
         XCTAssertEqual(statusDriver.cancelTrackingCount, 1)
 
+        await observedLatestTarget.finish()
+        registrar.finish()
         await shortcutController.stop()
         await store.stop()
         statusController.stop()
@@ -317,6 +424,10 @@ final class MultiSessionIntegrationTests: XCTestCase {
             toggleMenu: { statusController.toggle() },
             selectTarget: { _ in }
         )
+        addTeardownBlock {
+            await MainActor.run { registrar.finish() }
+            await shortcutController.stop()
+        }
         statusController.start()
         shortcutController.start()
 
@@ -327,6 +438,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
 
         XCTAssertEqual(statusDriver.performClickCount, 1)
         XCTAssertEqual(statusDriver.cancelTrackingCount, 1)
+        registrar.finish()
         await shortcutController.stop()
         statusController.stop()
     }
@@ -833,40 +945,131 @@ private struct IntegrationNotificationDelivery: Equatable, Sendable {
 }
 
 private actor IntegrationNotificationDeliveryGate {
-    private var isPaused = false
-    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
-    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func pauseDeliveryReturn() async {
-        isPaused = true
-        let ownedArrivalWaiters = arrivalWaiters
-        arrivalWaiters.removeAll()
-        for waiter in ownedArrivalWaiters { waiter.resume() }
-        await withCheckedContinuation { releaseWaiters.append($0) }
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
     }
 
-    func waitUntilDeliveryReturnIsPaused() async {
-        guard !isPaused else { return }
-        await withCheckedContinuation { arrivalWaiters.append($0) }
+    private var isPaused = false
+    private var arrivalWaiters: [Waiter] = []
+    private var releaseWaiters: [Waiter] = []
+    private var isFinished = false
+
+    var pendingWaiterCount: Int {
+        arrivalWaiters.count + releaseWaiters.count
+    }
+
+    func pauseDeliveryReturn(timeout: Duration) async throws {
+        let gate = self
+        try await withIntegrationWatchdog(operation: .deliveryRelease, timeout: timeout) {
+            try await gate.awaitDeliveryReturnRelease()
+        }
+    }
+
+    func waitUntilDeliveryReturnIsPaused(timeout: Duration) async throws {
+        let gate = self
+        try await withIntegrationWatchdog(operation: .deliveryPause, timeout: timeout) {
+            try await gate.awaitDeliveryPause()
+        }
     }
 
     func releaseDeliveryReturn() {
+        guard !isFinished else { return }
         isPaused = false
         let ownedReleaseWaiters = releaseWaiters
         releaseWaiters.removeAll()
-        for waiter in ownedReleaseWaiters { waiter.resume() }
+        for waiter in ownedReleaseWaiters { waiter.continuation.resume() }
+    }
+
+    func finish() {
+        guard !isFinished else { return }
+        isFinished = true
+        isPaused = false
+        let waiters = arrivalWaiters + releaseWaiters
+        arrivalWaiters.removeAll()
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+        }
+    }
+
+    private func awaitDeliveryReturnRelease() async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    isPaused = true
+                    let arrivals = arrivalWaiters
+                    arrivalWaiters.removeAll()
+                    for arrival in arrivals { arrival.continuation.resume() }
+                    releaseWaiters.append(Waiter(id: waiterID, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelReleaseWaiter(id: waiterID) }
+        }
+    }
+
+    private func awaitDeliveryPause() async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if isPaused {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    arrivalWaiters.append(Waiter(id: waiterID, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelArrivalWaiter(id: waiterID) }
+        }
+    }
+
+    private func cancelArrivalWaiter(id: UUID) {
+        cancelWaiter(id: id, in: &arrivalWaiters)
+    }
+
+    private func cancelReleaseWaiter(id: UUID) {
+        cancelWaiter(id: id, in: &releaseWaiters)
+        if releaseWaiters.isEmpty { isPaused = false }
+    }
+
+    private func cancelWaiter(id: UUID, in waiters: inout [Waiter]) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(throwing: CancellationError())
     }
 }
 
 private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetRecording {
     private struct LookupWaiter {
+        let id: UUID
         let count: Int
-        let continuation: CheckedContinuation<Void, Never>
+        let continuation: CheckedContinuation<Void, any Error>
     }
 
     private struct TargetWaiter {
+        let id: UUID
         let target: NotificationSelectionTarget
-        let continuation: CheckedContinuation<Void, Never>
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private struct RegistrationWaiter {
+        let id: UUID
+        let latestCount: Int
+        let lookupCount: Int
+        let continuation: CheckedContinuation<Void, any Error>
     }
 
     private let wrapped: any LatestNotificationTargetRecording
@@ -874,6 +1077,8 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
     private var lookupCount = 0
     private var lookupWaiters: [LookupWaiter] = []
     private var targetWaiters: [TargetWaiter] = []
+    private var registrationWaiters: [RegistrationWaiter] = []
+    private var isFinished = false
 
     init(wrapping wrapped: any LatestNotificationTargetRecording) {
         self.wrapped = wrapped
@@ -906,18 +1111,152 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
         observedLatestTarget = nil
     }
 
-    func waitForLookups(_ count: Int) async {
-        guard lookupCount < count else { return }
-        await withCheckedContinuation { continuation in
-            lookupWaiters.append(LookupWaiter(count: count, continuation: continuation))
+    var pendingWaiterCount: Int {
+        lookupWaiters.count + targetWaiters.count + registrationWaiters.count
+    }
+
+    func waitForLookups(_ count: Int, timeout: Duration) async throws {
+        let store = self
+        try await withIntegrationWatchdog(operation: .latestTargetLookup, timeout: timeout) {
+            try await store.awaitLookups(count)
         }
     }
 
-    func waitForLatest(_ target: NotificationSelectionTarget) async {
-        guard observedLatestTarget != target else { return }
-        await withCheckedContinuation { continuation in
-            targetWaiters.append(TargetWaiter(target: target, continuation: continuation))
+    func waitForLatest(
+        _ target: NotificationSelectionTarget,
+        timeout: Duration
+    ) async throws {
+        let store = self
+        try await withIntegrationWatchdog(operation: .latestTarget, timeout: timeout) {
+            try await store.awaitLatest(target)
         }
+    }
+
+    func waitUntilWaitersArePending(
+        latest: Int,
+        lookups: Int,
+        timeout: Duration
+    ) async throws {
+        let store = self
+        try await withIntegrationWatchdog(operation: .signalWaiterRegistration, timeout: timeout) {
+            try await store.awaitPendingWaiters(latest: latest, lookups: lookups)
+        }
+    }
+
+    func finish() {
+        guard !isFinished else { return }
+        isFinished = true
+        let waiters = lookupWaiters.map(\.continuation)
+            + targetWaiters.map(\.continuation)
+            + registrationWaiters.map(\.continuation)
+        lookupWaiters.removeAll()
+        targetWaiters.removeAll()
+        registrationWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(throwing: IntegrationAttentionObserverError.finished)
+        }
+    }
+
+    private func awaitLookups(_ count: Int) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if lookupCount >= count {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    lookupWaiters.append(LookupWaiter(
+                        id: waiterID,
+                        count: count,
+                        continuation: continuation
+                    ))
+                    resumeReadyRegistrationWaiters()
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelLookupWaiter(id: waiterID) }
+        }
+    }
+
+    private func awaitLatest(_ target: NotificationSelectionTarget) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if observedLatestTarget == target {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    targetWaiters.append(TargetWaiter(
+                        id: waiterID,
+                        target: target,
+                        continuation: continuation
+                    ))
+                    resumeReadyRegistrationWaiters()
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelTargetWaiter(id: waiterID) }
+        }
+    }
+
+    private func awaitPendingWaiters(latest: Int, lookups: Int) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                if isFinished {
+                    continuation.resume(throwing: IntegrationAttentionObserverError.finished)
+                } else if targetWaiters.count >= latest && lookupWaiters.count >= lookups {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    registrationWaiters.append(RegistrationWaiter(
+                        id: waiterID,
+                        latestCount: latest,
+                        lookupCount: lookups,
+                        continuation: continuation
+                    ))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelRegistrationWaiter(id: waiterID) }
+        }
+    }
+
+    private func cancelLookupWaiter(id: UUID) {
+        guard let index = lookupWaiters.firstIndex(where: { $0.id == id }) else { return }
+        lookupWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
+    private func cancelTargetWaiter(id: UUID) {
+        guard let index = targetWaiters.firstIndex(where: { $0.id == id }) else { return }
+        targetWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
+    private func cancelRegistrationWaiter(id: UUID) {
+        guard let index = registrationWaiters.firstIndex(where: { $0.id == id }) else { return }
+        registrationWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
+    private func resumeReadyRegistrationWaiters() {
+        let ready = registrationWaiters.filter {
+            targetWaiters.count >= $0.latestCount && lookupWaiters.count >= $0.lookupCount
+        }
+        let readyIDs = Set(ready.map(\.id))
+        registrationWaiters.removeAll { readyIDs.contains($0.id) }
+        for waiter in ready { waiter.continuation.resume() }
     }
 }
 
@@ -926,6 +1265,7 @@ private final class IntegrationShortcutRegistrar: ShortcutRegistering {
     private var continuations: [
         ShortcutAction: AsyncStream<GlobalShortcutEvent>.Continuation
     ] = [:]
+    private var isFinished = false
 
     func shortcut(for action: ShortcutAction) -> ShortcutBinding? { nil }
     func setShortcut(_ shortcut: ShortcutBinding?, for action: ShortcutAction) {}
@@ -939,12 +1279,24 @@ private final class IntegrationShortcutRegistrar: ShortcutRegistering {
     func events(for action: ShortcutAction) -> AsyncStream<GlobalShortcutEvent> {
         let (stream, continuation) = AsyncStream<GlobalShortcutEvent>.makeStream()
         continuations[action]?.finish()
-        continuations[action] = continuation
+        if isFinished {
+            continuation.finish()
+        } else {
+            continuations[action] = continuation
+        }
         return stream
     }
 
     func send(_ event: GlobalShortcutEvent, for action: ShortcutAction) {
         continuations[action]?.yield(event)
+    }
+
+    func finish() {
+        guard !isFinished else { return }
+        isFinished = true
+        let ownedContinuations = Array(continuations.values)
+        continuations.removeAll()
+        for continuation in ownedContinuations { continuation.finish() }
     }
 }
 
@@ -1019,7 +1371,7 @@ private actor IntegrationNotificationService: NativeNotificationServing {
     ) async throws -> NotificationDeliveryResult {
         deliveries.append(IntegrationNotificationDelivery(event: event, sound: sound))
         if let deliveryReturnGate {
-            await deliveryReturnGate.pauseDeliveryReturn()
+            try await deliveryReturnGate.pauseDeliveryReturn(timeout: .seconds(1))
         }
         return deliveryResult
     }
@@ -1040,6 +1392,11 @@ private enum IntegrationAttentionObserverOperation: Equatable, Sendable {
     case reconcile
     case remove
     case pause
+    case deliveryPause
+    case deliveryRelease
+    case latestTarget
+    case latestTargetLookup
+    case signalWaiterRegistration
 }
 
 private enum IntegrationAttentionObserverError: Error, Equatable, Sendable {
