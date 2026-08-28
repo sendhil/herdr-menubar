@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import SwiftUI
 import XCTest
 @testable import HerdrMenubar
@@ -222,6 +223,101 @@ final class NativeShortcutRecorderTests: XCTestCase {
         XCTAssertEqual(recordingStates, [true, false])
     }
 
+    func testWindowDeactivationClearsFirstResponderAndReenablesGlobalDelivery() {
+        let originalDeliveryState = KeyboardShortcuts.isEnabled
+        KeyboardShortcuts.isEnabled = true
+        defer { KeyboardShortcuts.isEnabled = originalDeliveryState }
+        let registrar = LiveShortcutRegistrar()
+        let control = NativeShortcutRecorderControl()
+        var recordingStates: [Bool] = []
+        control.onRecordingChange = { isRecording in
+            recordingStates.append(isRecording)
+            registrar.setGlobalShortcutDeliveryEnabled(!isRecording)
+        }
+        let window = recorderWindow(control: control)
+        defer { window.close() }
+        XCTAssertTrue(window.makeFirstResponder(control))
+        XCTAssertFalse(KeyboardShortcuts.isEnabled)
+
+        NotificationCenter.default.post(
+            name: NSWindow.didResignKeyNotification,
+            object: window
+        )
+
+        XCTAssertFalse(window.firstResponder === control)
+        XCTAssertEqual(recordingStates, [true, false])
+        XCTAssertTrue(KeyboardShortcuts.isEnabled)
+
+        NotificationCenter.default.post(
+            name: NSWindow.didResignKeyNotification,
+            object: window
+        )
+        XCTAssertEqual(recordingStates, [true, false])
+    }
+
+    func testReusableWindowCloseAndReopenStartsFreshGatedSessionOnClick() throws {
+        let originalDeliveryState = KeyboardShortcuts.isEnabled
+        KeyboardShortcuts.isEnabled = true
+        defer { KeyboardShortcuts.isEnabled = originalDeliveryState }
+        let registrar = LiveShortcutRegistrar()
+        let control = NativeShortcutRecorderControl()
+        var recordingStates: [Bool] = []
+        control.onRecordingChange = { isRecording in
+            recordingStates.append(isRecording)
+            registrar.setGlobalShortcutDeliveryEnabled(!isRecording)
+        }
+        let window = recorderWindow(control: control)
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        window.close()
+
+        XCTAssertFalse(window.firstResponder === control)
+        XCTAssertEqual(recordingStates, [true, false])
+        XCTAssertTrue(KeyboardShortcuts.isEnabled)
+
+        window.orderFront(nil)
+        XCTAssertFalse(window.firstResponder === control)
+        try click(control, in: window)
+
+        XCTAssertTrue(window.firstResponder === control)
+        XCTAssertEqual(recordingStates, [true, false, true])
+        XCTAssertFalse(KeyboardShortcuts.isEnabled)
+
+        XCTAssertTrue(window.makeFirstResponder(nil))
+        XCTAssertEqual(recordingStates, [true, false, true, false])
+        XCTAssertTrue(KeyboardShortcuts.isEnabled)
+        window.close()
+    }
+
+    func testMovingRecorderRemovesOldWindowObserverBeforeStartingFreshSession() {
+        let control = NativeShortcutRecorderControl()
+        var recordingStates: [Bool] = []
+        control.onRecordingChange = { recordingStates.append($0) }
+        let oldWindow = recorderWindow(control: control)
+        defer { oldWindow.close() }
+        XCTAssertTrue(oldWindow.makeFirstResponder(control))
+
+        control.removeFromSuperview()
+        let newWindow = recorderWindow(control: control)
+        defer { newWindow.close() }
+        XCTAssertTrue(newWindow.makeFirstResponder(control))
+        XCTAssertEqual(recordingStates, [true, false, true])
+
+        NotificationCenter.default.post(
+            name: NSWindow.didResignKeyNotification,
+            object: oldWindow
+        )
+        XCTAssertTrue(newWindow.firstResponder === control)
+        XCTAssertEqual(recordingStates, [true, false, true])
+
+        NotificationCenter.default.post(
+            name: NSWindow.didResignKeyNotification,
+            object: newWindow
+        )
+        XCTAssertFalse(newWindow.firstResponder === control)
+        XCTAssertEqual(recordingStates, [true, false, true, false])
+    }
+
     func testSuccessfulCaptureResumesDeliveryBeforeCaptureCallback() {
         let control = NativeShortcutRecorderControl()
         var deliveryIsEnabled = true
@@ -393,6 +489,40 @@ final class NativeShortcutRecorderTests: XCTestCase {
         window.contentView = contentView
         window.orderFront(nil)
         return window
+    }
+
+    private func click(
+        _ control: NativeShortcutRecorderControl,
+        in window: NSWindow
+    ) throws {
+        let mouseDown = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: NSPoint(x: control.frame.midX, y: control.frame.midY),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 3,
+                clickCount: 1,
+                pressure: 1
+            )
+        )
+        let mouseUp = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: mouseDown.locationInWindow,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 4,
+                clickCount: 1,
+                pressure: 0
+            )
+        )
+        NSApp.postEvent(mouseUp, atStart: true)
+        control.mouseDown(with: mouseDown)
     }
 }
 

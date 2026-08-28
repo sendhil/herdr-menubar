@@ -50,12 +50,11 @@ final class NativeShortcutRecorderControl: NSButton {
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let observedWindow, observedWindow !== newWindow {
-            NotificationCenter.default.removeObserver(
-                self,
-                name: NSWindow.willCloseNotification,
-                object: observedWindow
-            )
+            removeLifecycleObservers(from: observedWindow)
             self.observedWindow = nil
+            if observedWindow.firstResponder === self {
+                observedWindow.makeFirstResponder(nil)
+            }
             endRecordingIfNeeded()
         }
         super.viewWillMove(toWindow: newWindow)
@@ -69,6 +68,12 @@ final class NativeShortcutRecorderControl: NSButton {
             self,
             selector: #selector(windowWillClose),
             name: NSWindow.willCloseNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey),
+            name: NSWindow.didResignKeyNotification,
             object: window
         )
     }
@@ -144,8 +149,25 @@ final class NativeShortcutRecorderControl: NSButton {
         onRecordingChange?(false)
     }
 
+    private func removeLifecycleObservers(from window: NSWindow) {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.didResignKeyNotification,
+            object: window
+        )
+    }
+
     @objc private func windowWillClose(_ notification: Notification) {
-        endRecordingIfNeeded()
+        resignAndEndRecording()
+    }
+
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        resignAndEndRecording()
     }
 }
 
