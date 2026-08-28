@@ -16,9 +16,11 @@ struct MenuBarIconPresentation: Equatable, Sendable {
     let mode: Mode
     let lightStyle: LightStyle
     let opacity: Double
+    let attentionCount: Int
     let showsAttentionCount: Bool
 
     init(connectionState: ConnectionState, attentionCount: Int) {
+        self.attentionCount = attentionCount
         switch connectionState {
         case .searching, .noSessions, .connecting:
             mode = .disconnected
