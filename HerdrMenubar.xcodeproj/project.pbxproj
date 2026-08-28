@@ -57,6 +57,8 @@
 		E3000000000000000000000F /* NativeShortcutRecorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000000000000000000000E /* NativeShortcutRecorderTests.swift */; };
 		E30000000000000000000011 /* GlobalShortcutController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000010 /* GlobalShortcutController.swift */; };
 		E30000000000000000000013 /* GlobalShortcutControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000012 /* GlobalShortcutControllerTests.swift */; };
+		E30000000000000000000015 /* StatusMenuPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000014 /* StatusMenuPresentation.swift */; };
+		E30000000000000000000017 /* StatusMenuPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000016 /* StatusMenuPresentationTests.swift */; };
 		E30000000000000000000025 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = E30000000000000000000024 /* KeyboardShortcuts */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
@@ -130,6 +132,8 @@
 		E3000000000000000000000E /* NativeShortcutRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeShortcutRecorderTests.swift; sourceTree = "<group>"; };
 		E30000000000000000000010 /* GlobalShortcutController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalShortcutController.swift; sourceTree = "<group>"; };
 		E30000000000000000000012 /* GlobalShortcutControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalShortcutControllerTests.swift; sourceTree = "<group>"; };
+		E30000000000000000000014 /* StatusMenuPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuPresentation.swift; sourceTree = "<group>"; };
+		E30000000000000000000016 /* StatusMenuPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuPresentationTests.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -168,6 +172,7 @@
 			isa = PBXGroup;
 			children = (
 				E30000000000000000000012 /* GlobalShortcutControllerTests.swift */,
+				E30000000000000000000016 /* StatusMenuPresentationTests.swift */,
 				E3000000000000000000000E /* NativeShortcutRecorderTests.swift */,
 				E3000000000000000000000A /* ShortcutAssignmentControllerTests.swift */,
 				E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */,
@@ -220,6 +225,7 @@
 			isa = PBXGroup;
 			children = (
 				12A000000000000000000021 /* MenuBarIcon.swift */,
+				E30000000000000000000014 /* StatusMenuPresentation.swift */,
 				12A000000000000000000022 /* StatusMenu.swift */,
 				12A000000000000000000023 /* AgentRow.swift */,
 			);
@@ -402,6 +408,7 @@
 				E30000000000000000000009 /* ShortcutAssignmentController.swift in Sources */,
 				E3000000000000000000000D /* NativeShortcutRecorder.swift in Sources */,
 				E30000000000000000000011 /* GlobalShortcutController.swift in Sources */,
+				E30000000000000000000015 /* StatusMenuPresentation.swift in Sources */,
 				E30000000000000000000003 /* LatestNotificationTargetStore.swift in Sources */,
 				C10000000000000000000001 /* BoundedProcessRunner.swift in Sources */,
 				C10000000000000000000004 /* WezTermCLI.swift in Sources */,
@@ -433,6 +440,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E30000000000000000000013 /* GlobalShortcutControllerTests.swift in Sources */,
+				E30000000000000000000017 /* StatusMenuPresentationTests.swift in Sources */,
 				E3000000000000000000000F /* NativeShortcutRecorderTests.swift in Sources */,
 				E3000000000000000000000B /* ShortcutAssignmentControllerTests.swift in Sources */,
 				E30000000000000000000005 /* LatestNotificationTargetStoreTests.swift in Sources */,
