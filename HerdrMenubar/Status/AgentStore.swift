@@ -189,7 +189,7 @@ final class AgentStore {
                 defer { notificationResponses.cancel() }
                 for await target in notificationResponses {
                     guard !Task.isCancelled else { return }
-                    await self?.receiveNotificationTarget(target, generation: generation)
+                    self?.select(target)
                 }
             }
             self.startCallingSupervisorToken = token
@@ -276,6 +276,11 @@ final class AgentStore {
             paneID: item.paneID,
             sessionName: item.sessionName
         ))?.value
+    }
+
+    func select(_ target: NotificationSelectionTarget) {
+        guard isRunning else { return }
+        receiveNotificationTarget(target, generation: eventGeneration)
     }
 }
 

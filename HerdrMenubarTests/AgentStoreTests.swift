@@ -360,6 +360,172 @@ final class AgentStoreTests: XCTestCase {
         await store.stop()
     }
 
+    func testDirectTargetUsesExactConnectedSessionSelectionFlow() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let coordinator = RecordingAttentionCoordinator()
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: RecordingActivator(sequence: sequence),
+            wezTermFocuser: RecordingWezTermFocuser(sequence: sequence),
+            attentionCoordinator: coordinator
+        )
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("other", .done)])))
+        await coordinator.waitForReconciliationCalls(1)
+
+        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "p2")
+        store.select(target)
+        await supervisor.waitForFocusRequests(1)
+        await supervisor.waitForRefreshRequests(1)
+
+        let focusRequests = await supervisor.focusRequests
+        let actions = await sequence.values
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .named("work"), paneID: "p2")
+        ])
+        XCTAssertEqual(actions, [
+            "focus:work:p2", "wezterm:work",
+            "activate:com.github.wez.wezterm", "refresh:work"
+        ])
+        await store.stop()
+    }
+
+    func testDirectTargetSurvivesGraceOmissionsAndRunsExactlyOnceOnReconnect() async {
+        let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
+        let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator)
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("old", .done)])))
+        await coordinator.waitForReconciliationCalls(1)
+        await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
+        await coordinator.waitForUnavailableCalls(1)
+
+        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "exact")
+        store.select(target)
+        await supervisor.send(.discoverySnapshot([]))
+        await supervisor.send(.discoverySnapshot([]))
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("different", .working)])))
+        await coordinator.waitForReconciliationCalls(2)
+        await supervisor.waitForFocusRequests(1)
+        await supervisor.waitForRefreshRequests(1)
+
+        await supervisor.send(.snapshot(.named("work"), snapshot([pane("different", .done)])))
+        await coordinator.waitForReconciliationCalls(3)
+        let focusRequests = await supervisor.focusRequests
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .named("work"), paneID: "exact")
+        ])
+        await store.stop()
+    }
+
+    func testRemovedSessionAbandonsDirectTargetWithoutFallback() async {
+        let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
+        let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator)
+        await store.start()
+        await supervisor.send(.discoverySnapshot([workDescriptor]))
+        await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
+        await coordinator.waitForUnavailableCalls(1)
+
+        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "p"))
+        await supervisor.send(.removed(.named("work")))
+        await coordinator.waitForRemovalCalls(1)
+
+        XCTAssertEqual(store.transientError, "work is unavailable")
+        let focusRequests = await supervisor.focusRequests
+        XCTAssertEqual(focusRequests, [])
+        await store.stop()
+    }
+
+    func testDirectTargetAfterAuthoritativeAbsencePublishesUnavailableWithoutFallback() async {
+        let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
+        let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator)
+        await store.start()
+        await supervisor.send(.discoverySnapshot([defaultDescriptor]))
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("fallback", .done)])))
+        await coordinator.waitForReconciliationCalls(1)
+
+        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "missing"))
+
+        XCTAssertEqual(store.transientError, "work is unavailable")
+        let focusRequests = await supervisor.focusRequests
+        XCTAssertEqual(focusRequests, [])
+        await store.stop()
+    }
+
+    func testLaterRowSelectionSupersedesInFlightDirectTarget() async {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let coordinator = RecordingAttentionCoordinator()
+        let focuser = RecordingWezTermFocuser(
+            sequence: sequence,
+            blockedCalls: [1],
+            checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator(sequence: sequence)
+        let store = makeStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            attentionCoordinator: coordinator
+        )
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("old", .done)])))
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("new", .done)])))
+        await coordinator.waitForReconciliationCalls(2)
+
+        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "old"))
+        await focuser.waitForCalls(1)
+        let rowSelection = Task {
+            await store.select(AgentMenuItem(
+                session: defaultDescriptor,
+                pane: pane("new", .done)
+            ))
+        }
+        await focuser.waitForCancellations(1)
+        await focuser.releaseBlockedCalls()
+        await rowSelection.value
+        await supervisor.waitForRefreshRequests(2)
+
+        let actions = await sequence.values
+        XCTAssertEqual(actions, [
+            "focus:work:old", "wezterm:work", "refresh:work",
+            "focus:Default:new", "wezterm:Default",
+            "activate:com.github.wez.wezterm", "refresh:Default"
+        ])
+        XCTAssertEqual(activator.activatedBundleIdentifiers, [
+            WezTermCLIConstants.bundleIdentifier
+        ])
+        XCTAssertNil(store.transientError)
+        await store.stop()
+    }
+
+    func testStoppedStoreIgnoresDirectTarget() async {
+        let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
+        let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator)
+        await store.start()
+        await store.stop()
+
+        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "stale"))
+
+        await store.start()
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("stale", .done)])))
+        await coordinator.waitForReconciliationCalls(1)
+        await store.select(AgentMenuItem(
+            session: defaultDescriptor,
+            pane: pane("fresh", .working)
+        ))
+
+        let focusRequests = await supervisor.focusRequests
+        XCTAssertEqual(focusRequests, [
+            FocusRequest(sessionID: .default, paneID: "fresh")
+        ])
+        await store.stop()
+    }
+
     func testNotificationTargetWaitsAcrossUnavailableAndSelectsOnReconnect() async {
         let supervisor = FakeSessionSupervisor()
         let notifications = RecordingNotificationService()
@@ -1482,6 +1648,7 @@ private actor FakeSessionSupervisor: SessionSupervising {
     private let stopGate: AsyncGate?
     private let terminationProbe = StreamTerminationProbe()
     private let refreshSignal = AsyncCountSignal()
+    private let focusSignal = AsyncCountSignal()
 
     init(
         focusError: (any Error)? = nil,
@@ -1523,6 +1690,7 @@ private actor FakeSessionSupervisor: SessionSupervising {
 
     func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo {
         focusRequests.append(FocusRequest(sessionID: sessionID, paneID: paneID))
+        await focusSignal.record()
         await sequence?.append("focus:\(sessionID.displayName):\(paneID)")
         if let focusError { throw focusError }
         await focusAction?()
@@ -1581,6 +1749,7 @@ private actor FakeSessionSupervisor: SessionSupervising {
     }
 
     func send(_ event: SessionSupervisorEvent) { continuation?.yield(event) }
+    func waitForFocusRequests(_ count: Int) async { await focusSignal.wait(for: count) }
     func waitForRefreshRequests(_ count: Int) async { await refreshSignal.wait(for: count) }
     func releaseEvents() async { await eventsGate?.release() }
     func releaseStop() async { await stopGate?.release() }
@@ -1599,7 +1768,9 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
     private(set) var removedSessionIDs: [SessionID] = []
     private(set) var resetCount = 0
     private let reconciliationSignal = AsyncCountSignal()
+    private let reconciliationCallSignal = AsyncCountSignal()
     private let unavailableSignal = AsyncCountSignal()
+    private let removalSignal = AsyncCountSignal()
 
     func reconcile(
         session: SessionDescriptor,
@@ -1607,6 +1778,7 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
         policy: NotificationDeliveryPolicy
     ) async {
         reconciliations.append(Reconciliation(session: session, items: items, policy: policy))
+        await reconciliationCallSignal.record()
         await reconciliationSignal.record()
     }
 
@@ -1615,8 +1787,9 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
         await unavailableSignal.record()
     }
 
-    func remove(sessionID: SessionID) {
+    func remove(sessionID: SessionID) async {
         removedSessionIDs.append(sessionID)
+        await removalSignal.record()
     }
 
     func reset() {
@@ -1627,8 +1800,16 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
         await reconciliationSignal.wait(for: count)
     }
 
+    func waitForReconciliationCalls(_ count: Int) async {
+        await reconciliationCallSignal.wait(for: count)
+    }
+
     func waitForUnavailableCalls(_ count: Int) async {
         await unavailableSignal.wait(for: count)
+    }
+
+    func waitForRemovalCalls(_ count: Int) async {
+        await removalSignal.wait(for: count)
     }
 
     func barrier() {}
