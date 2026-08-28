@@ -30,6 +30,11 @@ final class ShortcutAssignmentController {
         errorMessages[action]
     }
 
+    func displayString(for action: ShortcutAction) -> String? {
+        guard let shortcut = values[action] else { return nil }
+        return registrar.displayString(for: shortcut)
+    }
+
     func assign(_ candidate: ShortcutBinding?, to action: ShortcutAction) {
         errorMessages[action] = nil
         guard let candidate else {
@@ -68,6 +73,10 @@ final class ShortcutAssignmentController {
 
     func setRecordingActive(_ isActive: Bool) {
         registrar.setGlobalShortcutDeliveryEnabled(!isActive)
+    }
+
+    func rejectBareKey(for action: ShortcutAction) {
+        errorMessages[action] = "Use Command, Control, or Option with ordinary keys."
     }
 
     private func validate(_ candidate: ShortcutBinding, for action: ShortcutAction) -> Bool {
