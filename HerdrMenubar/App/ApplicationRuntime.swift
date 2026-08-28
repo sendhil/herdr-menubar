@@ -34,6 +34,8 @@ struct ApplicationRuntimeDependencies {
     let quit: () -> Void
     let lifecycleInvalidated: () -> Void
     let observationCancelled: () -> Void
+    let menuActionsCancelled: () -> Void
+    let menuActionsDrained: () -> Void
     let shouldStartSynchronization: Bool
 }
 
@@ -48,6 +50,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     private var stopToken: UUID?
     private var isStopped = false
     private var observationArm: PresentationObservationArm?
+    private var menuActions: [UUID: OwnedMenuAction] = [:]
 
     init(dependencies: ApplicationRuntimeDependencies) {
         self.dependencies = dependencies
@@ -150,6 +153,8 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             quit: { NSApplication.shared.terminate(nil) },
             lifecycleInvalidated: {},
             observationCancelled: {},
+            menuActionsCancelled: {},
+            menuActionsDrained: {},
             shouldStartSynchronization: shouldStartSynchronization(environment: environment)
         ))
         callbackRelay.runtime = runtime
@@ -232,6 +237,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             dependencies.stopShortcutSettings()
             cancelObservation()
             await dependencies.sealAndResetLatestTarget()
+            await cancelAndDrainMenuActions()
             await dependencies.stopStore()
         }
         stopTask = task
@@ -250,20 +256,20 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         case .selectTerminal(let id):
             dependencies.selectTerminal(id)
         case .setLaunchAtLogin(let enabled):
-            Task { @MainActor [weak self] in
-                guard let self, owns(token) else { return }
+            let dependencies = dependencies
+            launchMenuAction(generation: token) {
                 try? await dependencies.setLoginItem(enabled)
             }
         case .setNotifications(let enabled):
-            Task { @MainActor [weak self] in
-                guard let self, owns(token) else { return }
+            let dependencies = dependencies
+            launchMenuAction(generation: token) {
                 try? await dependencies.setNotifications(enabled)
             }
         case .setSound(let enabled):
             dependencies.setSound(enabled)
         case .retryUnavailable:
-            Task { @MainActor [weak self] in
-                guard let self, owns(token) else { return }
+            let dependencies = dependencies
+            launchMenuAction(generation: token) {
                 await dependencies.retryStore()
             }
         case .openKeyboardShortcuts:
@@ -332,6 +338,36 @@ private extension ApplicationRuntime {
         dependencies.observationCancelled()
     }
 
+    func launchMenuAction(
+        generation token: UUID,
+        operation: @escaping @MainActor () async -> Void
+    ) {
+        guard isReady(token) else { return }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.completeMenuAction(id: id, generation: token) }
+            guard self.isReady(token) else { return }
+            await operation()
+        }
+        menuActions[id] = OwnedMenuAction(generation: token, task: task)
+    }
+
+    func completeMenuAction(id: UUID, generation token: UUID) {
+        guard menuActions[id]?.generation == token else { return }
+        menuActions[id] = nil
+    }
+
+    func cancelAndDrainMenuActions() async {
+        let actions = Array(menuActions.values)
+        actions.forEach { $0.task.cancel() }
+        dependencies.menuActionsCancelled()
+        for action in actions {
+            await action.task.value
+        }
+        dependencies.menuActionsDrained()
+    }
+
     func owns(_ token: UUID) -> Bool {
         !isStopped && generation == token && !Task.isCancelled
     }
@@ -339,6 +375,11 @@ private extension ApplicationRuntime {
     func isReady(_ token: UUID) -> Bool {
         owns(token) && readyGeneration == token
     }
+}
+
+private struct OwnedMenuAction {
+    let generation: UUID
+    let task: Task<Void, Never>
 }
 
 @MainActor

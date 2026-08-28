@@ -178,6 +178,18 @@ final class ApplicationRuntimeTests: XCTestCase {
         await runtime.stop()
     }
 
+    func testStopOwnsCancelsAndDrainsLoginMenuAction() async {
+        await assertStopOwnsCancelsAndDrains(.login)
+    }
+
+    func testStopOwnsCancelsAndDrainsNotificationMenuAction() async {
+        await assertStopOwnsCancelsAndDrains(.notifications)
+    }
+
+    func testStopOwnsCancelsAndDrainsRetryMenuAction() async {
+        await assertStopOwnsCancelsAndDrains(.retry)
+    }
+
     func testShutdownHasExactOrderAndRepeatedStopSharesOneBarrier() async {
         let harness = RuntimeHarness()
         harness.blockShortcutStop = true
@@ -205,6 +217,8 @@ final class ApplicationRuntimeTests: XCTestCase {
             "settings.stop",
             "observation.cancel",
             "target.sealAndReset",
+            "actions.cancel",
+            "actions.drain",
             "store.stop"
         ])
         XCTAssertEqual(harness.shortcutStopCount, 1)
@@ -349,6 +363,105 @@ final class ApplicationRuntimeTests: XCTestCase {
         XCTAssertEqual(runtime.stopCount, 1)
         XCTAssertEqual(replyValues, [true, true])
     }
+
+    private func assertStopOwnsCancelsAndDrains(
+        _ kind: RuntimeGatedMenuActionKind,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let harness = RuntimeHarness()
+        let entered = RuntimeSignal()
+        let release = RuntimeSignal()
+        var completedActions = 0
+        var observedCancellation = false
+        switch kind {
+        case .login:
+            harness.customSetLoginItem = { _ in
+                await entered.signal()
+                await release.wait()
+                observedCancellation = Task.isCancelled
+                completedActions += 1
+                harness.events.append("login.action.finished")
+            }
+        case .notifications:
+            harness.customSetNotifications = { _ in
+                await entered.signal()
+                await release.wait()
+                observedCancellation = Task.isCancelled
+                completedActions += 1
+                harness.events.append("notification.action.finished")
+            }
+        case .retry:
+            harness.customRetryStore = {
+                await entered.signal()
+                await release.wait()
+                observedCancellation = Task.isCancelled
+                completedActions += 1
+                harness.events.append("retry.action.finished")
+            }
+        }
+        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
+        await runtime.start()
+        harness.events.removeAll()
+
+        runtime.perform(kind.action)
+        await entered.wait()
+
+        var completedStops = 0
+        let firstStop = Task {
+            await runtime.stop()
+            completedStops += 1
+        }
+        let secondStop = Task {
+            await runtime.stop()
+            completedStops += 1
+        }
+        firstStop.cancel()
+        await harness.menuActionCancellationEntered()
+
+        XCTAssertEqual(completedStops, 0, file: file, line: line)
+        XCTAssertEqual(harness.storeStopCount, 0, file: file, line: line)
+
+        await release.signal()
+        await firstStop.value
+        await secondStop.value
+
+        XCTAssertEqual(completedActions, 1, file: file, line: line)
+        XCTAssertTrue(observedCancellation, file: file, line: line)
+        XCTAssertEqual(completedStops, 2, file: file, line: line)
+        XCTAssertEqual(harness.storeStopCount, 1, file: file, line: line)
+        XCTAssertLessThan(
+            harness.events.firstIndex(of: kind.finishedEvent)!,
+            harness.events.firstIndex(of: "store.stop")!,
+            file: file,
+            line: line
+        )
+
+        runtime.perform(kind.action)
+        XCTAssertEqual(completedActions, 1, file: file, line: line)
+    }
+}
+
+private enum RuntimeGatedMenuActionKind {
+    case login
+    case notifications
+    case retry
+
+    var action: StatusMenuAction {
+        switch self {
+        case .login: .setLaunchAtLogin(true)
+        case .notifications: .setNotifications(true)
+        case .retry: .retryUnavailable
+        }
+    }
+
+    var finishedEvent: String {
+        switch self {
+        case .login: "login.action.finished"
+        case .notifications: "notification.action.finished"
+        case .retry: "retry.action.finished"
+        }
+    }
 }
 
 @Observable @MainActor
@@ -386,6 +499,9 @@ private final class RuntimeHarness {
     var statusStop: (() -> Void)?
     var customStartStore: (() async -> Void)?
     var customStopStore: (() async -> Void)?
+    var customSetLoginItem: ((Bool) async throws -> Void)?
+    var customSetNotifications: ((Bool) async throws -> Void)?
+    var customRetryStore: (() async -> Void)?
     var customSealAndResetLatestTarget: (() async -> Void)?
 
     private var notificationContinuations: [CheckedContinuation<Void, Never>] = []
@@ -394,6 +510,8 @@ private final class RuntimeHarness {
     private var shortcutContinuation: CheckedContinuation<Void, Never>?
     private var shortcutEnteredContinuation: CheckedContinuation<Void, Never>?
     private var shortcutDidEnter = false
+    private var menuActionCancellationContinuation: CheckedContinuation<Void, Never>?
+    private var menuActionCancellationDidEnter = false
     private var appliedWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var asyncActions = 0
     private var asyncActionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -442,6 +560,10 @@ private final class RuntimeHarness {
             stopShortcutSettings: { [weak self] in self?.events.append("settings.stop") },
             refreshLoginItem: { [weak self] in self?.events.append("login.refresh") },
             setLoginItem: { [weak self] enabled in
+                if let custom = self?.customSetLoginItem {
+                    try await custom(enabled)
+                    return
+                }
                 self?.events.append("login.set.\(enabled)")
                 self?.markAsyncAction()
             },
@@ -459,6 +581,10 @@ private final class RuntimeHarness {
                 events.append("notification.refresh.end")
             },
             setNotifications: { [weak self] enabled in
+                if let custom = self?.customSetNotifications {
+                    try await custom(enabled)
+                    return
+                }
                 self?.events.append("notification.set.\(enabled)")
                 self?.markAsyncAction()
             },
@@ -475,6 +601,10 @@ private final class RuntimeHarness {
                 await self?.customStopStore?()
             },
             retryStore: { [weak self] in
+                if let custom = self?.customRetryStore {
+                    await custom()
+                    return
+                }
                 self?.retryCount += 1
                 self?.events.append("store.retry")
                 self?.markAsyncAction()
@@ -492,6 +622,14 @@ private final class RuntimeHarness {
             quit: { [weak self] in self?.events.append("quit") },
             lifecycleInvalidated: { [weak self] in self?.events.append("lifecycle.invalidate") },
             observationCancelled: { [weak self] in self?.events.append("observation.cancel") },
+            menuActionsCancelled: { [weak self] in
+                guard let self else { return }
+                events.append("actions.cancel")
+                menuActionCancellationDidEnter = true
+                menuActionCancellationContinuation?.resume()
+                menuActionCancellationContinuation = nil
+            },
+            menuActionsDrained: { [weak self] in self?.events.append("actions.drain") },
             shouldStartSynchronization: true
         )
     }
@@ -511,6 +649,11 @@ private final class RuntimeHarness {
     func shortcutStopEntered() async {
         if shortcutDidEnter { return }
         await withCheckedContinuation { shortcutEnteredContinuation = $0 }
+    }
+
+    func menuActionCancellationEntered() async {
+        if menuActionCancellationDidEnter { return }
+        await withCheckedContinuation { menuActionCancellationContinuation = $0 }
     }
 
     func releaseShortcutStop() {
