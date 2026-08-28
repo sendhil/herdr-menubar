@@ -97,6 +97,59 @@ final class ApplicationRuntimeTests: XCTestCase {
         await runtime.stop()
     }
 
+    func testCallbacksRemainInertUntilStartupIsReadyThenBecomeActive() async {
+        let harness = RuntimeHarness()
+        harness.blockNotificationRefresh = true
+        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
+        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "pane-2")
+        let activationFinished = RuntimeCancellableSignal()
+        let prematureRefresh = RuntimeCancellableSignal()
+        harness.onNotificationRefresh = { count in
+            guard count == 2 else { return }
+            Task { await prematureRefresh.signal() }
+        }
+
+        let starting = Task { await runtime.start() }
+        await harness.notificationRefreshEntered()
+
+        runtime.receiveToggleMenuShortcut()
+        runtime.receiveFocusLatestShortcut(target)
+        runtime.perform(.retryUnavailable)
+        let activatingBeforeReady = Task {
+            await runtime.applicationDidBecomeActive()
+            await activationFinished.signal()
+        }
+        let firstActivationOutcome = await firstRuntimeSignal(
+            completed: activationFinished,
+            escapedRefresh: prematureRefresh
+        )
+
+        XCTAssertEqual(firstActivationOutcome, .completed)
+        XCTAssertEqual(harness.statusToggleCount, 0)
+        XCTAssertEqual(harness.selectedTargets, [])
+        XCTAssertEqual(harness.retryCount, 0)
+        XCTAssertEqual(harness.events.filter { $0 == "login.refresh" }.count, 1)
+        XCTAssertEqual(harness.events.filter { $0 == "notification.refresh.begin" }.count, 1)
+
+        harness.releaseNotificationRefresh()
+        await starting.value
+        await activatingBeforeReady.value
+
+        runtime.receiveToggleMenuShortcut()
+        runtime.receiveFocusLatestShortcut(target)
+        runtime.perform(.retryUnavailable)
+        await harness.waitForAsyncActions(1)
+        await runtime.applicationDidBecomeActive()
+
+        XCTAssertEqual(harness.statusToggleCount, 1)
+        XCTAssertEqual(harness.selectedTargets, [target])
+        XCTAssertEqual(harness.retryCount, 1)
+        XCTAssertEqual(harness.events.filter { $0 == "login.refresh" }.count, 2)
+        XCTAssertEqual(harness.events.filter { $0 == "notification.refresh.begin" }.count, 2)
+        XCTAssertEqual(harness.events.filter { $0 == "shortcut.refresh" }.count, 2)
+        await runtime.stop()
+    }
+
     func testEveryStatusMenuActionMapsWithoutChangingItsPayload() async {
         let harness = RuntimeHarness()
         let runtime = ApplicationRuntime(dependencies: harness.dependencies())
@@ -326,6 +379,7 @@ private final class RuntimeHarness {
     var retryCount = 0
     var blockNotificationRefresh = false
     var blockShortcutStop = false
+    var onNotificationRefresh: ((Int) -> Void)?
     var onApply: ((StatusItemPresentation) -> Void)?
     var statusStart: (() -> Void)?
     var statusApply: ((StatusItemPresentation) -> Void)?
@@ -334,9 +388,9 @@ private final class RuntimeHarness {
     var customStopStore: (() async -> Void)?
     var customSealAndResetLatestTarget: (() async -> Void)?
 
-    private var notificationContinuation: CheckedContinuation<Void, Never>?
-    private var notificationEnteredContinuation: CheckedContinuation<Void, Never>?
-    private var notificationDidEnter = false
+    private var notificationContinuations: [CheckedContinuation<Void, Never>] = []
+    private var notificationEnteredWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var notificationEnterCount = 0
     private var shortcutContinuation: CheckedContinuation<Void, Never>?
     private var shortcutEnteredContinuation: CheckedContinuation<Void, Never>?
     private var shortcutDidEnter = false
@@ -394,11 +448,13 @@ private final class RuntimeHarness {
             refreshNotifications: { [weak self] in
                 guard let self else { return }
                 events.append("notification.refresh.begin")
-                notificationDidEnter = true
-                notificationEnteredContinuation?.resume()
-                notificationEnteredContinuation = nil
+                notificationEnterCount += 1
+                onNotificationRefresh?(notificationEnterCount)
+                let ready = notificationEnteredWaiters.filter { notificationEnterCount >= $0.0 }
+                notificationEnteredWaiters.removeAll { notificationEnterCount >= $0.0 }
+                ready.forEach { $0.1.resume() }
                 if blockNotificationRefresh {
-                    await withCheckedContinuation { notificationContinuation = $0 }
+                    await withCheckedContinuation { notificationContinuations.append($0) }
                 }
                 events.append("notification.refresh.end")
             },
@@ -440,15 +496,16 @@ private final class RuntimeHarness {
         )
     }
 
-    func notificationRefreshEntered() async {
-        if notificationDidEnter { return }
-        await withCheckedContinuation { notificationEnteredContinuation = $0 }
+    func notificationRefreshEntered(count: Int = 1) async {
+        if notificationEnterCount >= count { return }
+        await withCheckedContinuation { notificationEnteredWaiters.append((count, $0)) }
     }
 
     func releaseNotificationRefresh() {
         blockNotificationRefresh = false
-        notificationContinuation?.resume()
-        notificationContinuation = nil
+        let continuations = notificationContinuations
+        notificationContinuations.removeAll()
+        continuations.forEach { $0.resume() }
     }
 
     func shortcutStopEntered() async {
@@ -520,6 +577,62 @@ private actor RuntimeSignal {
     func wait() async {
         guard !isSignaled else { return }
         await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
+private enum RuntimeActivationOutcome: Sendable {
+    case completed
+    case escapedRefresh
+}
+
+private actor RuntimeCancellableSignal {
+    private var isSignaled = false
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    func signal() {
+        isSignaled = true
+        let current = waiters.values
+        waiters.removeAll()
+        current.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        guard !isSignaled else { return }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if isSignaled || Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    waiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.resume()
+    }
+}
+
+private func firstRuntimeSignal(
+    completed: RuntimeCancellableSignal,
+    escapedRefresh: RuntimeCancellableSignal
+) async -> RuntimeActivationOutcome {
+    await withTaskGroup(of: RuntimeActivationOutcome.self) { group in
+        group.addTask {
+            await completed.wait()
+            return .completed
+        }
+        group.addTask {
+            await escapedRefresh.wait()
+            return .escapedRefresh
+        }
+        let first = await group.next()!
+        group.cancelAll()
+        return first
     }
 }
 

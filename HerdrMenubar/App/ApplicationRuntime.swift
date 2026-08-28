@@ -41,6 +41,7 @@ struct ApplicationRuntimeDependencies {
 final class ApplicationRuntime: ApplicationRuntimeServing {
     private let dependencies: ApplicationRuntimeDependencies
     private var generation: UUID?
+    private var readyGeneration: UUID?
     private var startTask: Task<Void, Never>?
     private var startToken: UUID?
     private var stopTask: Task<Void, Never>?
@@ -200,10 +201,10 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     }
 
     func applicationDidBecomeActive() async {
-        guard let token = generation, owns(token) else { return }
+        guard let token = readyGeneration, isReady(token) else { return }
         dependencies.refreshLoginItem()
         await dependencies.refreshNotifications()
-        guard owns(token) else { return }
+        guard isReady(token) else { return }
         dependencies.refreshShortcutRegistration()
     }
 
@@ -216,6 +217,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
 
         isStopped = true
         generation = nil
+        readyGeneration = nil
         dependencies.lifecycleInvalidated()
         startTask?.cancel()
         startTask = nil
@@ -241,7 +243,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     }
 
     func perform(_ action: StatusMenuAction) {
-        guard let token = generation, owns(token) else { return }
+        guard let token = readyGeneration, isReady(token) else { return }
         switch action {
         case .select(let target):
             dependencies.selectTarget(target)
@@ -272,12 +274,12 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     }
 
     func receiveToggleMenuShortcut() {
-        guard let token = generation, owns(token) else { return }
+        guard let token = readyGeneration, isReady(token) else { return }
         dependencies.toggleStatusItem()
     }
 
     func receiveFocusLatestShortcut(_ target: NotificationSelectionTarget) {
-        guard let token = generation, owns(token) else { return }
+        guard let token = readyGeneration, isReady(token) else { return }
         dependencies.selectTarget(target)
     }
 }
@@ -295,8 +297,12 @@ private extension ApplicationRuntime {
         guard owns(token) else { return }
         dependencies.refreshShortcutRegistration()
         observePresentation(generation: token)
-        guard owns(token), dependencies.shouldStartSynchronization else { return }
-        await dependencies.startStore()
+        guard owns(token) else { return }
+        if dependencies.shouldStartSynchronization {
+            await dependencies.startStore()
+            guard owns(token) else { return }
+        }
+        readyGeneration = token
     }
 
     func observePresentation(generation token: UUID) {
@@ -328,6 +334,10 @@ private extension ApplicationRuntime {
 
     func owns(_ token: UUID) -> Bool {
         !isStopped && generation == token && !Task.isCancelled
+    }
+
+    func isReady(_ token: UUID) -> Bool {
+        owns(token) && readyGeneration == token
     }
 }
 
