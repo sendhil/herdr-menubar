@@ -4,6 +4,232 @@ import XCTest
 @testable import HerdrMenubar
 
 final class MultiSessionIntegrationTests: XCTestCase {
+    @MainActor
+    func testAcceptedTargetsRouteRepeatedGlobalFocusAcrossTwoServersAndReconnectGrace() async throws {
+        let root = try makeTemporaryHerdrRoot()
+        let defaultURL = root.appending(path: "herdr.sock")
+        let namedURL = root.appending(path: "sessions/work/herdr.sock")
+        let defaultServer = try FakeHerdrServer(
+            url: defaultURL,
+            panes: [integrationPane("duplicate", .working)]
+        )
+        var namedServer: FakeHerdrServer? = try FakeHerdrServer(
+            url: namedURL,
+            panes: [integrationPane("duplicate", .working)]
+        )
+        defer {
+            defaultServer.stop()
+            namedServer?.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let graceSleeper = IntegrationHoldingSleeper()
+        let supervisor = SessionSupervisor(
+            discovery: SessionDiscovery(configRoot: root),
+            clientFactory: IntegrationClientFactory(),
+            sleeper: graceSleeper,
+            discoveryInterval: .seconds(30),
+            removalGracePeriod: .seconds(10)
+        )
+        let notifications = IntegrationNotificationService()
+        let latestTargetStore = LatestNotificationTargetStore()
+        let coordinator = AttentionNotificationCoordinator(
+            service: notifications,
+            latestTargetRecorder: latestTargetStore
+        )
+        let activator = IntegrationRecordingActivator()
+        let focuser = IntegrationRecordingWezTermFocuser()
+        let preferencesFixture = try IntegrationPreferencesFixture()
+        preferencesFixture.preferences.notificationsEnabled = true
+        let store = AgentStore(
+            supervisor: supervisor,
+            terminalActivator: activator,
+            wezTermFocuser: focuser,
+            attentionCoordinator: coordinator,
+            notificationService: notifications,
+            preferences: preferencesFixture.preferences
+        )
+        let registrar = IntegrationShortcutRegistrar()
+        let statusDriver = IntegrationStatusItemDriver()
+        let statusController = StatusItemController(driver: statusDriver) { _ in }
+        var routedTargets: [NotificationSelectionTarget] = []
+        var routeExpectations: [XCTestExpectation] = []
+        let shortcutController = GlobalShortcutController(
+            registrar: registrar,
+            latestTarget: latestTargetStore,
+            toggleMenu: { statusController.toggle() },
+            selectTarget: { target in
+                routedTargets.append(target)
+                store.select(target)
+                if !routeExpectations.isEmpty {
+                    routeExpectations.removeFirst().fulfill()
+                }
+            }
+        )
+        addTeardownBlock {
+            await shortcutController.stop()
+            await store.stop()
+            await MainActor.run {
+                statusController.stop()
+                preferencesFixture.remove()
+            }
+        }
+
+        statusController.start()
+        shortcutController.start()
+        await store.start()
+        await eventually {
+            await MainActor.run { store.workingSections.count == 2 }
+        }
+
+        await defaultServer.setPanes([integrationPane("duplicate", .blocked)])
+        await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
+        await eventually { await notifications.deliveries.count == 1 }
+        await namedServer?.setPanes([integrationPane("duplicate", .blocked)])
+        await namedServer?.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
+        await eventually { await notifications.deliveries.count == 2 }
+        let initialDeliveries = await notifications.deliveries
+        let initialDeliveryTargets = initialDeliveries.map(\.event.target)
+        XCTAssertEqual(initialDeliveryTargets, [
+            NotificationSelectionTarget(sessionID: .default, paneID: "duplicate"),
+            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate")
+        ])
+
+        guard let initialNamedServer = namedServer else {
+            return XCTFail("Expected named server")
+        }
+        let namedRefreshBaseline = await initialNamedServer.paneListRequestCount
+        let defaultRefreshBaseline = await defaultServer.paneListRequestCount
+        for expectedFocusCount in 1...2 {
+            let routed = expectation(description: "named shortcut route \(expectedFocusCount)")
+            routeExpectations.append(routed)
+            registrar.send(.keyUp, for: .focusLatestNotification)
+            await fulfillment(of: [routed], timeout: 1)
+            await eventually {
+                let focusCount = await initialNamedServer.focusedPaneIDs.count
+                let requestCount = await initialNamedServer.paneListRequestCount
+                return focusCount == expectedFocusCount
+                    && requestCount >= namedRefreshBaseline + expectedFocusCount
+            }
+        }
+        let namedFocusedAfterRepeatedShortcut = await initialNamedServer.focusedPaneIDs
+        let defaultFocusedAfterNamedShortcuts = await defaultServer.focusedPaneIDs
+        let defaultRefreshAfterNamedShortcuts = await defaultServer.paneListRequestCount
+        XCTAssertEqual(namedFocusedAfterRepeatedShortcut, ["duplicate", "duplicate"])
+        XCTAssertEqual(defaultFocusedAfterNamedShortcuts, [])
+        XCTAssertEqual(defaultRefreshAfterNamedShortcuts, defaultRefreshBaseline)
+
+        await defaultServer.setPanes([integrationPane("duplicate", .done)])
+        await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .done)
+        await eventually { await notifications.deliveries.count == 3 }
+        let defaultSelectionRefreshBaseline = await defaultServer.paneListRequestCount
+        let namedFocusBaseline = await initialNamedServer.focusedPaneIDs.count
+        let routedDefault = expectation(description: "newer default shortcut route")
+        routeExpectations.append(routedDefault)
+        registrar.send(.keyUp, for: .focusLatestNotification)
+        await fulfillment(of: [routedDefault], timeout: 1)
+        await eventually {
+            let focused = await defaultServer.focusedPaneIDs
+            let requestCount = await defaultServer.paneListRequestCount
+            return focused == ["duplicate"]
+                && requestCount >= defaultSelectionRefreshBaseline + 1
+        }
+        let namedFocusAfterDefaultShortcut = await initialNamedServer.focusedPaneIDs.count
+        XCTAssertEqual(namedFocusAfterDefaultShortcut, namedFocusBaseline)
+
+        await namedServer?.setPanes([integrationPane("duplicate", .done)])
+        await namedServer?.pushAgentStatusEvent(paneID: "duplicate", status: .done)
+        await eventually { await notifications.deliveries.count == 4 }
+        let latestDeliveredTarget = await notifications.deliveries.last?.event.target
+        XCTAssertEqual(
+            latestDeliveredTarget,
+            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate")
+        )
+
+        namedServer?.stop()
+        namedServer = nil
+        await store.retry()
+        await eventually {
+            await MainActor.run {
+                store.unavailableSessions.map(\.id) == [.named("work")]
+            }
+        }
+        let hasPendingGrace = await graceSleeper.hasPendingWait(for: .seconds(10))
+        XCTAssertTrue(hasPendingGrace)
+        let defaultFocusBeforeGraceShortcut = await defaultServer.focusedPaneIDs
+        let routedUnavailableNamed = expectation(description: "unavailable named shortcut route")
+        routeExpectations.append(routedUnavailableNamed)
+        registrar.send(.keyUp, for: .focusLatestNotification)
+        await fulfillment(of: [routedUnavailableNamed], timeout: 1)
+        let defaultFocusAfterGraceShortcut = await defaultServer.focusedPaneIDs
+        XCTAssertEqual(defaultFocusAfterGraceShortcut, defaultFocusBeforeGraceShortcut)
+
+        let reconnectedNamedServer = try FakeHerdrServer(
+            url: namedURL,
+            panes: [integrationPane("duplicate", .done)]
+        )
+        namedServer = reconnectedNamedServer
+        await store.retry()
+        await eventually {
+            let focused = await reconnectedNamedServer.focusedPaneIDs
+            let requestCount = await reconnectedNamedServer.paneListRequestCount
+            return focused == ["duplicate"] && requestCount >= 2
+        }
+        let reconnectedNamedFocus = await reconnectedNamedServer.focusedPaneIDs
+        let defaultFocusAfterReconnect = await defaultServer.focusedPaneIDs
+        XCTAssertEqual(reconnectedNamedFocus, ["duplicate"])
+        XCTAssertEqual(defaultFocusAfterReconnect, defaultFocusBeforeGraceShortcut)
+        XCTAssertEqual(routedTargets, [
+            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
+            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
+            NotificationSelectionTarget(sessionID: .default, paneID: "duplicate"),
+            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate")
+        ])
+        registrar.send(.keyUp, for: .toggleMenu)
+        await eventually { await MainActor.run { statusDriver.performClickCount == 1 } }
+        registrar.send(.keyUp, for: .toggleMenu)
+        await eventually { await MainActor.run { statusDriver.cancelTrackingCount == 1 } }
+        XCTAssertEqual(statusDriver.performClickCount, 1)
+        XCTAssertEqual(statusDriver.cancelTrackingCount, 1)
+
+        await shortcutController.stop()
+        await store.stop()
+        statusController.stop()
+        preferencesFixture.remove()
+        defaultServer.stop()
+        namedServer?.stop()
+        namedServer = nil
+        try FileManager.default.removeItem(at: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: defaultURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: namedURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    @MainActor
+    func testToggleGlobalShortcutOpensAndClosesRealStatusController() async {
+        let registrar = IntegrationShortcutRegistrar()
+        let statusDriver = IntegrationStatusItemDriver()
+        let statusController = StatusItemController(driver: statusDriver) { _ in }
+        let shortcutController = GlobalShortcutController(
+            registrar: registrar,
+            latestTarget: LatestNotificationTargetStore(),
+            toggleMenu: { statusController.toggle() },
+            selectTarget: { _ in }
+        )
+        statusController.start()
+        shortcutController.start()
+
+        registrar.send(.keyUp, for: .toggleMenu)
+        await eventually { await MainActor.run { statusDriver.performClickCount == 1 } }
+        registrar.send(.keyUp, for: .toggleMenu)
+        await eventually { await MainActor.run { statusDriver.cancelTrackingCount == 1 } }
+
+        XCTAssertEqual(statusDriver.performClickCount, 1)
+        XCTAssertEqual(statusDriver.cancelTrackingCount, 1)
+        await shortcutController.stop()
+        statusController.stop()
+    }
+
     func testAttentionObserverBoundsMissingCompletionAndFinishReleasesPausedReconcile() async throws {
         let observer = IntegrationObservingAttentionCoordinator(
             wrapping: IntegrationAttentionCoordinator()
@@ -503,6 +729,66 @@ private struct IntegrationClientFactory: SessionClientCreating {
 private struct IntegrationNotificationDelivery: Equatable, Sendable {
     let event: AttentionNotificationEvent
     let sound: Bool
+}
+
+@MainActor
+private final class IntegrationShortcutRegistrar: ShortcutRegistering {
+    private var continuations: [
+        ShortcutAction: AsyncStream<GlobalShortcutEvent>.Continuation
+    ] = [:]
+
+    func shortcut(for action: ShortcutAction) -> ShortcutBinding? { nil }
+    func setShortcut(_ shortcut: ShortcutBinding?, for action: ShortcutAction) {}
+    func isEnabled(for action: ShortcutAction) -> Bool { false }
+    func retryRegistration(for action: ShortcutAction) {}
+    func isTakenBySystem(_ shortcut: ShortcutBinding) -> Bool { false }
+    func conflictsWithMainMenu(_ shortcut: ShortcutBinding) -> Bool { false }
+    func displayString(for shortcut: ShortcutBinding) -> String { "" }
+    func setGlobalShortcutDeliveryEnabled(_ isEnabled: Bool) {}
+
+    func events(for action: ShortcutAction) -> AsyncStream<GlobalShortcutEvent> {
+        let (stream, continuation) = AsyncStream<GlobalShortcutEvent>.makeStream()
+        continuations[action]?.finish()
+        continuations[action] = continuation
+        return stream
+    }
+
+    func send(_ event: GlobalShortcutEvent, for action: ShortcutAction) {
+        continuations[action]?.yield(event)
+    }
+}
+
+@MainActor
+private final class IntegrationStatusItemDriver: StatusItemDriving {
+    weak var delegate: (any StatusItemDriverDelegate)?
+    private(set) var performClickCount = 0
+    private(set) var cancelTrackingCount = 0
+
+    func install(delegate: any StatusItemDriverDelegate) {
+        self.delegate = delegate
+    }
+
+    func applyIcon(
+        _ presentation: MenuBarIconPresentation,
+        accessibilityValue: String
+    ) {}
+
+    func replaceMenu(
+        with nodes: [StatusMenuNode],
+        action: @escaping (StatusMenuAction) -> Void
+    ) {}
+
+    func performClick() {
+        performClickCount += 1
+        delegate?.statusItemMenuWillOpen()
+    }
+
+    func cancelTracking() {
+        cancelTrackingCount += 1
+        delegate?.statusItemMenuDidClose()
+    }
+
+    func remove() {}
 }
 
 private actor IntegrationNotificationService: NativeNotificationServing {
@@ -1090,6 +1376,7 @@ private actor FakeHerdrServerState {
     private var focused: [String] = []
     private var windowTitle: String?
     private var titleActions: [FakeWindowTitleAction] = []
+    private var requestCounts: [String: Int] = [:]
 
     init(panes: [PaneInfo]) {
         self.panes = panes
@@ -1102,8 +1389,10 @@ private actor FakeHerdrServerState {
     var focusedPaneIDs: [String] { focused }
     var currentWindowTitle: String? { windowTitle }
     var windowTitleActions: [FakeWindowTitleAction] { titleActions }
+    var paneListRequestCount: Int { requestCounts["pane.list", default: 0] }
 
     func action(for request: FakeServerRequest) throws -> FakeServerAction {
+        requestCounts[request.method, default: 0] += 1
         let encoder = JSONEncoder()
         let response: Data
         let isSubscription: Bool
@@ -1253,6 +1542,10 @@ private final class FakeHerdrServer: @unchecked Sendable {
 
     var windowTitleActions: [FakeWindowTitleAction] {
         get async { await state.windowTitleActions }
+    }
+
+    var paneListRequestCount: Int {
+        get async { await state.paneListRequestCount }
     }
 
     func stop() {

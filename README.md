@@ -18,6 +18,7 @@ Herdr remains the source of truth. The app reads Herdr's public socket API and d
 - Discovers sessions while running and reconnects them independently when Herdr starts, stops, or restarts.
 - Keeps healthy sessions visible when another session is unavailable.
 - Supports an optional **Launch at Login** setting.
+- Supports two independently configurable global keyboard shortcuts.
 - Uses a native macOS menu, template icon, accessibility labels, and unified logging.
 - Stores preferences only; pane and agent state is never persisted.
 
@@ -48,6 +49,17 @@ Clicking a notification uses the same exact-session focus path as selecting a me
 Notification labels are visible to macOS and follow the notification-preview choices in System Settings. The menu toggles record local app intent; macOS notification settings, Focus modes, and sound settings can still suppress presentation or sound. If permission is later disabled in System Settings, Herdr monitoring and the menu badge continue to work.
 
 The menu is status-first: **Needs Attention** and **Working** are the top-level sections, with **Default** followed by named-session groups inside each section. The menu-bar badge is the total number of `blocked` and `done` agents across connected sessions. An unavailable session's last-known state is removed from the badge and menu immediately, without disturbing healthy sessions.
+
+## Global keyboard shortcuts
+
+Choose **Keyboard Shortcuts** from the Herdr menu to open a small configuration window. Both actions are unassigned by default, can be assigned or cleared independently, and retain their individual assignments across app launches.
+
+- **Toggle Herdr Menu** opens and closes the native Herdr menu globally, including while another application is active.
+- **Focus Latest Notification** reuses the exact session and pane from the newest notification accepted for delivery during the current app run. The shortcut can be pressed repeatedly to revisit that target.
+
+Before an accepted notification establishes a current-run target, **Focus Latest Notification** is a silent no-op. If its exact session becomes temporarily unavailable, a shortcut press during the ten-second reconnect grace period remains pending for that target. Reconnecting runs the exact pending focus once. Session removal discards the pending request without selecting another pane or session as a fallback.
+
+Global registration and event delivery use [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts). Herdr owns the native first-responder recording control for compatibility with macOS 26. Neither recording nor global shortcut use requires Accessibility or Input Monitoring permission.
 
 ## Requirements
 
@@ -97,6 +109,7 @@ The app has no Dock icon or normal application window. After launch, use its ter
 - Select the terminal used for activation.
 - Enable or disable Launch at Login.
 - Enable native notifications and, independently, notification sound.
+- Configure, replace, or clear global keyboard shortcuts.
 - Retry unavailable Herdr sessions.
 - Quit the app.
 
@@ -152,14 +165,15 @@ If the configured terminal is unavailable, the menu retains the preference as un
 
 ## Architecture
 
-The app has no third-party dependencies and is split into focused components:
+The app uses KeyboardShortcuts 3.0.1 for global shortcut persistence, registration, and event delivery. Its own code is split into focused components:
 
 ```text
 HerdrMenubar/
-├── App/       SwiftUI application lifecycle and composition
+├── App/       Application lifecycle and live dependency composition
 ├── Herdr/     API models, socket discovery, transport, and synchronization
-├── Menu/      Menu-bar icon, grouped menu, and agent rows
+├── Menu/      Native status item, menu presentation, and icon rendering
 ├── Notifications/ Native notification transitions, delivery, and settings
+├── Shortcuts/ Global registration, event routing, settings, and native recording
 ├── Status/    Observable presentation state and user actions
 └── System/    Preferences, terminal activation, logging, and login items
 ```
@@ -172,6 +186,7 @@ The main runtime boundaries are:
 - **`AgentStore`** — a main-actor observable model that aggregates session-qualified menu sections and coordinates routed focus and activation.
 - **`AttentionNotificationCoordinator`** — tracks per-session pane transitions and suppresses startup and reconnect duplicates.
 - **`NativeNotificationService`** — owns macOS permission, delivery, and exact session-and-pane response routing.
+- **`GlobalShortcutController`** — consumes registered key-up events and routes menu toggles or the current-run notification target.
 - **`NWHerdrConnection`** — a Network.framework Unix-domain socket adapter using newline-delimited JSON.
 - **`LoginItemService`** — a testable wrapper around `SMAppService.mainApp`.
 
@@ -220,6 +235,8 @@ The app persists only:
 - Launch at Login intent.
 - Notifications intent.
 - Notification sound intent.
+- Toggle-menu shortcut assignment.
+- Latest-notification shortcut assignment.
 
 Actual login-item state is read from macOS through `SMAppService`. Pane snapshots, agent status, terminal output, session state, and acknowledgement state are not written to disk by Herdr Menubar. Herdr remains the source of truth for all runtime state.
 
