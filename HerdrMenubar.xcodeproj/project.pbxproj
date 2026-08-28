@@ -50,6 +50,10 @@
 		D2000000000000000000000F /* NotificationSettingsControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2000000000000000000000E /* NotificationSettingsControllerTests.swift */; };
 		E30000000000000000000003 /* LatestNotificationTargetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000002 /* LatestNotificationTargetStore.swift */; };
 		E30000000000000000000005 /* LatestNotificationTargetStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */; };
+		E30000000000000000000007 /* ShortcutModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000006 /* ShortcutModels.swift */; };
+		E30000000000000000000009 /* ShortcutAssignmentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000008 /* ShortcutAssignmentController.swift */; };
+		E3000000000000000000000B /* ShortcutAssignmentControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000000000000000000000A /* ShortcutAssignmentControllerTests.swift */; };
+		E30000000000000000000025 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = E30000000000000000000024 /* KeyboardShortcuts */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -115,6 +119,9 @@
 		D2000000000000000000000E /* NotificationSettingsControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsControllerTests.swift; sourceTree = "<group>"; };
 		E30000000000000000000002 /* LatestNotificationTargetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatestNotificationTargetStore.swift; sourceTree = "<group>"; };
 		E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatestNotificationTargetStoreTests.swift; sourceTree = "<group>"; };
+		E30000000000000000000006 /* ShortcutModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutModels.swift; sourceTree = "<group>"; };
+		E30000000000000000000008 /* ShortcutAssignmentController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutAssignmentController.swift; sourceTree = "<group>"; };
+		E3000000000000000000000A /* ShortcutAssignmentControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutAssignmentControllerTests.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -152,6 +159,7 @@
 		81C4C4A92CC200E54E48A4C3 /* HerdrMenubarTests */ = {
 			isa = PBXGroup;
 			children = (
+				E3000000000000000000000A /* ShortcutAssignmentControllerTests.swift */,
 				E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */,
 				D2000000000000000000000A /* AttentionNotificationCoordinatorTests.swift */,
 				D2000000000000000000000C /* NativeNotificationServiceTests.swift */,
@@ -239,11 +247,21 @@
 				7B7F2BADAF554B3A0A94F63D /* App */,
 				C49263C8A1747A34F59C8057 /* Herdr */,
 				D20000000000000000000001 /* Notifications */,
+				E30000000000000000000001 /* Shortcuts */,
 				12A000000000000000000030 /* Status */,
 				12A000000000000000000031 /* Menu */,
 				12A000000000000000000032 /* System */,
 			);
 			path = HerdrMenubar;
+			sourceTree = "<group>";
+		};
+		E30000000000000000000001 /* Shortcuts */ = {
+			isa = PBXGroup;
+			children = (
+				E30000000000000000000006 /* ShortcutModels.swift */,
+				E30000000000000000000008 /* ShortcutAssignmentController.swift */,
+			);
+			path = Shortcuts;
 			sourceTree = "<group>";
 		};
 		EAF73B15421E23EBCBEED006 /* HerdrMenubarUITests */ = {
@@ -262,12 +280,16 @@
 			buildConfigurationList = 084BB4B02CC1EE7869152719 /* Build configuration list for PBXNativeTarget "HerdrMenubar" */;
 			buildPhases = (
 				DC457981E1521EB96966F01E /* Sources */,
+				E30000000000000000000026 /* Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = HerdrMenubar;
+			packageProductDependencies = (
+				E30000000000000000000024 /* KeyboardShortcuts */,
+			);
 			productName = HerdrMenubar;
 			productReference = 0EB06622175E7CE82E829E14 /* HerdrMenubar.app */;
 			productType = "com.apple.product-type.application";
@@ -327,6 +349,9 @@
 				en,
 			);
 			mainGroup = 7D0B75EDC058A1B4BED90E45;
+			packageReferences = (
+				E30000000000000000000027 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -336,6 +361,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E30000000000000000000026 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E30000000000000000000025 /* KeyboardShortcuts in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		30CDFB7E1178E571B437F63F /* Sources */ = {
@@ -350,6 +386,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E30000000000000000000007 /* ShortcutModels.swift in Sources */,
+				E30000000000000000000009 /* ShortcutAssignmentController.swift in Sources */,
 				E30000000000000000000003 /* LatestNotificationTargetStore.swift in Sources */,
 				C10000000000000000000001 /* BoundedProcessRunner.swift in Sources */,
 				C10000000000000000000004 /* WezTermCLI.swift in Sources */,
@@ -380,6 +418,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E3000000000000000000000B /* ShortcutAssignmentControllerTests.swift in Sources */,
 				E30000000000000000000005 /* LatestNotificationTargetStoreTests.swift in Sources */,
 				D2000000000000000000000B /* AttentionNotificationCoordinatorTests.swift in Sources */,
 				D2000000000000000000000D /* NativeNotificationServiceTests.swift in Sources */,
@@ -682,6 +721,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E30000000000000000000027 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = exactVersion;
+				version = 3.0.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E30000000000000000000024 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E30000000000000000000027 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 6FC917FB5923306F8A330ABB /* Project object */;
 }
