@@ -120,7 +120,9 @@ private struct ShortcutSettingsRow: View {
                     .foregroundStyle(.red)
                     .font(.caption)
                     .padding(.leading, 192)
-                    .accessibilityLabel("\(presentation.title) shortcut error")
+                    .accessibilityLabel(
+                        "\(presentation.title) shortcut error: \(errorMessage)"
+                    )
             }
         }
     }

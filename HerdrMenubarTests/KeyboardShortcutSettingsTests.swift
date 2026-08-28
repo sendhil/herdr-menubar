@@ -145,6 +145,52 @@ final class KeyboardShortcutSettingsTests: XCTestCase {
         )
     }
 
+    func testRenderedErrorAccessibilitySpeaksActionAndExactDynamicReason() {
+        _ = NSApplication.shared
+        let registrar = SettingsShortcutRegistrar()
+        registrar.systemShortcuts = [menuShortcut]
+        let controller = ShortcutAssignmentController(registrar: registrar)
+        controller.assign(menuShortcut, to: .toggleMenu)
+        controller.assign(focusShortcut, to: .focusLatestNotification)
+        let hostingController = NSHostingController(
+            rootView: KeyboardShortcutSettingsView(controller: controller)
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 260),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = hostingController
+        window.orderFront(nil)
+        defer { window.close() }
+        hostingController.view.layoutSubtreeIfNeeded()
+
+        let spokenErrors = accessibilityStrings(in: hostingController.view)
+            .filter { $0.localizedCaseInsensitiveContains("shortcut error") }
+
+        XCTAssertTrue(spokenErrors.contains(
+            "Toggle Herdr Menu shortcut error: That shortcut is used by macOS."
+        ), "Accessibility strings: \(spokenErrors)")
+        XCTAssertTrue(spokenErrors.contains(
+            "Focus Latest Notification shortcut error: That shortcut is unavailable."
+        ), "Accessibility strings: \(spokenErrors)")
+
+        controller.rejectBareKey(for: .toggleMenu)
+        hostingController.view.layoutSubtreeIfNeeded()
+        let updatedSpokenErrors = accessibilityStrings(in: hostingController.view)
+            .filter { $0.localizedCaseInsensitiveContains("shortcut error") }
+
+        XCTAssertTrue(updatedSpokenErrors.contains(
+            "Toggle Herdr Menu shortcut error: "
+                + "Use Command, Control, or Option with ordinary keys."
+        ), "Updated accessibility strings: \(updatedSpokenErrors)")
+        XCTAssertFalse(updatedSpokenErrors.contains(
+            "Toggle Herdr Menu shortcut error: That shortcut is used by macOS."
+        ), "Updated accessibility strings: \(updatedSpokenErrors)")
+    }
+
     func testShowTwiceCreatesOneWindowAndOrdersItFrontTwice() {
         let driver = FakeKeyboardShortcutSettingsWindowDriver()
         let controller = KeyboardShortcutSettingsWindowController(
@@ -209,6 +255,44 @@ final class KeyboardShortcutSettingsTests: XCTestCase {
             result.insert(recorder, at: 0)
         }
         return result
+    }
+
+    private func accessibilityStrings(in view: NSView) -> [String] {
+        var visited: Set<ObjectIdentifier> = []
+        return accessibilityStrings(in: view, visited: &visited)
+    }
+
+    private func accessibilityStrings(
+        in object: Any,
+        visited: inout Set<ObjectIdentifier>
+    ) -> [String] {
+        guard let accessible = object as? NSObject else { return [] }
+        let identifier = ObjectIdentifier(accessible)
+        guard visited.insert(identifier).inserted else { return [] }
+
+        var strings = [
+            accessibilityString("accessibilityLabel", from: accessible),
+            accessibilityString("accessibilityValue", from: accessible),
+        ].compactMap { $0 }
+        let childrenSelector = NSSelectorFromString("accessibilityChildren")
+        let accessibilityChildren = accessible.responds(to: childrenSelector)
+            ? accessible.value(forKey: "accessibilityChildren") as? [Any] ?? []
+            : []
+        for child in accessibilityChildren {
+            strings.append(contentsOf: accessibilityStrings(in: child, visited: &visited))
+        }
+        if let view = object as? NSView {
+            for subview in view.subviews {
+                strings.append(contentsOf: accessibilityStrings(in: subview, visited: &visited))
+            }
+        }
+        return strings
+    }
+
+    private func accessibilityString(_ key: String, from object: NSObject) -> String? {
+        let selector = NSSelectorFromString(key)
+        guard object.responds(to: selector) else { return nil }
+        return object.value(forKey: key) as? String
     }
 }
 
