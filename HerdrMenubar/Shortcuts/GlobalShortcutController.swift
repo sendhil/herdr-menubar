@@ -9,6 +9,7 @@ final class GlobalShortcutController {
     private var generation: UUID?
     private var tasks: [Task<Void, Never>] = []
     private var stopTask: Task<Void, Never>?
+    private var stopToken: UUID?
 
     init(
         registrar: any ShortcutRegistering,
@@ -52,15 +53,16 @@ final class GlobalShortcutController {
         generation = nil
         let stoppingTasks = tasks
         stoppingTasks.forEach { $0.cancel() }
-        let drainTask = Task {
+        let token = UUID()
+        stopToken = token
+        let completeStopTask = Task { [weak self] in
             for task in stoppingTasks {
                 await task.value
             }
+            self?.completeStop(token: token)
         }
-        stopTask = drainTask
-        await drainTask.value
-        tasks.removeAll()
-        stopTask = nil
+        stopTask = completeStopTask
+        await completeStopTask.value
     }
 
     private func handle(_ action: ShortcutAction, token: UUID) async {
@@ -73,5 +75,12 @@ final class GlobalShortcutController {
             guard generation == token, !Task.isCancelled else { return }
             selectTarget(target)
         }
+    }
+
+    private func completeStop(token: UUID) {
+        guard stopToken == token else { return }
+        tasks.removeAll()
+        stopToken = nil
+        stopTask = nil
     }
 }

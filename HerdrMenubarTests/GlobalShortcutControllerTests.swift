@@ -201,7 +201,7 @@ final class GlobalShortcutControllerTests: XCTestCase {
         XCTAssertEqual(terminationCount, 2)
     }
 
-    func testStartDuringSharedStopWaitsForOldShutdownBeforeInstallingRestartConsumers() async {
+    func testJoiningStopIsCompleteBarrierBeforeRestartWithTripleCallers() async {
         let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "gated")
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: target, blocksNextLookup: true)
@@ -233,45 +233,40 @@ final class GlobalShortcutControllerTests: XCTestCase {
         await latestTarget.waitForLookups(1)
 
         var firstStopCompleted = false
-        let firstStopping = Task {
+        let firstStopping = Task(priority: .background) {
             await controller.stop()
             firstStopCompleted = true
         }
         await registrar.waitForTerminations(1)
-        let secondStopEntered = expectation(description: "second stop joined shutdown")
-        var secondStopCompleted = false
-        let secondStopping = Task {
-            secondStopEntered.fulfill()
-            await controller.stop()
-            secondStopCompleted = true
-        }
-        await fulfillment(of: [secondStopEntered], timeout: 1)
 
         controller.start()
 
         XCTAssertEqual(registrar.eventRequests, ShortcutAction.allCases)
         XCTAssertFalse(firstStopCompleted)
-        XCTAssertFalse(secondStopCompleted)
+        let concurrentStopEntered = expectation(description: "concurrent stop joined shutdown")
+        var concurrentStopCompleted = false
+        let concurrentStopping = Task(priority: .background) {
+            concurrentStopEntered.fulfill()
+            await controller.stop()
+            concurrentStopCompleted = true
+        }
+        await fulfillment(of: [concurrentStopEntered], timeout: 1)
+        XCTAssertFalse(concurrentStopCompleted)
 
         await latestTarget.releaseLookup()
-        await firstStopping.value
-        await secondStopping.value
         await registrar.waitForTerminations(2)
-        XCTAssertTrue(firstStopCompleted)
-        XCTAssertTrue(secondStopCompleted)
-        guard registrar.eventRequests == ShortcutAction.allCases else {
-            await controller.stop()
-            registrar.send(.keyUp, for: .toggleMenu, streamIndex: 1)
-            registrar.send(.keyUp, for: .focusLatestNotification, streamIndex: 1)
-            await registrar.waitForTerminations(4)
-            return
-        }
-
+        await controller.stop()
         controller.start()
         XCTAssertEqual(
             registrar.eventRequests,
             ShortcutAction.allCases + ShortcutAction.allCases
         )
+        guard registrar.eventRequests.count == 4 else {
+            await firstStopping.value
+            await concurrentStopping.value
+            return
+        }
+
         controller.start()
         XCTAssertEqual(registrar.eventRequests.count, 4)
         registrar.send(.keyUp, for: .toggleMenu, streamIndex: 1)
@@ -284,6 +279,10 @@ final class GlobalShortcutControllerTests: XCTestCase {
         await controller.stop()
         await controller.stop()
         await registrar.waitForTerminations(4)
+        await firstStopping.value
+        await concurrentStopping.value
+        XCTAssertTrue(firstStopCompleted)
+        XCTAssertTrue(concurrentStopCompleted)
         let terminationCount = await registrar.terminationCount()
         XCTAssertEqual(terminationCount, 4)
     }
