@@ -66,6 +66,10 @@ final class ShortcutAssignmentController {
         }
     }
 
+    func setRecordingActive(_ isActive: Bool) {
+        registrar.setGlobalShortcutDeliveryEnabled(!isActive)
+    }
+
     private func validate(_ candidate: ShortcutBinding, for action: ShortcutAction) -> Bool {
         if ShortcutAction.allCases.contains(where: {
             $0 != action && values[$0] == candidate

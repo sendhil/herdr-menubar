@@ -1,4 +1,5 @@
 import XCTest
+import KeyboardShortcuts
 @testable import HerdrMenubar
 
 @MainActor
@@ -190,6 +191,29 @@ final class ShortcutAssignmentControllerTests: XCTestCase {
         XCTAssertEqual(registrar.displayStringCalls, [])
         XCTAssertEqual(registrar.setCalls, [(.toggleMenu, menuShortcut)])
     }
+
+    func testRecordingLifecycleDisablesAndReenablesGlobalDelivery() {
+        let registrar = FakeShortcutRegistrar()
+        let controller = ShortcutAssignmentController(registrar: registrar)
+
+        controller.setRecordingActive(true)
+        controller.setRecordingActive(false)
+
+        XCTAssertEqual(registrar.globalDeliveryEnabledCalls, [false, true])
+        XCTAssertTrue(registrar.globalDeliveryIsEnabled)
+    }
+
+    func testLiveRegistrarControlsPackageGlobalDelivery() {
+        let originalValue = KeyboardShortcuts.isEnabled
+        defer { KeyboardShortcuts.isEnabled = originalValue }
+        let registrar = LiveShortcutRegistrar()
+
+        registrar.setGlobalShortcutDeliveryEnabled(false)
+        XCTAssertFalse(KeyboardShortcuts.isEnabled)
+
+        registrar.setGlobalShortcutDeliveryEnabled(true)
+        XCTAssertTrue(KeyboardShortcuts.isEnabled)
+    }
 }
 
 @MainActor
@@ -202,6 +226,8 @@ private final class FakeShortcutRegistrar: ShortcutRegistering {
     private(set) var setCalls: [(ShortcutAction, ShortcutBinding?)] = []
     private(set) var retryCalls: [ShortcutAction] = []
     private(set) var displayStringCalls: [ShortcutBinding] = []
+    private(set) var globalDeliveryEnabledCalls: [Bool] = []
+    private(set) var globalDeliveryIsEnabled = true
 
     func shortcut(for action: ShortcutAction) -> ShortcutBinding? {
         values[action]
@@ -239,6 +265,11 @@ private final class FakeShortcutRegistrar: ShortcutRegistering {
 
     func events(for action: ShortcutAction) -> AsyncStream<GlobalShortcutEvent> {
         AsyncStream { $0.finish() }
+    }
+
+    func setGlobalShortcutDeliveryEnabled(_ isEnabled: Bool) {
+        globalDeliveryIsEnabled = isEnabled
+        globalDeliveryEnabledCalls.append(isEnabled)
     }
 }
 

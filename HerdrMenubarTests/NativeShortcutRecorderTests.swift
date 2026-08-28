@@ -112,6 +112,136 @@ final class NativeShortcutRecorderTests: XCTestCase {
         XCTAssertEqual(clearCount, 0)
     }
 
+    func testEscapeEndsRecordingByResigningFirstResponder() {
+        let control = NativeShortcutRecorderControl()
+        let window = recorderWindow(control: control)
+        defer { window.close() }
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        control.keyDown(with: keyEvent(keyCode: 53))
+
+        XCTAssertFalse(window.firstResponder === control)
+    }
+
+    func testSuccessfulCaptureResignsFirstResponder() {
+        let control = NativeShortcutRecorderControl()
+        let window = recorderWindow(control: control)
+        defer { window.close() }
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        control.keyDown(with: keyEvent(keyCode: 0, modifiers: .command))
+
+        XCTAssertFalse(window.firstResponder === control)
+    }
+
+    func testTabEndsRecordingAndAdvancesKeyViewNavigation() {
+        let previous = FocusableTestView()
+        let control = NativeShortcutRecorderControl()
+        let next = FocusableTestView()
+        let window = recorderWindow(control: control, siblings: [previous, next])
+        defer { window.close() }
+        previous.nextKeyView = control
+        control.nextKeyView = next
+        next.nextKeyView = previous
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        control.keyDown(with: keyEvent(keyCode: 48))
+
+        XCTAssertTrue(window.firstResponder === next)
+    }
+
+    func testShiftTabEndsRecordingAndRetreatsKeyViewNavigation() {
+        let previous = FocusableTestView()
+        let control = NativeShortcutRecorderControl()
+        let next = FocusableTestView()
+        let window = recorderWindow(control: control, siblings: [previous, next])
+        defer { window.close() }
+        previous.nextKeyView = control
+        control.nextKeyView = next
+        next.nextKeyView = previous
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        control.keyDown(with: keyEvent(keyCode: 48, modifiers: .shift))
+
+        XCTAssertTrue(window.firstResponder === previous)
+    }
+
+    func testAutoRepeatIsIgnored() {
+        let control = NativeShortcutRecorderControl()
+        var callbackCount = 0
+        control.onCapture = { _ in callbackCount += 1 }
+        control.onCancel = { callbackCount += 1 }
+        control.onClear = { callbackCount += 1 }
+        control.onInvalidBareKey = { callbackCount += 1 }
+
+        control.keyDown(
+            with: keyEvent(keyCode: 0, modifiers: .command, isARepeat: true)
+        )
+
+        XCTAssertEqual(callbackCount, 0)
+    }
+
+    func testFirstResponderLifecyclePausesAndResumesExactlyOnce() {
+        let control = NativeShortcutRecorderControl()
+        var recordingStates: [Bool] = []
+        control.onRecordingChange = { recordingStates.append($0) }
+        let window = recorderWindow(control: control)
+        defer { window.close() }
+
+        XCTAssertTrue(window.makeFirstResponder(control))
+        XCTAssertEqual(recordingStates, [true])
+        XCTAssertTrue(window.makeFirstResponder(nil))
+        XCTAssertEqual(recordingStates, [true, false])
+
+        _ = control.resignFirstResponder()
+        XCTAssertEqual(recordingStates, [true, false])
+    }
+
+    func testRemovingActiveRecorderResumesExactlyOnce() {
+        let control = NativeShortcutRecorderControl()
+        var recordingStates: [Bool] = []
+        control.onRecordingChange = { recordingStates.append($0) }
+        let window = recorderWindow(control: control)
+        defer { window.close() }
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        control.removeFromSuperview()
+
+        XCTAssertEqual(recordingStates, [true, false])
+    }
+
+    func testClosingWindowWithActiveRecorderResumesExactlyOnce() {
+        let control = NativeShortcutRecorderControl()
+        var recordingStates: [Bool] = []
+        control.onRecordingChange = { recordingStates.append($0) }
+        let window = recorderWindow(control: control)
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        window.close()
+
+        XCTAssertEqual(recordingStates, [true, false])
+    }
+
+    func testSuccessfulCaptureResumesDeliveryBeforeCaptureCallback() {
+        let control = NativeShortcutRecorderControl()
+        var deliveryIsEnabled = true
+        var events: [String] = []
+        control.onRecordingChange = { isRecording in
+            deliveryIsEnabled = !isRecording
+            events.append(isRecording ? "pause" : "resume")
+        }
+        control.onCapture = { _ in
+            events.append(deliveryIsEnabled ? "capture-enabled" : "capture-disabled")
+        }
+        let window = recorderWindow(control: control)
+        defer { window.close() }
+        XCTAssertTrue(window.makeFirstResponder(control))
+
+        control.keyDown(with: keyEvent(keyCode: 0, modifiers: .command))
+
+        XCTAssertEqual(events, ["pause", "resume", "capture-enabled"])
+    }
+
     func testDeleteInvokesClearExactlyOnce() {
         let control = NativeShortcutRecorderControl()
         var clearCount = 0
@@ -207,7 +337,8 @@ final class NativeShortcutRecorderTests: XCTestCase {
             onCapture: onCapture,
             onCancel: {},
             onClear: {},
-            onInvalidBareKey: {}
+            onInvalidBareKey: {},
+            onRecordingChange: { _ in }
         )
     }
 
@@ -225,7 +356,8 @@ final class NativeShortcutRecorderTests: XCTestCase {
 
     private func keyEvent(
         keyCode: UInt16,
-        modifiers: NSEvent.ModifierFlags = []
+        modifiers: NSEvent.ModifierFlags = [],
+        isARepeat: Bool = false
     ) -> NSEvent {
         NSEvent.keyEvent(
             with: .keyDown,
@@ -236,8 +368,36 @@ final class NativeShortcutRecorderTests: XCTestCase {
             context: nil,
             characters: "a",
             charactersIgnoringModifiers: "a",
-            isARepeat: false,
+            isARepeat: isARepeat,
             keyCode: keyCode
         )!
     }
+
+    private func recorderWindow(
+        control: NativeShortcutRecorderControl,
+        siblings: [NSView] = []
+    ) -> NSWindow {
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let contentView = NSView(frame: window.contentLayoutRect)
+        ([control] + siblings).enumerated().forEach { index, view in
+            view.frame = NSRect(x: 20 + (index * 95), y: 30, width: 90, height: 32)
+            contentView.addSubview(view)
+        }
+        window.contentView = contentView
+        window.orderFront(nil)
+        return window
+    }
+}
+
+@MainActor
+private final class FocusableTestView: NSView {
+    override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { true }
 }

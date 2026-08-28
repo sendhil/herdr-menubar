@@ -37,6 +37,7 @@ protocol ShortcutRegistering: AnyObject {
     func conflictsWithMainMenu(_ shortcut: ShortcutBinding) -> Bool
     func displayString(for shortcut: ShortcutBinding) -> String
     func events(for action: ShortcutAction) -> AsyncStream<GlobalShortcutEvent>
+    func setGlobalShortcutDeliveryEnabled(_ isEnabled: Bool)
 }
 
 extension KeyboardShortcuts.Name {
@@ -110,6 +111,10 @@ final class LiveShortcutRegistrar: ShortcutRegistering {
                 producer.cancel()
             }
         }
+    }
+
+    func setGlobalShortcutDeliveryEnabled(_ isEnabled: Bool) {
+        KeyboardShortcuts.isEnabled = isEnabled
     }
 
     private func name(for action: ShortcutAction) -> KeyboardShortcuts.Name {

@@ -8,6 +8,10 @@ final class NativeShortcutRecorderControl: NSButton {
     var onCancel: (() -> Void)?
     var onClear: (() -> Void)?
     var onInvalidBareKey: (() -> Void)?
+    var onRecordingChange: ((Bool) -> Void)?
+
+    private var isRecording = false
+    private weak var observedWindow: NSWindow?
 
     private static let functionKeyCodes: Set<Int> = [
         122, 120, 99, 118, 96, 97, 98, 100, 101, 109,
@@ -28,17 +32,68 @@ final class NativeShortcutRecorderControl: NSButton {
         true
     }
 
+    override func becomeFirstResponder() -> Bool {
+        let didBecomeFirstResponder = super.becomeFirstResponder()
+        if didBecomeFirstResponder {
+            beginRecordingIfNeeded()
+        }
+        return didBecomeFirstResponder
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResignFirstResponder = super.resignFirstResponder()
+        if didResignFirstResponder {
+            endRecordingIfNeeded()
+        }
+        return didResignFirstResponder
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if let observedWindow, observedWindow !== newWindow {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSWindow.willCloseNotification,
+                object: observedWindow
+            )
+            self.observedWindow = nil
+            endRecordingIfNeeded()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window, observedWindow !== window else { return }
+        observedWindow = window
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
+        guard !event.isARepeat else { return }
+
         switch event.keyCode {
         case 53:
+            resignAndEndRecording()
             onCancel?()
         case 51, 117:
             onClear?()
+        case 48:
+            if event.modifierFlags.contains(.shift) {
+                window?.selectPreviousKeyView(self)
+            } else {
+                window?.selectNextKeyView(self)
+            }
+            resignAndEndRecording()
         default:
             guard let shortcut = KeyboardShortcuts.Shortcut(event: event) else {
                 NSSound.beep()
@@ -52,6 +107,7 @@ final class NativeShortcutRecorderControl: NSButton {
                 onInvalidBareKey?()
                 return
             }
+            resignAndEndRecording()
             onCapture?(binding)
         }
     }
@@ -68,6 +124,29 @@ final class NativeShortcutRecorderControl: NSButton {
         focusRingType = .default
         isBordered = true
     }
+
+    private func beginRecordingIfNeeded() {
+        guard !isRecording else { return }
+        isRecording = true
+        onRecordingChange?(true)
+    }
+
+    private func resignAndEndRecording() {
+        if window?.firstResponder === self {
+            window?.makeFirstResponder(nil)
+        }
+        endRecordingIfNeeded()
+    }
+
+    private func endRecordingIfNeeded() {
+        guard isRecording else { return }
+        isRecording = false
+        onRecordingChange?(false)
+    }
+
+    @objc private func windowWillClose(_ notification: Notification) {
+        endRecordingIfNeeded()
+    }
 }
 
 struct NativeShortcutRecorder: NSViewRepresentable {
@@ -77,6 +156,7 @@ struct NativeShortcutRecorder: NSViewRepresentable {
     let onCancel: () -> Void
     let onClear: () -> Void
     let onInvalidBareKey: () -> Void
+    let onRecordingChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> NativeShortcutRecorderControl {
         NativeShortcutRecorderControl()
@@ -90,5 +170,6 @@ struct NativeShortcutRecorder: NSViewRepresentable {
         control.onCancel = onCancel
         control.onClear = onClear
         control.onInvalidBareKey = onInvalidBareKey
+        control.onRecordingChange = onRecordingChange
     }
 }
