@@ -151,7 +151,7 @@ final class ApplicationRuntimeTests: XCTestCase {
             "status.stop",
             "settings.stop",
             "observation.cancel",
-            "target.reset",
+            "target.sealAndReset",
             "store.stop"
         ])
         XCTAssertEqual(harness.shortcutStopCount, 1)
@@ -178,6 +178,61 @@ final class ApplicationRuntimeTests: XCTestCase {
         XCTAssertTrue(harness.appliedCounts.isEmpty)
         XCTAssertEqual(harness.statusStartCount, 1)
         XCTAssertEqual(harness.shortcutStartCount, 1)
+    }
+
+    func testShutdownCannotResurrectTargetFromAcceptedNoncooperativeDelivery() async {
+        let supervisor = RuntimeNotificationSupervisor()
+        let service = RuntimeNoncooperativeNotificationService()
+        let latestTarget = LatestNotificationTargetStore()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: latestTarget
+        )
+        let suiteName = "dev.herdr.menubar.runtime-resurrection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = Preferences(defaults: defaults)
+        preferences.notificationsEnabled = true
+        let store = AgentStore(
+            supervisor: supervisor,
+            terminalActivator: RuntimeNoopTerminalActivator(),
+            wezTermFocuser: RuntimeNoopWezTermFocuser(),
+            attentionCoordinator: coordinator,
+            notificationService: service,
+            preferences: preferences
+        )
+        let resetFinished = RuntimeSignal()
+        let harness = RuntimeHarness()
+        harness.customStartStore = { await store.start() }
+        harness.customStopStore = { await store.stop() }
+        harness.customSealAndResetLatestTarget = {
+            await latestTarget.sealAndReset()
+            await resetFinished.signal()
+        }
+        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
+        let descriptor = SessionDescriptor(
+            id: .default,
+            socketURL: URL(fileURLWithPath: "/tmp/runtime-resurrection.sock")
+        )
+
+        await runtime.start()
+        await supervisor.send(.connected(
+            descriptor,
+            runtimeSnapshot(status: .working)
+        ))
+        await supervisor.send(.snapshot(
+            descriptor.id,
+            runtimeSnapshot(status: .blocked)
+        ))
+        await service.waitForAttempt()
+
+        let stopping = Task { await runtime.stop() }
+        await resetFinished.wait()
+        await service.release()
+        await stopping.value
+
+        let targetAfterStop = await latestTarget.latest()
+        XCTAssertNil(targetAfterStop)
     }
 
     func testLateObservationAndShortcutCallbacksAreRejectedAfterStop() async {
@@ -275,6 +330,9 @@ private final class RuntimeHarness {
     var statusStart: (() -> Void)?
     var statusApply: ((StatusItemPresentation) -> Void)?
     var statusStop: (() -> Void)?
+    var customStartStore: (() async -> Void)?
+    var customStopStore: (() async -> Void)?
+    var customSealAndResetLatestTarget: (() async -> Void)?
 
     private var notificationContinuation: CheckedContinuation<Void, Never>?
     private var notificationEnteredContinuation: CheckedContinuation<Void, Never>?
@@ -353,10 +411,12 @@ private final class RuntimeHarness {
             startStore: { [weak self] in
                 self?.storeStartCount += 1
                 self?.events.append("store.start")
+                await self?.customStartStore?()
             },
             stopStore: { [weak self] in
                 self?.storeStopCount += 1
                 self?.events.append("store.stop")
+                await self?.customStopStore?()
             },
             retryStore: { [weak self] in
                 self?.retryCount += 1
@@ -368,7 +428,10 @@ private final class RuntimeHarness {
                 self?.events.append("store.select.\(target.sessionID.displayName).\(target.paneID)")
             },
             selectTerminal: { [weak self] id in self?.events.append("terminal.select.\(id)") },
-            resetLatestTarget: { [weak self] in self?.events.append("target.reset") },
+            sealAndResetLatestTarget: { [weak self] in
+                self?.events.append("target.sealAndReset")
+                await self?.customSealAndResetLatestTarget?()
+            },
             makePresentation: { [weak self] in self?.presentation.snapshot ?? RuntimePresentationState().snapshot },
             quit: { [weak self] in self?.events.append("quit") },
             lifecycleInvalidated: { [weak self] in self?.events.append("lifecycle.invalidate") },
@@ -421,6 +484,104 @@ private final class RuntimeHarness {
         asyncActionWaiters.removeAll { asyncActions >= $0.0 }
         ready.forEach { $0.1.resume() }
     }
+}
+
+private func runtimeSnapshot(status: AgentStatus) -> PresentationSnapshot {
+    PresentationSnapshot(
+        panes: [PaneInfo(
+            paneID: "accepted-late",
+            terminalID: "terminal",
+            workspaceID: "workspace",
+            tabID: "tab",
+            focused: false,
+            label: "Late",
+            agent: "claude",
+            title: "Late",
+            displayAgent: "Claude",
+            agentStatus: status,
+            revision: 1
+        )],
+        workspaces: [],
+        tabs: []
+    )
+}
+
+private actor RuntimeSignal {
+    private var isSignaled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        isSignaled = true
+        let current = waiters
+        waiters.removeAll()
+        current.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        guard !isSignaled else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
+private actor RuntimeNotificationSupervisor: SessionSupervising {
+    private var continuation: AsyncStream<SessionSupervisorEvent>.Continuation?
+
+    func events() -> AsyncStream<SessionSupervisorEvent> {
+        let (stream, continuation) = AsyncStream<SessionSupervisorEvent>.makeStream()
+        self.continuation = continuation
+        return stream
+    }
+
+    func start() {}
+    func stop() { continuation?.finish() }
+    func retryUnavailable() {}
+    func focus(sessionID: SessionID, paneID: String) throws -> PaneInfo {
+        runtimeSnapshot(status: .working).panes[0]
+    }
+    func setClientWindowTitle(
+        sessionID: SessionID,
+        title: String
+    ) throws -> ClientWindowTitleResult {
+        ClientWindowTitleResult(type: "client_window_title", changed: false, reason: "test")
+    }
+    func clearClientWindowTitle(
+        sessionID: SessionID,
+        timeout: Duration
+    ) throws -> ClientWindowTitleResult {
+        ClientWindowTitleResult(type: "client_window_title", changed: false, reason: "test")
+    }
+    func refresh(sessionID: SessionID) {}
+    func send(_ event: SessionSupervisorEvent) { continuation?.yield(event) }
+}
+
+private actor RuntimeNoncooperativeNotificationService: NativeNotificationServing {
+    private let attempted = RuntimeSignal()
+    private let releaseGate = RuntimeSignal()
+
+    func responses() -> NotificationResponseSubscription { .finished() }
+    func requestAuthorization() throws -> Bool { true }
+    func settings() -> NotificationSystemSettings { .authorized }
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
+        await attempted.signal()
+        await releaseGate.wait()
+        return .accepted
+    }
+    func waitForAttempt() async { await attempted.wait() }
+    func release() async { await releaseGate.signal() }
+}
+
+@MainActor
+private struct RuntimeNoopTerminalActivator: TerminalActivating {
+    func activate(bundleIdentifier: String) async throws {}
+}
+
+@MainActor
+private final class RuntimeNoopWezTermFocuser: WezTermSessionFocusing {
+    func focusAttachedClient(sessionID: SessionID) async throws {}
+    func forget(sessionID: SessionID) {}
 }
 
 @MainActor

@@ -627,6 +627,10 @@ private actor RecordingLatestNotificationTargetRecorder: LatestNotificationTarge
     func reset() {
         latestEntry = nil
     }
+
+    func sealAndReset() {
+        latestEntry = nil
+    }
 }
 
 private actor ControlledNotificationService: NativeNotificationServing {

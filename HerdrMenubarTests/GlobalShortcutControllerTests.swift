@@ -412,6 +412,10 @@ private actor GlobalShortcutTargetFake: LatestNotificationTargetRecording {
         target = nil
     }
 
+    func sealAndReset() {
+        target = nil
+    }
+
     func setTarget(_ target: NotificationSelectionTarget?) {
         self.target = target
     }

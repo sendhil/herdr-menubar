@@ -29,7 +29,7 @@ struct ApplicationRuntimeDependencies {
     let retryStore: () async -> Void
     let selectTarget: (NotificationSelectionTarget) -> Void
     let selectTerminal: (String) -> Void
-    let resetLatestTarget: () async -> Void
+    let sealAndResetLatestTarget: () async -> Void
     let makePresentation: () -> StatusItemPresentation
     let quit: () -> Void
     let lifecycleInvalidated: () -> Void
@@ -136,7 +136,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             selectTerminal: {
                 preferences.selectedTerminalBundleIdentifier = $0
             },
-            resetLatestTarget: { await latestTargetStore.reset() },
+            sealAndResetLatestTarget: { await latestTargetStore.sealAndReset() },
             makePresentation: {
                 presentationBuilder.make(
                     store: store,
@@ -229,7 +229,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             dependencies.stopStatusItem()
             dependencies.stopShortcutSettings()
             cancelObservation()
-            await dependencies.resetLatestTarget()
+            await dependencies.sealAndResetLatestTarget()
             await dependencies.stopStore()
         }
         stopTask = task

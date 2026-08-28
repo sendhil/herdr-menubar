@@ -80,6 +80,7 @@ protocol LatestNotificationTargetRecording: Sendable {
     func record(_ target: NotificationSelectionTarget, ordinal: UInt64) async
     func latest() async -> NotificationSelectionTarget?
     func reset() async
+    func sealAndReset() async
 }
 
 struct NotificationDeliveryPolicy: Equatable, Sendable {

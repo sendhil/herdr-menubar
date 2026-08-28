@@ -17,4 +17,22 @@ final class LatestNotificationTargetStoreTests: XCTestCase {
         let resetLatest = await store.latest()
         XCTAssertNil(resetLatest)
     }
+
+    func testSealAndResetPermanentlyRejectsLaterRecordsAndIsIdempotent() async {
+        let store = LatestNotificationTargetStore()
+        let beforeSeal = NotificationSelectionTarget(sessionID: .default, paneID: "before")
+        let acceptedLate = NotificationSelectionTarget(
+            sessionID: .named("work"),
+            paneID: "accepted-late"
+        )
+        await store.record(beforeSeal, ordinal: 1)
+
+        await store.sealAndReset()
+        await store.record(acceptedLate, ordinal: .max)
+        await store.reset()
+        await store.sealAndReset()
+
+        let latest = await store.latest()
+        XCTAssertNil(latest)
+    }
 }
