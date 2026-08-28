@@ -167,7 +167,7 @@ final class SystemServiceTests: XCTestCase {
         let backend = FakeLoginBackend(status: .notRegistered)
         let service = LoginItemService(backend: backend)
         let firstOperation = Task {
-            try await StatusMenu.updateLoginIntent(
+            try await ApplicationRuntime.updateLoginIntent(
                 enabled: true,
                 service: service,
                 preferences: preferences
@@ -176,7 +176,7 @@ final class SystemServiceTests: XCTestCase {
         while !service.isChanging { await Task.yield() }
 
         await XCTAssertThrowsErrorAsync(
-            try await StatusMenu.updateLoginIntent(
+            try await ApplicationRuntime.updateLoginIntent(
                 enabled: false,
                 service: service,
                 preferences: preferences

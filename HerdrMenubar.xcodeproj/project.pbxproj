@@ -18,8 +18,6 @@
 		12A000000000000000000033 /* MenuBarIconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000034 /* MenuBarIconTests.swift */; };
 		12A00000000000000000000A /* AgentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000020 /* AgentStore.swift */; };
 		12A00000000000000000000B /* MenuBarIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000021 /* MenuBarIcon.swift */; };
-		12A00000000000000000000C /* StatusMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000022 /* StatusMenu.swift */; };
-		12A00000000000000000000D /* AgentRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000023 /* AgentRow.swift */; };
 		12A00000000000000000000E /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000024 /* Preferences.swift */; };
 		12A00000000000000000000F /* TerminalActivationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000025 /* TerminalActivationService.swift */; };
 		12A000000000000000000010 /* PreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000026 /* PreferencesTests.swift */; };
@@ -65,6 +63,8 @@
 		E3000000000000000000001F /* KeyboardShortcutSettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000000000000000000001E /* KeyboardShortcutSettingsWindowController.swift */; };
 		E30000000000000000000021 /* KeyboardShortcutSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000020 /* KeyboardShortcutSettingsTests.swift */; };
 		E30000000000000000000025 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = E30000000000000000000024 /* KeyboardShortcuts */; };
+		E3000000000000000000002B /* ApplicationRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000000000000000000002A /* ApplicationRuntimeTests.swift */; };
+		E30000000000000000000029 /* ApplicationRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000028 /* ApplicationRuntime.swift */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -97,8 +97,6 @@
 		12A000000000000000000034 /* MenuBarIconTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarIconTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000020 /* AgentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStore.swift; sourceTree = "<group>"; };
 		12A000000000000000000021 /* MenuBarIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarIcon.swift; sourceTree = "<group>"; };
-		12A000000000000000000022 /* StatusMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenu.swift; sourceTree = "<group>"; };
-		12A000000000000000000023 /* AgentRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRow.swift; sourceTree = "<group>"; };
 		12A000000000000000000024 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
 		12A000000000000000000025 /* TerminalActivationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalActivationService.swift; sourceTree = "<group>"; };
 		12A000000000000000000026 /* PreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesTests.swift; sourceTree = "<group>"; };
@@ -144,6 +142,8 @@
 		E3000000000000000000001C /* KeyboardShortcutSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettingsView.swift; sourceTree = "<group>"; };
 		E3000000000000000000001E /* KeyboardShortcutSettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettingsWindowController.swift; sourceTree = "<group>"; };
 		E30000000000000000000020 /* KeyboardShortcutSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettingsTests.swift; sourceTree = "<group>"; };
+		E3000000000000000000002A /* ApplicationRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationRuntimeTests.swift; sourceTree = "<group>"; };
+		E30000000000000000000028 /* ApplicationRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationRuntime.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -163,6 +163,7 @@
 		7B7F2BADAF554B3A0A94F63D /* App */ = {
 			isa = PBXGroup;
 			children = (
+				E30000000000000000000028 /* ApplicationRuntime.swift */,
 				53FA03C96D726A4457004B52 /* HerdrMenubarApp.swift */,
 			);
 			path = App;
@@ -181,6 +182,7 @@
 		81C4C4A92CC200E54E48A4C3 /* HerdrMenubarTests */ = {
 			isa = PBXGroup;
 			children = (
+				E3000000000000000000002A /* ApplicationRuntimeTests.swift */,
 				E30000000000000000000020 /* KeyboardShortcutSettingsTests.swift */,
 				E30000000000000000000012 /* GlobalShortcutControllerTests.swift */,
 				E30000000000000000000016 /* StatusMenuPresentationTests.swift */,
@@ -239,8 +241,6 @@
 				12A000000000000000000021 /* MenuBarIcon.swift */,
 				E30000000000000000000014 /* StatusMenuPresentation.swift */,
 				E30000000000000000000018 /* StatusItemController.swift */,
-				12A000000000000000000022 /* StatusMenu.swift */,
-				12A000000000000000000023 /* AgentRow.swift */,
 			);
 			path = Menu;
 			sourceTree = "<group>";
@@ -439,8 +439,6 @@
 				12A000000000000000000007 /* HerdrClient.swift in Sources */,
 				12A00000000000000000000A /* AgentStore.swift in Sources */,
 				12A00000000000000000000B /* MenuBarIcon.swift in Sources */,
-				12A00000000000000000000C /* StatusMenu.swift in Sources */,
-				12A00000000000000000000D /* AgentRow.swift in Sources */,
 				12A00000000000000000000E /* Preferences.swift in Sources */,
 				12A00000000000000000000F /* TerminalActivationService.swift in Sources */,
 				12A00000000000000000002B /* LoginItemService.swift in Sources */,
@@ -450,6 +448,7 @@
 				D20000000000000000000007 /* NativeNotificationService.swift in Sources */,
 				D20000000000000000000009 /* NotificationSettingsController.swift in Sources */,
 				902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */,
+				E30000000000000000000029 /* ApplicationRuntime.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -461,6 +460,7 @@
 				E30000000000000000000013 /* GlobalShortcutControllerTests.swift in Sources */,
 				E30000000000000000000017 /* StatusMenuPresentationTests.swift in Sources */,
 				E3000000000000000000001B /* StatusItemControllerTests.swift in Sources */,
+				E3000000000000000000002B /* ApplicationRuntimeTests.swift in Sources */,
 				E3000000000000000000000F /* NativeShortcutRecorderTests.swift in Sources */,
 				E3000000000000000000000B /* ShortcutAssignmentControllerTests.swift in Sources */,
 				E30000000000000000000005 /* LatestNotificationTargetStoreTests.swift in Sources */,
