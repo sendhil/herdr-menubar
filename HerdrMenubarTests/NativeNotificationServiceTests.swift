@@ -3,6 +3,26 @@ import XCTest
 @testable import HerdrMenubar
 
 final class NativeNotificationServiceTests: XCTestCase {
+    func testSuppressedDeliveryReturnsSuppressedAndAddsNothing() async throws {
+        let backend = FakeNotificationCenterBackend(settings: .denied)
+        let service = NativeNotificationService(backend: backend)
+
+        let result = try await service.deliver(blockedEvent(), sound: true)
+
+        XCTAssertEqual(result, .suppressed)
+        XCTAssertEqual(backend.addedRequests, [])
+    }
+
+    func testAcceptedDeliveryReturnsAcceptedOnlyAfterBackendAdd() async throws {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        let service = NativeNotificationService(backend: backend)
+
+        let result = try await service.deliver(blockedEvent(), sound: false)
+
+        XCTAssertEqual(result, .accepted)
+        XCTAssertEqual(backend.addedRequests.count, 1)
+    }
+
     func testAuthorizationRequestsAlertsAndSoundExactly() async throws {
         let backend = FakeNotificationCenterBackend(authorizationResult: true)
         let service = NativeNotificationService(backend: backend)
@@ -90,8 +110,8 @@ final class NativeNotificationServiceTests: XCTestCase {
             status: .done
         )
 
-        try await service.deliver(event, sound: false)
-        try await service.deliver(event, sound: false)
+        _ = try await service.deliver(event, sound: false)
+        _ = try await service.deliver(event, sound: false)
 
         let requests = backend.addedRequests
         XCTAssertEqual(requests.count, 2)
@@ -110,7 +130,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let backend = FakeNotificationCenterBackend(settings: .authorized)
         let service = NativeNotificationService(backend: backend)
 
-        try await service.deliver(blockedEvent(), sound: false)
+        _ = try await service.deliver(blockedEvent(), sound: false)
 
         let request = try XCTUnwrap(backend.addedRequests.first)
         XCTAssertEqual(request.content.title, "Agent blocked")
@@ -122,10 +142,10 @@ final class NativeNotificationServiceTests: XCTestCase {
         let service = NativeNotificationService(backend: backend)
         let event = blockedEvent()
 
-        try await service.deliver(event, sound: false)
+        _ = try await service.deliver(event, sound: false)
         XCTAssertNil(backend.addedRequests[0].content.sound)
 
-        try await service.deliver(event, sound: true)
+        _ = try await service.deliver(event, sound: true)
         XCTAssertNotNil(backend.addedRequests[1].content.sound)
 
         backend.settingsValue = NotificationSystemSettings(
@@ -133,7 +153,7 @@ final class NativeNotificationServiceTests: XCTestCase {
             alertsEnabled: true,
             soundsEnabled: false
         )
-        try await service.deliver(event, sound: true)
+        _ = try await service.deliver(event, sound: true)
         XCTAssertNil(backend.addedRequests[2].content.sound)
     }
 
@@ -159,7 +179,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         for settings in unavailableSettings {
             let backend = FakeNotificationCenterBackend(settings: settings)
             let service = NativeNotificationService(backend: backend)
-            try await service.deliver(blockedEvent(), sound: true)
+            _ = try await service.deliver(blockedEvent(), sound: true)
             XCTAssertEqual(backend.addedRequests, [])
         }
     }

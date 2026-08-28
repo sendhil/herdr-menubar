@@ -48,6 +48,8 @@
 		D2000000000000000000000B /* AttentionNotificationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2000000000000000000000A /* AttentionNotificationCoordinatorTests.swift */; };
 		D2000000000000000000000D /* NativeNotificationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2000000000000000000000C /* NativeNotificationServiceTests.swift */; };
 		D2000000000000000000000F /* NotificationSettingsControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2000000000000000000000E /* NotificationSettingsControllerTests.swift */; };
+		E30000000000000000000003 /* LatestNotificationTargetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000002 /* LatestNotificationTargetStore.swift */; };
+		E30000000000000000000005 /* LatestNotificationTargetStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -111,6 +113,8 @@
 		D2000000000000000000000A /* AttentionNotificationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionNotificationCoordinatorTests.swift; sourceTree = "<group>"; };
 		D2000000000000000000000C /* NativeNotificationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeNotificationServiceTests.swift; sourceTree = "<group>"; };
 		D2000000000000000000000E /* NotificationSettingsControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsControllerTests.swift; sourceTree = "<group>"; };
+		E30000000000000000000002 /* LatestNotificationTargetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatestNotificationTargetStore.swift; sourceTree = "<group>"; };
+		E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatestNotificationTargetStoreTests.swift; sourceTree = "<group>"; };
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -148,6 +152,7 @@
 		81C4C4A92CC200E54E48A4C3 /* HerdrMenubarTests */ = {
 			isa = PBXGroup;
 			children = (
+				E30000000000000000000004 /* LatestNotificationTargetStoreTests.swift */,
 				D2000000000000000000000A /* AttentionNotificationCoordinatorTests.swift */,
 				D2000000000000000000000C /* NativeNotificationServiceTests.swift */,
 				D2000000000000000000000E /* NotificationSettingsControllerTests.swift */,
@@ -219,6 +224,7 @@
 		D20000000000000000000001 /* Notifications */ = {
 			isa = PBXGroup;
 			children = (
+				E30000000000000000000002 /* LatestNotificationTargetStore.swift */,
 				D20000000000000000000002 /* NotificationModels.swift */,
 				D20000000000000000000004 /* AttentionNotificationCoordinator.swift */,
 				D20000000000000000000006 /* NativeNotificationService.swift */,
@@ -344,6 +350,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E30000000000000000000003 /* LatestNotificationTargetStore.swift in Sources */,
 				C10000000000000000000001 /* BoundedProcessRunner.swift in Sources */,
 				C10000000000000000000004 /* WezTermCLI.swift in Sources */,
 				C10000000000000000000005 /* WezTermFocusAdapter.swift in Sources */,
@@ -373,6 +380,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E30000000000000000000005 /* LatestNotificationTargetStoreTests.swift in Sources */,
 				D2000000000000000000000B /* AttentionNotificationCoordinatorTests.swift in Sources */,
 				D2000000000000000000000D /* NativeNotificationServiceTests.swift in Sources */,
 				D2000000000000000000000F /* NotificationSettingsControllerTests.swift in Sources */,

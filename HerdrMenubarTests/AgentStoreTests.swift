@@ -1644,14 +1644,19 @@ private actor RecordingNotificationService: NativeNotificationServing {
     private var historicalContinuations: [AsyncStream<NotificationSelectionTarget>.Continuation] = []
     private var bufferedTargets: [NotificationSelectionTarget] = []
     private let responsesGate: AsyncGate?
+    private let deliveryResult: NotificationDeliveryResult
     private(set) var responsesCallCount = 0
     private(set) var cancellationCount = 0
     private(set) var deliveredResponseCount = 0
     private let responsesSignal = AsyncCountSignal()
     private let cancellationSignal = AsyncCountSignal()
 
-    init(blockResponses: Bool = false) {
+    init(
+        blockResponses: Bool = false,
+        deliveryResult: NotificationDeliveryResult = .accepted
+    ) {
         responsesGate = blockResponses ? AsyncGate() : nil
+        self.deliveryResult = deliveryResult
     }
 
     var activeSubscriberCount: Int { subscribers.count }
@@ -1679,7 +1684,12 @@ private actor RecordingNotificationService: NativeNotificationServing {
 
     func requestAuthorization() async throws -> Bool { true }
     func settings() async -> NotificationSystemSettings { .authorized }
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {}
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
+        deliveryResult
+    }
 
     func send(
         _ target: NotificationSelectionTarget,

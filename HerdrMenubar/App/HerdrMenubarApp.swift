@@ -44,7 +44,11 @@ struct HerdrMenubarApp: App {
         )
         let preferences = Preferences()
         let notificationService = NativeNotificationService()
-        let attentionCoordinator = AttentionNotificationCoordinator(service: notificationService)
+        let latestNotificationTargetStore = LatestNotificationTargetStore()
+        let attentionCoordinator = AttentionNotificationCoordinator(
+            service: notificationService,
+            latestTargetRecorder: latestNotificationTargetStore
+        )
         let notificationSettings = NotificationSettingsController(
             service: notificationService,
             preferences: preferences

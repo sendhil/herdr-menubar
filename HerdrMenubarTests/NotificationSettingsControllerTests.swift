@@ -520,7 +520,12 @@ private actor FakeNotificationSettingsService: NativeNotificationServing {
         return result
     }
 
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {}
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
+        .accepted
+    }
 
     func setSettings(_ settings: NotificationSystemSettings) {
         settingsValue = settings

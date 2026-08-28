@@ -2,11 +2,17 @@ import OSLog
 
 actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
     private let service: any NativeNotificationServing
+    private let latestTargetRecorder: any LatestNotificationTargetRecording
     private var baselinedSessions: Set<SessionID> = []
     private var statuses: [SessionID: [String: AgentStatus]] = [:]
+    private var nextDeliveryOrdinal: UInt64 = 0
 
-    init(service: any NativeNotificationServing) {
+    init(
+        service: any NativeNotificationServing,
+        latestTargetRecorder: any LatestNotificationTargetRecording
+    ) {
         self.service = service
+        self.latestTargetRecorder = latestTargetRecorder
     }
 
     func reconcile(
@@ -34,23 +40,30 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
         statuses[session.id] = current
         guard policy.notificationsEnabled else { return }
 
-        for item in canonicalItems {
-            guard item.status == .blocked || item.status == .done else { continue }
-            guard previous[item.paneID] != item.status else { continue }
+        let candidates = canonicalItems.compactMap { item -> AttentionNotificationEvent? in
+            guard item.status == .blocked || item.status == .done else { return nil }
+            guard previous[item.paneID] != item.status else { return nil }
+            return AttentionNotificationEvent(
+                target: NotificationSelectionTarget(
+                    sessionID: session.id,
+                    paneID: item.paneID
+                ),
+                sessionName: session.displayName,
+                visibleLabel: item.visibleLabel,
+                status: item.status
+            )
+        }
+
+        for event in candidates {
             guard !Task.isCancelled else { return }
+            precondition(nextDeliveryOrdinal < .max, "notification delivery ordinal exhausted")
+            nextDeliveryOrdinal += 1
+            let ordinal = nextDeliveryOrdinal
             do {
-                try await service.deliver(
-                    AttentionNotificationEvent(
-                        target: NotificationSelectionTarget(
-                            sessionID: session.id,
-                            paneID: item.paneID
-                        ),
-                        sessionName: session.displayName,
-                        visibleLabel: item.visibleLabel,
-                        status: item.status
-                    ),
-                    sound: policy.soundEnabled
-                )
+                let result = try await service.deliver(event, sound: policy.soundEnabled)
+                if result == .accepted {
+                    await latestTargetRecorder.record(event.target, ordinal: ordinal)
+                }
             } catch is CancellationError {
                 return
             } catch {

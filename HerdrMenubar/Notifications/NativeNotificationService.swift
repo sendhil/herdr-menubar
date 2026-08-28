@@ -97,9 +97,14 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         await backend.settings()
     }
 
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
         let settings = await backend.settings()
-        guard settings.authorization == .authorized, settings.alertsEnabled else { return }
+        guard settings.authorization == .authorized, settings.alertsEnabled else {
+            return .suppressed
+        }
 
         let content = UNMutableNotificationContent()
         content.title = event.status == .blocked ? "Agent blocked" : "Agent finished"
@@ -116,6 +121,7 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
                 trigger: nil
             )
         )
+        return .accepted
     }
 
     nonisolated func userNotificationCenter(

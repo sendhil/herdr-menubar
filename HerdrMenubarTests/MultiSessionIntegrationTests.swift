@@ -73,7 +73,11 @@ final class MultiSessionIntegrationTests: XCTestCase {
             removalGracePeriod: .seconds(10)
         )
         let notifications = IntegrationNotificationService()
-        let liveCoordinator = AttentionNotificationCoordinator(service: notifications)
+        let latestTargetStore = LatestNotificationTargetStore()
+        let liveCoordinator = AttentionNotificationCoordinator(
+            service: notifications,
+            latestTargetRecorder: latestTargetStore
+        )
         let coordinator = IntegrationObservingAttentionCoordinator(wrapping: liveCoordinator)
         let activator = await MainActor.run { IntegrationRecordingActivator() }
         let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
@@ -504,6 +508,11 @@ private struct IntegrationNotificationDelivery: Equatable, Sendable {
 private actor IntegrationNotificationService: NativeNotificationServing {
     private(set) var deliveries: [IntegrationNotificationDelivery] = []
     private var responseContinuation: AsyncStream<NotificationSelectionTarget>.Continuation?
+    private let deliveryResult: NotificationDeliveryResult
+
+    init(deliveryResult: NotificationDeliveryResult = .accepted) {
+        self.deliveryResult = deliveryResult
+    }
 
     func responses() async -> NotificationResponseSubscription {
         let (stream, continuation) = AsyncStream<NotificationSelectionTarget>.makeStream()
@@ -523,8 +532,12 @@ private actor IntegrationNotificationService: NativeNotificationServing {
 
     func requestAuthorization() async throws -> Bool { true }
     func settings() async -> NotificationSystemSettings { .authorized }
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
         deliveries.append(IntegrationNotificationDelivery(event: event, sound: sound))
+        return deliveryResult
     }
 }
 

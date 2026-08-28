@@ -71,6 +71,17 @@ struct AttentionNotificationEvent: Equatable, Sendable {
     let status: AgentStatus
 }
 
+enum NotificationDeliveryResult: Equatable, Sendable {
+    case accepted
+    case suppressed
+}
+
+protocol LatestNotificationTargetRecording: Sendable {
+    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) async
+    func latest() async -> NotificationSelectionTarget?
+    func reset() async
+}
+
 struct NotificationDeliveryPolicy: Equatable, Sendable {
     let notificationsEnabled: Bool
     let soundEnabled: Bool
@@ -108,7 +119,10 @@ protocol NativeNotificationServing: Sendable {
     func responses() async -> NotificationResponseSubscription
     func requestAuthorization() async throws -> Bool
     func settings() async -> NotificationSystemSettings
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult
 }
 
 protocol AttentionNotificationCoordinating: Sendable {

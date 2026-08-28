@@ -2,9 +2,91 @@ import XCTest
 @testable import HerdrMenubar
 
 final class AttentionNotificationCoordinatorTests: XCTestCase {
+    func testOverlappingDeliveriesRecordMonotonicSubmissionOrderAndKeepNewestTarget() async {
+        let service = OverlappingNotificationService()
+        let recorder = RecordingLatestNotificationTargetRecorder()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: recorder
+        )
+        let a = descriptor("a")
+        let b = descriptor("b")
+        let policy = enabledPolicy()
+
+        await coordinator.reconcile(
+            session: a,
+            items: [item(a, "a1", .working), item(a, "a2", .working)],
+            policy: policy
+        )
+        await coordinator.reconcile(
+            session: b,
+            items: [item(b, "b1", .working)],
+            policy: policy
+        )
+
+        let aReconcile = Task {
+            await coordinator.reconcile(
+                session: a,
+                items: [item(a, "a1", .blocked), item(a, "a2", .done)],
+                policy: policy
+            )
+        }
+        await service.waitForA1Attempt()
+
+        await coordinator.reconcile(
+            session: b,
+            items: [item(b, "b1", .blocked)],
+            policy: policy
+        )
+        await service.releaseA1()
+        await aReconcile.value
+
+        let attemptedPaneIDs = await service.attemptedPaneIDs
+        let recorderCalls = await recorder.calls
+        let latestTarget = await recorder.latest()
+        XCTAssertEqual(attemptedPaneIDs, ["a1", "b1", "a2"])
+        XCTAssertEqual(recorderCalls, [
+            .init(target: target(b, "b1"), ordinal: 2),
+            .init(target: target(a, "a1"), ordinal: 1),
+            .init(target: target(a, "a2"), ordinal: 3)
+        ])
+        XCTAssertEqual(latestTarget, target(a, "a2"))
+    }
+
+    func testSuppressedDeliveryDoesNotRecordLatestTarget() async {
+        let service = RecordingNotificationService(deliveryResult: .suppressed)
+        let recorder = RecordingLatestNotificationTargetRecorder()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: recorder
+        )
+        let session = descriptor("work")
+
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "pane", .working)],
+            policy: enabledPolicy()
+        )
+        await coordinator.reconcile(
+            session: session,
+            items: [item(session, "pane", .blocked)],
+            policy: enabledPolicy()
+        )
+
+        let deliveredPaneIDs = await service.deliveries.map(\.event.target.paneID)
+        let recorderCalls = await recorder.calls
+        let latestTarget = await recorder.latest()
+        XCTAssertEqual(deliveredPaneIDs, ["pane"])
+        XCTAssertEqual(recorderCalls, [])
+        XCTAssertNil(latestTarget)
+    }
+
     func testFirstSnapshotForEverySessionIsSilent() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let work = descriptor("work")
         let personal = descriptor("personal")
         let policy = enabledPolicy()
@@ -26,7 +108,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testIdleWorkingAndUnknownTransitionsToBlockedOrDoneDeliverOnce() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -67,7 +152,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testBlockedAndDoneTransitionsBothDeliverWhileRepeatedStatusesStaySilent() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -84,7 +172,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testReturningToNonAttentionAllowsLaterAttentionTransitionToDeliver() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -99,7 +190,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testNewAttentionPaneInBaselinedSessionDeliversWithCompleteEvent() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -123,7 +217,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testPaneDisappearanceRemovesHistoryAndAttentionReappearanceDelivers() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -139,7 +236,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testDuplicatePaneIDsUseLastAuthoritativeOccurrenceForHistoryAndDeliverAtMostOnce() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -173,7 +273,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testCancellationDuringFirstDeliveryReturnsWithoutAttemptingRemainingDeliveries() async {
         let service = ControlledNotificationService(firstDeliveryBehavior: .suspendUntilCancelled)
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -200,7 +303,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testCancellationAfterNoncooperativeFirstDeliverySucceedsStillStopsRemainingDeliveries() async {
         let service = ControlledNotificationService(firstDeliveryBehavior: .suspendUntilReleased)
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -230,7 +336,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testShuffledAttentionItemsDeliverInLabelOrderWithPaneIDTieBreaker() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -259,7 +368,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testGenuineDeliveryErrorIsIsolatedAndLaterDeliveryStillSucceeds() async {
         let service = ControlledNotificationService(firstDeliveryBehavior: .throwSchedulingError)
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -282,7 +394,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testDuplicatePaneIDsAreIndependentAcrossSessions() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let defaultSession = SessionDescriptor(
             id: .default,
             socketURL: URL(fileURLWithPath: "/tmp/default.sock")
@@ -313,7 +428,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testUnavailableRetainsHistoryAndUnchangedReconnectIsSilent() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -328,7 +446,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testRemovalClearsHistoryAndRecreatedSessionPrimesSilently() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let policy = enabledPolicy()
 
@@ -343,7 +464,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testDisabledDeliveryStillAdvancesStatusHistory() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
         let off = NotificationDeliveryPolicy(notificationsEnabled: false, soundEnabled: true)
         let on = enabledPolicy(soundEnabled: true)
@@ -360,7 +484,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testSoundPolicyIsForwardedForEachDelivery() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let session = descriptor("work")
 
         await coordinator.reconcile(
@@ -386,7 +513,10 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
     func testResetClearsEverySessionBaselineAndMakesNextSnapshotsSilent() async {
         let service = RecordingNotificationService()
-        let coordinator = AttentionNotificationCoordinator(service: service)
+        let coordinator = AttentionNotificationCoordinator(
+            service: service,
+            latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
         let work = descriptor("work")
         let personal = descriptor("personal")
         let policy = enabledPolicy()
@@ -411,6 +541,11 @@ private actor RecordingNotificationService: NativeNotificationServing {
     }
 
     private(set) var deliveries: [Delivery] = []
+    private let deliveryResult: NotificationDeliveryResult
+
+    init(deliveryResult: NotificationDeliveryResult = .accepted) {
+        self.deliveryResult = deliveryResult
+    }
 
     func responses() async -> NotificationResponseSubscription {
         .finished()
@@ -420,8 +555,70 @@ private actor RecordingNotificationService: NativeNotificationServing {
 
     func settings() async -> NotificationSystemSettings { .authorized }
 
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
         deliveries.append(Delivery(event: event, sound: sound))
+        return deliveryResult
+    }
+}
+
+private actor OverlappingNotificationService: NativeNotificationServing {
+    private let a1Attempted = TestSignal()
+    private let a1Gate = NoncooperativeDeliveryGate()
+    private(set) var attemptedPaneIDs: [String] = []
+
+    func responses() async -> NotificationResponseSubscription { .finished() }
+
+    func requestAuthorization() async throws -> Bool { true }
+
+    func settings() async -> NotificationSystemSettings { .authorized }
+
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
+        attemptedPaneIDs.append(event.target.paneID)
+        if event.target.paneID == "a1" {
+            await a1Attempted.signal()
+            await a1Gate.suspend()
+        }
+        return .accepted
+    }
+
+    func waitForA1Attempt() async {
+        await a1Attempted.wait()
+        await a1Gate.waitUntilSuspended()
+    }
+
+    func releaseA1() async {
+        await a1Gate.release()
+    }
+}
+
+private actor RecordingLatestNotificationTargetRecorder: LatestNotificationTargetRecording {
+    struct Call: Equatable, Sendable {
+        let target: NotificationSelectionTarget
+        let ordinal: UInt64
+    }
+
+    private(set) var calls: [Call] = []
+    private var latestEntry: Call?
+
+    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) {
+        let call = Call(target: target, ordinal: ordinal)
+        calls.append(call)
+        guard latestEntry == nil || ordinal > latestEntry!.ordinal else { return }
+        latestEntry = call
+    }
+
+    func latest() -> NotificationSelectionTarget? {
+        latestEntry?.target
+    }
+
+    func reset() {
+        latestEntry = nil
     }
 }
 
@@ -450,7 +647,10 @@ private actor ControlledNotificationService: NativeNotificationServing {
 
     func settings() async -> NotificationSystemSettings { .authorized }
 
-    func deliver(_ event: AttentionNotificationEvent, sound: Bool) async throws {
+    func deliver(
+        _ event: AttentionNotificationEvent,
+        sound: Bool
+    ) async throws -> NotificationDeliveryResult {
         attemptedPaneIDs.append(event.target.paneID)
         if attemptedPaneIDs.count == 1 {
             await firstAttemptSignal.signal()
@@ -464,6 +664,7 @@ private actor ControlledNotificationService: NativeNotificationServing {
             }
         }
         deliveredPaneIDs.append(event.target.paneID)
+        return .accepted
     }
 
     func waitForFirstAttempt() async {
@@ -556,6 +757,13 @@ private func item(
             revision: 1
         )
     )
+}
+
+private func target(
+    _ session: SessionDescriptor,
+    _ paneID: String
+) -> NotificationSelectionTarget {
+    NotificationSelectionTarget(sessionID: session.id, paneID: paneID)
 }
 
 private func enabledPolicy(soundEnabled: Bool = false) -> NotificationDeliveryPolicy {
