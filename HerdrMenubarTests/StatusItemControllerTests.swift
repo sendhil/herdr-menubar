@@ -314,8 +314,8 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(button.alphaValue, 1)
         XCTAssertEqual(button.imagePosition, .imageLeading)
         let image = try XCTUnwrap(button.image)
+        XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
         XCTAssertTrue(image.isTemplate)
-        XCTAssertEqual(image.size, NSSize(width: 20, height: 18))
         XCTAssertEqual(button.accessibilityLabel(), "Herdr")
         XCTAssertEqual(button.accessibilityValue() as? String, "snapshot 12")
     }
