@@ -31,7 +31,7 @@ If every mandatory gate passes, the agent on that Mac may proceed to a reviewed 
 - Herdr Menubar uses normal OpenSSH configuration and `ssh-agent`; it stores no credentials.
 - A connected endpoint monitors every running remote Herdr session.
 - After an app restart, Herdr Menubar asks before reconnecting endpoints that were connected previously.
-- Phase 1 is evidence-only. It makes no repository changes and installs no packages.
+- Phase 1 is evidence-only. It makes no repository changes, installs no packages, and returns its sanitized report in the agent's final response.
 - If Phase 1 passes, the local agent may design and implement there. If it does not pass cleanly, it stops and returns the evidence.
 
 ## Why StreamLocal forwarding is the preferred transport
@@ -57,7 +57,7 @@ Direct TCP is out of scope. Polling remote commands is acceptable for the discov
 - Run bounded, noninteractive SSH commands through `/usr/bin/ssh`.
 - Query remote Herdr versions, API schema, and running session metadata.
 - Create one private temporary directory, owned child SSH processes, and owner-only local Unix sockets.
-- Exercise public Herdr snapshot, subscription, reversible focus, and title APIs.
+- Exercise public Herdr snapshot, subscription, reserved-idle-pane focus, and exclusively owned title APIs.
 - Activate existing WezTerm panes and restore the original pane.
 - Produce a sanitized evidence report.
 
@@ -71,12 +71,12 @@ Direct TCP is out of scope. Polling remote commands is acceptable for the discov
 - Do not start or stop remote Herdr sessions.
 - Do not expose a Herdr socket over TCP.
 - Do not use a shell command string for SSH targets, paths, session names, pane IDs, or markers.
-- Do not focus `done` or `blocked` panes. `pane.focus` can mark attention as seen.
+- Do not focus any pane that is not a user-reserved, non-agent `idle` pane. `pane.focus` can mark attention as seen, and a working pane can change state during the spike.
 - Do not create a WezTerm tab or choose a fallback pane.
 - Do not kill a process the orchestrator did not create and retain by direct child handle.
 - Do not edit the repository, install dependencies, merge, push, or replace the stable installed app during Phase 1.
 
-The focus and title checks are reversible mutations rather than strictly read-only actions. They are permitted only for safe `working` or `idle` panes and must be restored before the tunnel is stopped.
+The focus and title checks are reversible mutations rather than strictly read-only actions. Focus is permitted only between two user-reserved, non-agent `idle` panes. The title check is permitted only after the user confirms that no other tool or client currently owns an API title override for that remote session and that the normal configured title is visible. The orchestrator then has exclusive title-API ownership until it clears its marker. If either exclusive-ownership premise cannot be established, G7 and G8 are `AMBIGUOUS` and no title mutation occurs.
 
 ## Preconditions
 
@@ -88,14 +88,15 @@ The agent must confirm all of the following before opening a tunnel:
 - A user-established `herdr --remote <alias>` attachment is already working.
 - The spike runs in a separate WezTerm pane connected to the same GUI instance.
 - `WEZTERM_PANE` and `WEZTERM_UNIX_SOCKET` are present.
-- The selected remote session contains a focused safe pane and a distinct safe alternate, both with status `working` or `idle`.
+- The selected remote session contains a focused user-reserved, non-agent `idle` pane and a distinct user-reserved, non-agent `idle` alternate.
 - A different existing local WezTerm pane is available as a focus distractor.
+- The user confirms no existing API title override is active for the selected remote session and agrees not to run another title-API client during the bounded marker test.
 
 If the working attachment or safe-pane arrangement is absent, the agent asks the user to prepare it. It does not automate setup.
 
 The SSH alias is treated as one opaque argv value. Reject an empty value, a value beginning with `-`, or one containing NUL, newline, carriage return, or control characters. Host, user, port, identity, and ProxyJump belong in `~/.ssh/config`, not in the spike's command construction.
 
-Run `ssh -G <alias>` only to derive required booleans. Do not include expanded hostname, username, IP address, key paths, or proxy command in the report. If the effective alias contains `LocalForward`, `RemoteForward`, or `DynamicForward`, stop and require a dedicated alias without unrelated forwards. OpenSSH cannot clear configured forwards while preserving the command-line StreamLocal `-L` used by the tunnel.
+Run `ssh -G <alias>` only to derive required booleans. Do not include expanded hostname, username, IP address, key paths, or proxy command in the report. If the effective alias contains `LocalForward`, `RemoteForward`, or `DynamicForward`, stop and require a dedicated alias without unrelated forwards. OpenSSH cannot clear configured forwards while preserving the command-line StreamLocal `-L` used by the tunnel. Record only that the configured multiplexing/background values were inspected; every actual spike invocation overrides them with `ControlPath=none`, `ControlMaster=no`, `ControlPersist=no`, and `ForkAfterAuthentication=no`.
 
 ## Temporary orchestrator
 
@@ -118,9 +119,10 @@ The orchestrator must provide:
 - direct argv execution with `shell=False`;
 - `stdin=DEVNULL` for every SSH process;
 - a 20-second total deadline for one-shot commands;
-- a 1 MiB stdout cap and 256 KiB stderr cap;
+- concurrent stdout/stderr drains that terminate the child immediately when either cap is first exceeded;
+- a retained-prefix cap of 1 MiB for stdout and 256 KiB for stderr, with discarded bytes never accumulated elsewhere;
 - bounded terminate, two-second wait, kill, and final wait for owned children;
-- continuously drained and capped tunnel stderr;
+- tunnel stdout redirected to `/dev/null` and tunnel stderr continuously drained with the same immediate overflow termination and capped prefix;
 - five-second Unix-socket connect/request deadlines;
 - one-line JSON reads capped at 1 MiB;
 - strict UTF-8 and JSON-object validation;
@@ -146,6 +148,10 @@ One-shot discovery commands use direct argv with these effective safeguards:
   -o ForwardAgent=no
   -o ForwardX11=no
   -o PermitLocalCommand=no
+  -o ControlPath=none
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ForkAfterAuthentication=no
   -o ClearAllForwardings=yes
   <alias>
   <fixed remote herdr argv>
@@ -163,6 +169,8 @@ The tunnel invocation uses the same safety options except `ClearAllForwardings`,
 
 The arguments are passed as an array. The spike never interpolates them into a shell string.
 
+Before G3 can pass, the orchestrator must prove that the effective invocation has multiplexing disabled and cannot background itself. A retained SSH child that exits while another master or listener continues is `FAIL`, not successful reuse.
+
 ## Discovery and compatibility proof
 
 The probe runs bounded fixed remote commands equivalent to:
@@ -177,13 +185,13 @@ It also records the local Herdr and WezTerm versions. A noninteractive remote `P
 
 The agent inspects the actual installed schema and live responses. It must not invent fallback method names or response keys. Version mismatch is evidence rather than an automatic failure if every live protocol gate succeeds.
 
-Session discovery must be bounded and strictly parsed while tolerating unknown fields. Each running session must have a unique identity, `running == true`, and an absolute `socket_path`. Reject paths containing NUL, CR, LF, colon, or unsafe length. Never derive a socket path from a session name. Cap the spike at 64 sessions.
+Session discovery must be bounded and strictly parsed while tolerating unknown fields. Each running session must have a unique identity, `running == true`, and an absolute `socket_path`. Reject paths containing NUL, CR, LF, colon, percent, dollar sign, or control characters so OpenSSH cannot perform token or environment expansion. Measure paths as UTF-8 bytes. Require the generated local socket to fit the local platform's measured `sockaddr_un.sun_path` capacity including its terminator, and conservatively reject a reported remote path longer than 103 UTF-8 bytes. A longer existing remote socket is `AMBIGUOUS` for this transport rather than permission to guess quoting behavior. Never derive a socket path from a session name. Cap the spike at 64 sessions.
 
 The required live public API surface is the installed schema's form of:
 
 - `ping`
 - `session.snapshot` and/or the schema's pane/workspace/tab list methods used by the current client
-- `events.subscribe` for `pane.focused`
+- `events.subscribe` accepting the exact current Menubar subscription set: global `pane.created`, `pane.closed`, `pane.focused`, `pane.moved`, `pane.exited`, `pane.agent_detected`, `workspace.renamed`, and `tab.renamed`, plus one `pane.agent_status_changed` subscription for every current pane
 - `pane.focus`
 - `client.window_title.set`
 - `client.window_title.clear`
@@ -210,16 +218,18 @@ Every running session must pass transport and snapshot validation. If the host h
 
 Run the active-session proof in this order:
 
-1. Capture a baseline snapshot and tokenize the original safe focused pane and a distinct safe alternate.
-2. Open a dedicated forwarded socket and send the installed-schema `events.subscribe` request for `pane.focused`.
+1. Capture a baseline snapshot and tokenize the original reserved idle focused pane and a distinct reserved idle alternate.
+2. Open a dedicated forwarded socket and send the installed-schema `events.subscribe` request for the exact production subscription set listed above.
 3. Require a correlated subscription acknowledgement before focusing.
-4. On a separate request connection, send `pane.focus` for the alternate.
-5. Require the exact response ID and target pane.
-6. Require a matching pushed `pane.focused` event.
-7. Fetch a new snapshot and require that the alternate is focused.
-8. In `finally`, focus the original safe pane and verify it in a fresh snapshot.
+4. Immediately re-read both panes and require that they are still non-agent `idle`. Subscribe to their `pane.agent_status_changed` events as part of the production set.
+5. On a separate request connection, send `pane.focus` for the alternate.
+6. Require the exact response ID and target pane.
+7. Require a matching pushed `pane.focused` event.
+8. Fetch a new snapshot and require that the alternate is focused and both reserved panes remain non-agent `idle`.
+9. Immediately before restoration, re-read the original pane and require that it remains non-agent `idle`.
+10. In `finally`, focus the original pane and verify it in a fresh snapshot.
 
-An explicit server error is `FAIL`. An acknowledged subscription without the expected event is `AMBIGUOUS`. Failure to restore the original pane makes the overall spike fail cleanup.
+An explicit server error is `FAIL`. An acknowledged subscription without the expected event is `AMBIGUOUS`. Any agent-status change for a reserved pane aborts further automated focus. If the original pane becomes unsafe after focus has changed, keep the tunnel alive, ask the user to restore focus through the existing Herdr UI, verify that restoration by snapshot, and classify G6/G8 as `FAIL`. The agent must not violate the idle-only rule merely to automate restoration.
 
 ## Title propagation and exact WezTerm focus proof
 
@@ -231,17 +241,18 @@ herdr-menubar-spike-<lowercase UUID>
 
 Construct its JSON with the language JSON library. Then:
 
-1. Call `client.window_title.set` through the forwarded public API.
-2. Require the installed-schema success response.
-3. If the response reports no foreground client, ask the user to interact once with the existing remote attachment and retry exactly once. A second failure is `AMBIGUOUS`.
-4. Poll `wezterm cli list --format json` for at most one second.
-5. Require exactly one local pane whose title exactly equals the marker. Zero is `AMBIGUOUS`; more than one is `FAIL`.
-6. Record a different existing local WezTerm pane as the distractor.
-7. Clear the marker with bounded retries and verify it disappears before activation.
-8. Run `wezterm cli activate-pane --pane-id <exact matched pane>`.
-9. Use `wezterm cli list-clients --format json` as corroborating evidence where available.
-10. Require the user or Computer Use to confirm that the correct pre-existing `herdr --remote` tab and the expected remote pane became visible.
-11. Restore the original local WezTerm pane.
+1. Reconfirm exclusive title-API ownership and the user-confirmed normal-title baseline. There is no safe getter for a prior API override; without this confirmation, do not call `set`.
+2. Call `client.window_title.set` through the forwarded public API.
+3. Require the installed-schema success response.
+4. If the response reports no foreground client, ask the user to interact once with the existing remote attachment and retry exactly once. A second failure is `AMBIGUOUS`.
+5. Poll `wezterm cli list --format json` for at most one second.
+6. Require exactly one local pane whose title exactly equals the marker. Zero is `AMBIGUOUS`; more than one is `FAIL`.
+7. Capture the original active local pane from same-instance `wezterm cli list-clients --format json` and require one unambiguous client/pane mapping.
+8. Select a different existing pane as the distractor, activate it, then require `list-clients.focused_pane_id` to equal the distractor and require human or Computer Use confirmation that it is visible.
+9. Clear the marker with bounded retries and verify it disappears before target activation.
+10. Run `wezterm cli activate-pane --pane-id <exact matched pane>`.
+11. Require `list-clients.focused_pane_id` to equal the exact matched pane and require the user or Computer Use to confirm that the correct pre-existing `herdr --remote` tab and expected remote pane became visible.
+12. Restore the original local WezTerm pane, verify it through `list-clients`, and visibly confirm restoration.
 
 The human or Computer Use observation is authoritative because `wezterm cli list` has no active-pane flag and multiple clients or instances may exist. CLI exit status alone is insufficient. Do not create a tab and do not focus a fallback.
 
@@ -251,7 +262,7 @@ Repeat the selected session's tunnel-create, public-API, stop, and cleanup cycle
 
 Cleanup runs while the tunnel is still alive:
 
-1. Restore the original remote safe pane and verify it by snapshot.
+1. Revalidate the original reserved pane as non-agent `idle`, restore it, and verify it by snapshot. If it became unsafe, require user-directed restoration and fail G6/G8.
 2. Clear any possible marker with bounded retries and verify no exact marker remains.
 3. Close subscription and request sockets.
 4. Restore the original local WezTerm pane.
@@ -271,9 +282,9 @@ Never clean up from a stale PID alone, unlink an unexpected replacement socket, 
 | G2 — Discovery | BatchMode version, schema, and session discovery succeed with safe, valid data. |
 | G3 — Tunnel transport | Every running session receives an owner-only StreamLocal socket and successful public API round trip. |
 | G4 — State compatibility | Required pane/workspace/tab state matches the installed schema and can drive the current client model. |
-| G5 — Subscription | Subscription acknowledgement and one real matching `pane.focused` event succeed. |
+| G5 — Subscription | The exact current production subscription set is acknowledged and one real matching `pane.focused` event succeeds. |
 | G6 — Remote focus | Exact safe-pane focus and verified restoration both succeed. |
-| G7 — Local exact focus | One unique marker reaches the correct local WezTerm pane, clears, activates exactly, and is visibly confirmed. |
+| G7 — Local exact focus | Exclusive/no-prior title ownership is confirmed; a unique marker reaches one pane; a different distractor is activated and verified first; the target then activates and verifies exactly; marker and original focus are restored. |
 | G8 — Lifecycle cleanup | A second cycle succeeds and all remote/local focus, marker, child, socket, and temp state is restored. |
 
 Every mandatory gate must be `PASS` before implementation is authorized.
@@ -295,9 +306,9 @@ The agent then:
 1. fetches current `origin/master`;
 2. creates an isolated feature branch and worktree;
 3. writes a production design document grounded in the recorded evidence;
-4. runs an independent spec review to approval, with at most three remediation loops;
-5. writes and independently reviews a TDD implementation plan;
-6. confirms a clean baseline and full test suite;
+4. runs an independent spec review to approval, with at most three remediation loops; exhaustion stops implementation and returns the findings;
+5. writes and independently reviews a TDD implementation plan to approval, again stopping after three unsuccessful remediation loops;
+6. confirms a clean baseline and full test suite; any failure blocks implementation until independently resolved;
 7. implements task-by-task with RED, GREEN, refactor, spec review, and quality review;
 8. runs hermetic multi-endpoint integration, stress, TSan, Release, Analyze, signing, privacy, process, and socket cleanup checks; and
 9. repeats the real-host smoke before requesting merge.
@@ -342,6 +353,19 @@ One endpoint's failure never blocks local discovery or another endpoint.
 
 `RemoteSessionRegistry` publishes cached forwarded descriptors into composite discovery. Local filesystem discovery remains fast and authoritative and never waits on network SSH. Forwarded paths remain stable during a session's current app-run identity because the existing supervisor does not recreate a client merely because a descriptor's socket URL changes.
 
+### Mandatory production framing hardening
+
+The current local `JSONLineFramer` retains an unbounded partial line, and `HerdrConnectionState` retains an unbounded queue of completed lines. A passed spike authorizes implementation work but does not authorize publishing a remote descriptor to `HerdrClient` until this boundary is hardened and independently reviewed.
+
+Before the first remote session can connect, production must add:
+
+- a hard maximum encoded JSON line length;
+- a hard total queued-byte limit and queued-event/line count;
+- incremental enforcement before appending or queueing additional data;
+- immediate connection closure and normal bounded reconnect behavior on overflow;
+- bounded logging that exposes only the overflow category, never payload content; and
+- unit/integration tests for an unterminated oversized line, many individually valid queued lines, overflow while a reader is suspended, exact close-once behavior, and successful recovery on a new connection.
+
 ### Lifecycle and user experience
 
 - Local monitoring starts regardless of remote state.
@@ -383,7 +407,7 @@ The final release gate includes stress tests, Thread Sanitizer, the full suite, 
 
 ## Sanitized evidence report
 
-The spike writes a Markdown report with this shape:
+The spike returns a Markdown report in its final agent response with this shape. It must not retain the report inside the temp root that cleanup deletes. If the user explicitly asks for a file, write only the already-sanitized report to an explicit user-approved path with mode `0600`; that file is outside the temp-artifact cleanup inventory.
 
 ```markdown
 # Herdr Menubar SSH Feasibility Report
@@ -444,7 +468,7 @@ or
 STOP — RETURN EVIDENCE
 ```
 
-When the decision is `PASS`, the report also lists the later design/plan/review commits and any unexercised live multi-session condition. When it is `STOP`, it records the exact blocking gate, safest next alternative, and confirms that no production files changed.
+When the decision is `PASS`, the Phase 1 report records any unexercised live multi-session condition. A separate later implementation report may list design, plan, and review commits. When Phase 1 is `STOP`, it records the exact blocking gate, safest next alternative, and confirms that no production files changed.
 
 ## Source anchors
 
