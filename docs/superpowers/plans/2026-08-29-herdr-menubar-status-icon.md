@@ -191,7 +191,7 @@ Image(systemName: "terminal")
     .font(.system(size: 16, weight: .regular))
 ```
 
-5. Delete the entire `TerminalStatusIcon` type, including `statusLight` and all circle drawing.
+1. Delete the entire `TerminalStatusIcon` type, including `statusLight` and all circle drawing.
 
 Do not modify `Mode`, opacity assignments, count visibility assignments, `HStack(spacing: 2)`, or accessibility modifiers.
 
