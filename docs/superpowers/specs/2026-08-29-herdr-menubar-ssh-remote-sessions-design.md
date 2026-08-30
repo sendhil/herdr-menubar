@@ -226,8 +226,7 @@ Run the active-session proof in this order:
 6. Require the exact response ID and target pane.
 7. Require a matching pushed `pane.focused` event.
 8. Fetch a new snapshot and require that the alternate is focused and both reserved panes remain non-agent `idle`.
-9. Immediately before restoration, re-read the original pane and require that it remains non-agent `idle`.
-10. In `finally`, focus the original pane and verify it in a fresh snapshot.
+9. In `finally`, re-read the original pane. If it remains non-agent `idle`, focus it and verify it in a fresh snapshot. If it is no longer safe, do not send `pane.focus`; keep the tunnel alive, ask the user to restore it through the existing Herdr UI, verify the user-directed restoration by snapshot, and fail G6/G8.
 
 An explicit server error is `FAIL`. An acknowledged subscription without the expected event is `AMBIGUOUS`. Any agent-status change for a reserved pane aborts further automated focus. If the original pane becomes unsafe after focus has changed, keep the tunnel alive, ask the user to restore focus through the existing Herdr UI, verify that restoration by snapshot, and classify G6/G8 as `FAIL`. The agent must not violate the idle-only rule merely to automate restoration.
 
@@ -241,18 +240,18 @@ herdr-menubar-spike-<lowercase UUID>
 
 Construct its JSON with the language JSON library. Then:
 
-1. Reconfirm exclusive title-API ownership and the user-confirmed normal-title baseline. There is no safe getter for a prior API override; without this confirmation, do not call `set`.
-2. Call `client.window_title.set` through the forwarded public API.
-3. Require the installed-schema success response.
-4. If the response reports no foreground client, ask the user to interact once with the existing remote attachment and retry exactly once. A second failure is `AMBIGUOUS`.
-5. Poll `wezterm cli list --format json` for at most one second.
-6. Require exactly one local pane whose title exactly equals the marker. Zero is `AMBIGUOUS`; more than one is `FAIL`.
-7. Capture the original active local pane from same-instance `wezterm cli list-clients --format json` and require one unambiguous client/pane mapping.
-8. Select a different existing pane as the distractor, activate it, then require `list-clients.focused_pane_id` to equal the distractor and require human or Computer Use confirmation that it is visible.
+1. Before any title call or requested user interaction, capture the immutable pre-test active local pane from same-instance `wezterm cli list-clients --format json` and require one unambiguous client/pane mapping.
+2. Reconfirm exclusive title-API ownership and the user-confirmed normal-title baseline. There is no safe getter for a prior API override; without this confirmation, do not call `set`.
+3. Call `client.window_title.set` through the forwarded public API.
+4. Require the installed-schema success response.
+5. If the response reports no foreground client, ask the user to interact once with the existing remote attachment and retry exactly once. A second failure is `AMBIGUOUS`; the immutable baseline from step 1 does not change.
+6. Poll `wezterm cli list --format json` for at most one second.
+7. Require exactly one local pane whose title exactly equals the marker. Zero is `AMBIGUOUS`; more than one is `FAIL`.
+8. Select an existing distractor distinct from the matched target, activate it, then require `list-clients.focused_pane_id` to equal the distractor and require human or Computer Use confirmation that it is visible.
 9. Clear the marker with bounded retries and verify it disappears before target activation.
 10. Run `wezterm cli activate-pane --pane-id <exact matched pane>`.
 11. Require `list-clients.focused_pane_id` to equal the exact matched pane and require the user or Computer Use to confirm that the correct pre-existing `herdr --remote` tab and expected remote pane became visible.
-12. Restore the original local WezTerm pane, verify it through `list-clients`, and visibly confirm restoration.
+12. Restore the immutable pre-test local pane from step 1, verify it through `list-clients`, and visibly confirm restoration.
 
 The human or Computer Use observation is authoritative because `wezterm cli list` has no active-pane flag and multiple clients or instances may exist. CLI exit status alone is insufficient. Do not create a tab and do not focus a fallback.
 
@@ -262,10 +261,10 @@ Repeat the selected session's tunnel-create, public-API, stop, and cleanup cycle
 
 Cleanup runs while the tunnel is still alive:
 
-1. Revalidate the original reserved pane as non-agent `idle`, restore it, and verify it by snapshot. If it became unsafe, require user-directed restoration and fail G6/G8.
+1. Revalidate the original reserved pane. If it remains non-agent `idle`, restore it automatically and verify it by snapshot. If it became unsafe, do not issue `pane.focus`; keep the tunnel alive, require user-directed restoration, verify it by snapshot, and fail G6/G8.
 2. Clear any possible marker with bounded retries and verify no exact marker remains.
 3. Close subscription and request sockets.
-4. Restore the original local WezTerm pane.
+4. Restore the immutable pre-test local WezTerm pane and verify it through the same-instance `list-clients` view.
 5. Terminate and await the exact retained tunnel child; kill and await it only after the bounded grace period.
 6. Verify the child is gone and no process holds the created socket.
 7. Verify every remaining temp-root entry is expected, same-owner, and of the expected file/socket type.
