@@ -320,7 +320,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(button.accessibilityValue() as? String, "snapshot 12")
     }
 
-    func testNativeIconContentMapsEveryConnectionStateAndCount() {
+    func testNativeIconContentMapsEveryStateToOpacityAndCount() {
         let disconnected = MenuBarIconPresentation(
             connectionState: .connecting,
             attentionCount: 9

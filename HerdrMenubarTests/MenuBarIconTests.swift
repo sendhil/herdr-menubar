@@ -15,7 +15,7 @@ final class MenuBarIconTests: XCTestCase {
         assertDisconnected(.connecting, accessibility: "Connecting to Herdr sessions")
     }
 
-    func testConnectedClearPresentationIsOpaqueAndAccessibleWithoutAttentionText() {
+    func testConnectedClearPresentationIsOpaqueAndAccessibleWithNoAttentionText() {
         let presentation = MenuBarIconPresentation(connectionState: .connected, attentionCount: 0)
         XCTAssertEqual(presentation.mode, .clear)
         XCTAssertEqual(presentation.opacity, 1)

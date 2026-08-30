@@ -62,7 +62,8 @@ struct MenuBarIcon: View {
         )
 
         HStack(spacing: 2) {
-            TerminalStatusIcon()
+            Image(systemName: "terminal")
+                .font(.system(size: 16, weight: .regular))
 
             if presentation.showsAttentionCount {
                 Text("\(attentionCount)")
@@ -77,12 +78,5 @@ struct MenuBarIcon: View {
             connectionState: connectionState,
             attentionCount: attentionCount
         ))
-    }
-}
-
-private struct TerminalStatusIcon: View {
-    var body: some View {
-        Image(systemName: "terminal")
-            .font(.system(size: 16, weight: .regular))
     }
 }

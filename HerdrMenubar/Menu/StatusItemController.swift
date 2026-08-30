@@ -355,8 +355,8 @@ enum NativeStatusItemIconRenderer {
         )?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) else {
             return nil
         }
-
-        let image = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { _ in
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { _ in
             NSColor.black.set()
             terminal.draw(in: NSRect(x: 0, y: 1, width: 18, height: 16))
             return true
