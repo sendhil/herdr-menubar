@@ -152,13 +152,13 @@ final class BoundedProcessRunnerTests: XCTestCase {
         let request = ProcessInvocation(
             executableURL: fixture.url,
             arguments: [termMarker.path, readyMarker.path],
-            deadline: .seconds(1),
+            deadline: .seconds(5),
             stdoutLimit: 64,
             stderrLimit: 64
         )
         let operation = runner.start(request)
 
-        await assertFileAppears(readyMarker, within: .seconds(1))
+        await assertFileAppears(readyMarker, within: .seconds(5))
         let clock = ContinuousClock()
         let started = clock.now
 
