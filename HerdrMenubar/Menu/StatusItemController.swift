@@ -312,7 +312,6 @@ private extension NativeStatusMenuRenderer {
 
 @MainActor
 struct NativeStatusItemIconContent: Equatable {
-    let lightStyle: MenuBarIconPresentation.LightStyle
     let opacity: Double
     let title: String
 }
@@ -323,7 +322,6 @@ enum NativeStatusItemIconRenderer {
         for presentation: MenuBarIconPresentation
     ) -> NativeStatusItemIconContent {
         NativeStatusItemIconContent(
-            lightStyle: presentation.lightStyle,
             opacity: presentation.opacity,
             title: presentation.showsAttentionCount
                 ? String(presentation.attentionCount)
@@ -337,7 +335,7 @@ enum NativeStatusItemIconRenderer {
         to button: NSButton
     ) {
         let content = content(for: presentation)
-        button.image = makeImage(lightStyle: content.lightStyle)
+        button.image = makeImage()
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
         button.title = content.title
@@ -350,38 +348,17 @@ enum NativeStatusItemIconRenderer {
         button.toolTip = "Herdr — \(accessibilityValue)"
     }
 
-    private static func makeImage(
-        lightStyle: MenuBarIconPresentation.LightStyle
-    ) -> NSImage? {
+    private static func makeImage() -> NSImage? {
         guard let terminal = NSImage(
             systemSymbolName: "terminal",
             accessibilityDescription: "Herdr terminal status"
         )?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) else {
             return nil
         }
-        let size = NSSize(width: 20, height: 18)
-        let image = NSImage(size: size, flipped: false) { _ in
+
+        let image = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { _ in
             NSColor.black.set()
             terminal.draw(in: NSRect(x: 0, y: 1, width: 18, height: 16))
-
-            let diameter: CGFloat
-            switch lightStyle {
-            case .hollow: diameter = 4
-            case .solid: diameter = 3.5
-            case .emphasizedSolid: diameter = 5
-            }
-            let light = NSBezierPath(ovalIn: NSRect(
-                x: size.width - diameter - 1,
-                y: size.height - diameter - 3,
-                width: diameter,
-                height: diameter
-            ))
-            if lightStyle == .hollow {
-                light.lineWidth = 1
-                light.stroke()
-            } else {
-                light.fill()
-            }
             return true
         }
         image.isTemplate = true

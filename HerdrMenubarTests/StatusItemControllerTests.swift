@@ -313,12 +313,14 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(button.title, "12")
         XCTAssertEqual(button.alphaValue, 1)
         XCTAssertEqual(button.imagePosition, .imageLeading)
-        XCTAssertTrue(try XCTUnwrap(button.image).isTemplate)
+        let image = try XCTUnwrap(button.image)
+        XCTAssertTrue(image.isTemplate)
+        XCTAssertEqual(image.size, NSSize(width: 20, height: 18))
         XCTAssertEqual(button.accessibilityLabel(), "Herdr")
         XCTAssertEqual(button.accessibilityValue() as? String, "snapshot 12")
     }
 
-    func testNativeIconContentMapsEveryStatusLightStyleAndCount() {
+    func testNativeIconContentMapsEveryConnectionStateAndCount() {
         let disconnected = MenuBarIconPresentation(
             connectionState: .connecting,
             attentionCount: 9
@@ -331,19 +333,15 @@ final class StatusItemControllerTests: XCTestCase {
 
         XCTAssertEqual(
             NativeStatusItemIconRenderer.content(for: disconnected),
-            NativeStatusItemIconContent(lightStyle: .hollow, opacity: 0.55, title: "")
+            NativeStatusItemIconContent(opacity: 0.55, title: "")
         )
         XCTAssertEqual(
             NativeStatusItemIconRenderer.content(for: clear),
-            NativeStatusItemIconContent(lightStyle: .solid, opacity: 1, title: "")
+            NativeStatusItemIconContent(opacity: 1, title: "")
         )
         XCTAssertEqual(
             NativeStatusItemIconRenderer.content(for: attention),
-            NativeStatusItemIconContent(
-                lightStyle: .emphasizedSolid,
-                opacity: 1,
-                title: "23"
-            )
+            NativeStatusItemIconContent(opacity: 1, title: "23")
         )
     }
 }

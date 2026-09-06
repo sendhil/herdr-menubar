@@ -3,22 +3,21 @@ import XCTest
 
 @MainActor
 final class MenuBarIconTests: XCTestCase {
-    func testSearchingPresentationIsDimmedHollowAndAccessible() {
+    func testSearchingPresentationIsDimmedAndAccessible() {
         assertDisconnected(.searching, accessibility: "Searching for Herdr sessions")
     }
 
-    func testNoSessionsPresentationIsDimmedHollowAndAccessible() {
+    func testNoSessionsPresentationIsDimmedAndAccessible() {
         assertDisconnected(.noSessions, accessibility: "No Herdr sessions running")
     }
 
-    func testConnectingPresentationIsDimmedHollowAndAccessible() {
+    func testConnectingPresentationIsDimmedAndAccessible() {
         assertDisconnected(.connecting, accessibility: "Connecting to Herdr sessions")
     }
 
-    func testConnectedClearPresentationUsesSolidLightAndAccessibleNoAttentionText() {
+    func testConnectedClearPresentationIsOpaqueAndAccessibleWithoutAttentionText() {
         let presentation = MenuBarIconPresentation(connectionState: .connected, attentionCount: 0)
         XCTAssertEqual(presentation.mode, .clear)
-        XCTAssertEqual(presentation.lightStyle, .solid)
         XCTAssertEqual(presentation.opacity, 1)
         XCTAssertEqual(presentation.attentionCount, 0)
         XCTAssertFalse(presentation.showsAttentionCount)
@@ -28,10 +27,9 @@ final class MenuBarIconTests: XCTestCase {
         )
     }
 
-    func testConnectedAttentionPresentationEmphasizesLightAndUsesSingularAccessibilityText() {
+    func testConnectedAttentionPresentationShowsCountAndUsesSingularAccessibilityText() {
         let presentation = MenuBarIconPresentation(connectionState: .connected, attentionCount: 1)
         XCTAssertEqual(presentation.mode, .attention)
-        XCTAssertEqual(presentation.lightStyle, .emphasizedSolid)
         XCTAssertEqual(presentation.opacity, 1)
         XCTAssertTrue(presentation.showsAttentionCount)
         XCTAssertEqual(
@@ -92,7 +90,6 @@ final class MenuBarIconTests: XCTestCase {
     private func assertDisconnected(_ state: ConnectionState, accessibility: String) {
         let presentation = MenuBarIconPresentation(connectionState: state, attentionCount: 4)
         XCTAssertEqual(presentation.mode, .disconnected)
-        XCTAssertEqual(presentation.lightStyle, .hollow)
         XCTAssertEqual(presentation.opacity, 0.55)
         XCTAssertEqual(presentation.attentionCount, 4)
         XCTAssertFalse(presentation.showsAttentionCount)
