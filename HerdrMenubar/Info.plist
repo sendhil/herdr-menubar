@@ -22,5 +22,16 @@
 	<string></string>
 	<key>HerdrWidgetAppGroup</key>
 	<string>$(DEVELOPMENT_TEAM).dev.herdr.widgets</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Herdr agent</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>herdr-menubar</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

@@ -78,12 +78,19 @@ struct ProbeView: View {
     }
 }
 
-@main
-struct HerdrWidgets: Widget {
+struct HerdrRefreshProbeWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "HerdrRefreshProbe", provider: ProbeProvider()) { ProbeView(entry: $0) }
             .configurationDisplayName("Herdr refresh probe")
             .description("Verify native desktop updates before enabling agent widgets.")
             .supportedFamilies([.systemMedium])
+    }
+}
+
+@main
+struct HerdrWidgets: WidgetBundle {
+    var body: some Widget {
+        HerdrAgentWidget()
+        HerdrRefreshProbeWidget()
     }
 }

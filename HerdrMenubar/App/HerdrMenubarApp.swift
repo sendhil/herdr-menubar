@@ -40,6 +40,10 @@ final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
         Task { await runtime.start() }
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { Task { await runtime.openWidgetURL(url) } }
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         Task { await runtime.applicationDidBecomeActive() }
     }

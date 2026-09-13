@@ -274,3 +274,9 @@ Herdr Menubar is available under the [MIT License](LICENSE).
 The project is provided **as is**, without warranty of any kind. If you clone, modify, install, or redistribute it, you are responsible for reviewing the code and scripts, validating them in your environment, and maintaining your copy. Compatibility with future macOS, Xcode, terminal, or Herdr releases is not guaranteed, and no support, uptime, data-safety, or fitness-for-purpose commitment is implied.
 
 Herdr is a separate project with its own license and maintainers. References to Herdr and supported terminal applications describe interoperability and do not imply endorsement or affiliation.
+
+## Native agent widgets
+
+Add **Herdr agents** through the macOS desktop widget gallery. Medium and large widgets group agents by workspace and show their tab/custom agent names. Clicking a row focuses its exact Herdr pane. Right-click → **Edit Widget** to choose Today, last N hours/days, or All agents (initial default).
+
+For Pi message-window tracking, copy `integrations/pi/herdr-widget-activity.ts` into `~/.pi/agent/extensions/`, then run `/reload` in existing sessions. Only subsequent matching interactive messages qualify; there is no historical backfill. Prompt expansion or transformation may prevent a match. Other agent types are visible under All agents. See [implementation notes](docs/superpowers/plans/2026-09-13-agent-widget.md) for capture limitations and refresh behavior.

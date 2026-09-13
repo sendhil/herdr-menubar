@@ -5,6 +5,17 @@ import XCTest
 
 @MainActor
 final class ApplicationRuntimeTests: XCTestCase {
+    func testWidgetURLStartsRuntimeAndSelectsExactNamedSession() async {
+        let harness = RuntimeHarness()
+        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
+        await runtime.openWidgetURL(URL(string: "herdr-menubar://agent?session=named%3Awork&pane=wT%3Ap7")!)
+        XCTAssertEqual(harness.storeStartCount, 1)
+        XCTAssertEqual(harness.selectedTargets, [NotificationSelectionTarget(sessionID: .named("work"), paneID: "wT:p7")])
+        await runtime.openWidgetURL(URL(string: "https://agent?session=default&pane=unwanted")!)
+        XCTAssertEqual(harness.selectedTargets.count, 1)
+        await runtime.stop()
+    }
+
     func testStartInstallsHandlersRefreshesSettingsObservesThenStartsStoreExactlyOnce() async {
         let harness = RuntimeHarness()
         harness.blockNotificationRefresh = true

@@ -79,6 +79,11 @@
 		5B34D36292BA85E261D44958 /* WidgetShared/WidgetProbeRepository.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = D562F2D6DC8C812FF75EE721; };
 		8FB1161982D008A4F7C8B37B /* Embed HerdrWidgets */ = { isa = PBXBuildFile; fileRef = B0C953A1066804D4DF3ED4F4; settings = { ATTRIBUTES = (RemoveHeadersOnCopy); }; };
 		088FA2F91C1AD12244BEE136 /* HerdrMenubar/Widgets/WidgetProbePublisher.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = 654E6EDA47509D8D65077A2B; };
+		91998C8F4D7B7146F57C9E73 /* HerdrMenubarTests/AgentWidgetTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = 6C17DE7B584496ABC9127F08; };
+		57165E7327A472DBA43C8D89 /* WidgetShared/WidgetAgent.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = FDA781E11C9EC76C4E74EB46; };
+		9E1B5ACAEAD6663D911AA102 /* WidgetShared/WidgetAgent.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = FDA781E11C9EC76C4E74EB46; };
+		0BE559D9F3EF53012E033E17 /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = F4C05BC4BB57650A61D0DABA; };
+		6675AD98B119511636B79EFE /* HerdrWidgets/AgentWidget.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = EB73117D9CEEECAE87055046; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -168,6 +173,10 @@
 		B8F20F74A9E9BFFDF1BCCD7A /* HerdrWidgets/HerdrWidgets.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/HerdrWidgets.swift"; sourceTree = SOURCE_ROOT; };
 		B0C953A1066804D4DF3ED4F4 /* HerdrWidgets.appex */ = { isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = HerdrWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		654E6EDA47509D8D65077A2B /* HerdrMenubar/Widgets/WidgetProbePublisher.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubar/Widgets/WidgetProbePublisher.swift"; sourceTree = SOURCE_ROOT; };
+		6C17DE7B584496ABC9127F08 /* HerdrMenubarTests/AgentWidgetTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/AgentWidgetTests.swift"; sourceTree = SOURCE_ROOT; };
+		FDA781E11C9EC76C4E74EB46 /* WidgetShared/WidgetAgent.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetAgent.swift"; sourceTree = SOURCE_ROOT; };
+		F4C05BC4BB57650A61D0DABA /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubar/Widgets/AgentWidgetPublisher.swift"; sourceTree = SOURCE_ROOT; };
+		EB73117D9CEEECAE87055046 /* HerdrWidgets/AgentWidget.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidget.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -211,6 +220,14 @@
 				B8F20F74A9E9BFFDF1BCCD7A,
 
 				654E6EDA47509D8D65077A2B,
+
+				6C17DE7B584496ABC9127F08,
+
+				FDA781E11C9EC76C4E74EB46,
+
+				F4C05BC4BB57650A61D0DABA,
+
+				EB73117D9CEEECAE87055046,
 			);
 			sourceTree = "<group>";
 		};
@@ -497,6 +514,10 @@
 				65D3D7615BD176E15A7F56F9,
 
 				088FA2F91C1AD12244BEE136,
+
+				57165E7327A472DBA43C8D89,
+
+				0BE559D9F3EF53012E033E17,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -535,6 +556,8 @@
 				F6C5BABE55615E6A030EC7B8,
 
 				761E1ABA45B7517C85AE7F94,
+
+				91998C8F4D7B7146F57C9E73,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -544,6 +567,10 @@
 				BE1D62EBA727F48C980F8976,
 
 				5B34D36292BA85E261D44958,
+
+				9E1B5ACAEAD6663D911AA102,
+
+				6675AD98B119511636B79EFE,
 			); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 

@@ -6,6 +6,11 @@ protocol ApplicationRuntimeServing: AnyObject {
     func start() async
     func applicationDidBecomeActive() async
     func stop() async
+    func openWidgetURL(_ url: URL) async
+}
+
+extension ApplicationRuntimeServing {
+    func openWidgetURL(_ url: URL) async {}
 }
 
 @MainActor
@@ -63,6 +68,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             discovery: SessionDiscovery(),
             clientFactory: LiveSessionClientFactory()
         )
+        let widgetPublisher = AgentWidgetPublisher(supervisor: supervisor)
         let processRunner = BoundedProcessRunner()
         let wezTermCLI = LiveWezTermCLI(runner: processRunner)
         let wezTermFocuser = LiveWezTermFocusAdapter(
@@ -133,8 +139,8 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             refreshShortcutRegistration: {
                 assignmentController.refreshRegistrationStatus()
             },
-            startStore: { await store.start() },
-            stopStore: { await store.stop() },
+            startStore: { await widgetPublisher.start(); await store.start() },
+            stopStore: { await widgetPublisher.stop(); await store.stop() },
             retryStore: { await store.retry() },
             selectTarget: { store.select($0) },
             selectTerminal: {
@@ -203,6 +209,14 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             startTask = nil
             startToken = nil
         }
+    }
+
+    func openWidgetURL(_ url: URL) async {
+        guard let target = WidgetAgentTarget(url: url) else { return }
+        await start()
+        guard let token = readyGeneration, isReady(token) else { return }
+        let session: SessionID = target.session == "default" ? .default : .named(String(target.session.dropFirst(6)))
+        dependencies.selectTarget(NotificationSelectionTarget(sessionID: session, paneID: target.paneID))
     }
 
     func applicationDidBecomeActive() async {

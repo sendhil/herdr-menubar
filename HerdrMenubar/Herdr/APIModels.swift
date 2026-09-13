@@ -13,6 +13,13 @@ enum AgentStatus: String, Codable, Sendable {
     }
 }
 
+struct AgentSessionReference: Codable, Equatable, Sendable {
+    let agent: String
+    let kind: String
+    let source: String
+    let value: String
+}
+
 struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
     let paneID: String
     let terminalID: String
@@ -25,6 +32,7 @@ struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
     let displayAgent: String?
     let agentStatus: AgentStatus
     let revision: UInt64
+    var agentSession: AgentSessionReference? = nil
 
     var id: String { paneID }
 
@@ -64,6 +72,7 @@ struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
         case displayAgent = "display_agent"
         case agentStatus = "agent_status"
         case revision
+        case agentSession = "agent_session"
     }
 }
 
