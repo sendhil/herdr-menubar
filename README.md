@@ -4,6 +4,23 @@ Herdr Menubar is a native, menu-bar-only macOS companion for [Herdr](https://her
 
 Herdr remains the source of truth. The app reads Herdr's public socket API and does not maintain separate agent status or acknowledgement state.
 
+## Native widget prototype
+
+This branch includes a native WidgetKit refresh probe embedded in Herdr Menubar. It is a feasibility build, not yet the configurable agent-list widget. The planned design and measured implementation status are in [the widget experiment record](docs/superpowers/experiments/2026-09-13-widget-refresh.md).
+
+The widget's shared container requires development-team signing. Ad-hoc signing does not establish widget shared-container access. For widget testing, provide `DEVELOPMENT_TEAM`, `CODE_SIGN_STYLE = Manual`, and a matching `CODE_SIGN_IDENTITY` in a local xcconfig file. Pass that file to the existing installer through `XCODE_XCCONFIG_FILE`:
+
+```bash
+XCODE_XCCONFIG_FILE=/tmp/herdr-widget-signing.xcconfig ./scripts/install.sh --no-launch
+open -g "$HOME/Applications/Herdr Menubar.app" --args --widget-refresh-probe
+```
+
+The app and extension derive their macOS App Group from `$(DEVELOPMENT_TEAM).dev.herdr.widgets`. Select an existing valid Apple Development identity from `security find-identity -v -p codesigning`; keep personal signing settings outside the repository.
+
+Add **Herdr refresh probe** from the macOS widget gallery. It displays a sequence number, short generation ID, app-write time (up arrow), and provider-read time (down arrow). The explicit probe run produces 30 updates at 30-second intervals. A normal app launch starts no probe. Quit before relaunching with probe arguments; passing arguments to an already-running app does not start a new run. The later fast-cadence test adds `--widget-refresh-probe-fast` for five-second intervals.
+
+Measure the installed Release app outside Xcode with widget developer mode disabled. A provider read or an update request is not evidence of a visible desktop refresh. Do not use this diagnostic widget as a live agent-status display.
+
 ## Features
 
 - Automatically monitors the default Herdr session and every named session.
