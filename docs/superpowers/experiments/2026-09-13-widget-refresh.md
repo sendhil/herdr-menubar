@@ -2,7 +2,7 @@
 
 Date: 2026-09-13
 Branch: `codex/native-widget-prototype`
-Status: Built and installed; shared-container reads and 30-update refresh run verified. Visible-render validation remains pending.
+Status: Shared-container reads and 30-update refresh run verified; placeholder root cause resolved through bundle re-registration. Onscreen timing remains unmeasured.
 
 ## Environment
 
@@ -71,3 +71,20 @@ Publication stops when the application terminates. The widget schedules an expli
 ## Recommendation
 
 Continue with the actual desktop rendering test. Installation/signing, shared-container reads, and prompt delivery of all 30 background publications are established. Few-second visible refresh behavior is not yet established. Accurate user-message tracking, configurable filters, the approved agent-list layout, and click-through navigation remain subsequent milestones.
+
+## Placeholder diagnosis and recovery
+
+The user supplied a desktop screenshot showing the medium Herdr widget stuck in its redacted placeholder. This confirmed that provider-read success alone had not established successful rendering.
+
+Notification Center repeatedly logged `WidgetArchiver.ValidationError.bundleStubNotSupported` with the underlying message `Bundle could not be looked up`. Timeline creation and reads were succeeding; the failure was in the consumer unarchiving the widget content.
+
+Plugin registration still included Debug and Release app paths under `/private/tmp/herdr-native-widget-prototype`, which no longer existed after moving the worktree. The running extension itself was the installed copy. Recovery was limited to Herdr's registrations and processes:
+
+1. Unregister the two obsolete application paths with Launch Services `lsregister -u`.
+2. Re-register `~/Applications/Herdr Menubar.app` with `lsregister -f -R` and its embedded extension with `pluginkit -a`.
+3. Confirm `pluginkit -m -A -D -v -i dev.herdr.menubar.widgets` lists only the installed extension. Attempts to separately remove the old plugin paths reported no plugin remaining, consistent with the preceding app unregistration.
+4. Relaunch Herdr Menubar with the bounded fast probe.
+
+At 16:25:08 local time, Notification Center changed from the archive validation error to `Content load successful`, evaluated the Herdr view as `LIVE`, and assigned the live view. This verifies recovery at the native rendering host. The automation tool still selects Weather, so a direct screenshot of the recovered Herdr view and write-to-visible timing are not claimed.
+
+No application code, personal preferences, global widget caches, or other widgets were changed for this recovery. For subsequent worktree moves, unregister the old build app paths before moving the directory, then re-register the stable installed app. Preserve the installed app's location throughout widget validation.
