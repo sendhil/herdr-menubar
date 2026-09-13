@@ -2,7 +2,7 @@
 
 Date: 2026-09-13
 Branch: `codex/native-widget-prototype`
-Status: Shared-container reads and 30-update refresh run verified; placeholder root cause resolved through bundle re-registration. Onscreen timing remains unmeasured.
+Status: Native desktop rendering confirmed by user screenshot after registration recovery. Shared-container reads and 30-update refresh run verified. Exact onscreen timing and extended lifecycle tests remain unmeasured.
 
 ## Environment
 
@@ -88,3 +88,11 @@ Plugin registration still included Debug and Release app paths under `/private/t
 At 16:25:08 local time, Notification Center changed from the archive validation error to `Content load successful`, evaluated the Herdr view as `LIVE`, and assigned the live view. This verifies recovery at the native rendering host. The automation tool still selects Weather, so a direct screenshot of the recovered Herdr view and write-to-visible timing are not claimed.
 
 No application code, personal preferences, global widget caches, or other widgets were changed for this recovery. For subsequent worktree moves, unregister the old build app paths before moving the directory, then re-register the stable installed app. Preserve the installed app's location throughout widget validation.
+
+## Visible rendering confirmed
+
+The user supplied a second desktop screenshot after recovery. The Herdr widget visibly displays sequence **15**, **Snapshot received**, generation prefix **A4A7BC0C**, app-write time **4:26:13 PM**, and provider-read time **4:26:14 PM**. The placeholder is gone, text is legible in the desktop's tinted appearance, and actual shared data is rendered in the native widget.
+
+This closes the basic installation → publication → extension read → native rendering smoke check. The displayed second-resolution timestamps are not an exact latency measurement and the screenshot does not establish write-to-visible latency, a latency percentile, or behavior after sleep/wake. Those remain follow-up validation, rather than reasons to repeat the now-proven basic rendering check.
+
+The next implementation milestone is accurate per-agent human-message tracking and the approved agent-list widget with independently configurable windows. Keep unknown or automated message provenance out of time-filtered results; preserve idle agents that still qualify.
