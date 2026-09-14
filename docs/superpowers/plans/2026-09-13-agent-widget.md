@@ -33,3 +33,7 @@ New agent-widget desktop rendering remains unverified: native UI automation sele
 ### Gallery registration correction
 
 The user confirmed the gallery still offered only the probe. chronod retained descriptors because both bundle build versions stayed at 1; unregistering/re-registering alone reported descriptors up to date. Incremented app and extension CFBundleVersion to 2 and reinstalled. At 17:01:33, chronod discovered HerdrAgents with medium/large support and successfully generated both gallery placeholders. Future widget catalog changes must increment both build numbers. Native UI capture of the gallery remains unavailable through the control tool.
+
+### Installed large widget placeholder recovery
+
+After adding the large agent widget, its live timeline failed with WidgetArchiver `Bundle version did not match`. The installed extension process was on the correct path. Force-registering the app alone had not repaired it; direct appex scanning was unsupported. Stopping the exact HerdrWidgets process and unregistering/re-registering the installed containing app, followed by pluginkit registration, recovered the timeline. At 17:29:57 chronod accepted three entries and NotificationCenter reported `Content load successful` for HerdrAgents/systemLarge. No global LaunchServices reset or widget-cache deletion was used. The extension's lsregister display version remained 1.0 (its marketing version), so that field alone is not reliable evidence of an outdated build.
