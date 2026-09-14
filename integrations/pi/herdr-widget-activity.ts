@@ -5,22 +5,40 @@ import {join} from 'node:path';
 
 // Hashes are used only in memory for conservative input/message correlation.
 export class ActivityMatcher {
- private pending: {digest:string; source:string; at:number}[] = [];
+ // A null value is an ambiguity tombstone, retained until session reset. Delivery
+ // events have no submission ID, so neither order nor cancellation can resolve it.
+ private pending = new Map<string, {source:string; at:number} | null>();
+ private saturated = false;
+ private static readonly capacity = 1024;
  private digest(content: unknown) { return createHash('sha256').update(JSON.stringify(content)).digest('hex'); }
- clear() { this.pending = []; }
+ clear() { this.pending.clear(); this.saturated = false; }
  input(text:string, images:any[], source:string, at:number) {
-  const content = [{type:'text',text}, ...images];
-  const digest = this.digest(content);
-  // Ambiguous repeated input supersedes the old candidate, never borrowing its provenance.
-  this.pending = this.pending.filter(x => x.digest !== digest && at-x.at < 7_200_000).slice(-127);
-  this.pending.push({digest,source,at});
+  if(this.saturated) return;
+  const digest = this.digest([{type:'text',text}, ...images]);
+  if(this.pending.has(digest)) {
+   this.pending.set(digest,null);
+   return;
+  }
+  if(this.pending.size >= ActivityMatcher.capacity) {
+   // Eviction could let a later input claim an old automated delivery. Stop
+   // correlating until lifecycle reset instead of forgetting provenance.
+   this.pending.clear();
+   this.saturated = true;
+   return;
+  }
+  // Queued messages can legitimately wait for hours. Retain candidates until
+  // delivery/reset rather than making capture depend on an arbitrary timeout.
+  this.pending.set(digest,{source,at});
  }
  message(message:any, now:number):number|null {
-  if(message?.role !== 'user' || !Array.isArray(message.content)) return null;
+  if(this.saturated || message?.role !== 'user' || !Array.isArray(message.content)) return null;
   const digest = this.digest(message.content);
-  const candidate = this.pending.find(x=>x.digest===digest);
-  this.pending = this.pending.filter(x=>x.digest!==digest && now-x.at < 7_200_000);
-  return candidate?.source==='interactive' && now>=candidate.at && now-candidate.at<7_200_000 ? candidate.at : null;
+  const candidate = this.pending.get(digest);
+  if(!candidate) return null;
+  this.pending.delete(digest);
+  // Correlation still cannot prove the origin of arbitrary injected messages
+  // that bypass input events. Pi needs submission IDs for exact provenance.
+  return candidate.source==='interactive' && now>=candidate.at ? candidate.at : null;
  }
 }
 

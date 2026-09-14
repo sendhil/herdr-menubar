@@ -71,14 +71,15 @@ release_install_lock() {
 }
 
 owned_pids() {
-  if matches=$(pgrep -x HerdrMenubar 2>/dev/null); then
+  for process_name in HerdrMenubar HerdrWidgets; do
+  if matches=$(pgrep -x "$process_name" 2>/dev/null); then
     pgrep_status=0
   else
     pgrep_status=$?
   fi
-  if [ "$pgrep_status" -eq 1 ]; then return 0; fi
+  if [ "$pgrep_status" -eq 1 ]; then continue; fi
   if [ "$pgrep_status" -ne 0 ]; then
-    echo "Error: could not inspect HerdrMenubar processes with pgrep." >&2
+    echo "Error: could not inspect HerdrMenubar processes with pgrep ($process_name)." >&2
     return 1
   fi
 
@@ -92,10 +93,11 @@ owned_pids() {
       continue
     fi
     command_path=${command_path#"${command_path%%[! ]*}"}
-    if [ "$command_path" = "$executable" ]; then printf '%s\n' "$pid"; fi
+    if [ "$command_path" = "$executable" ] || [ "$command_path" = "$destination/Contents/PlugIns/HerdrWidgets.appex/Contents/MacOS/HerdrWidgets" ]; then printf '%s\n' "$pid"; fi
   done <<EOF
 $matches
 EOF
+  done
 }
 
 signal_pids() {
@@ -149,5 +151,25 @@ stop_running_app() {
 
   remaining=$(owned_pids) || return 1
   echo "Error: Herdr Menubar is still running from $destination (PID(s): $(printf '%s' "$remaining" | tr '\n' ' ')). The application was not changed; quit it and retry." >&2
+  return 1
+}
+
+unregister_app() {
+  local bundle=$1 output line absent=0 unexpected=0
+  if output=$("$lsregister_tool" -u "$bundle" 2>&1); then return 0; fi
+  # kLSApplicationNotFoundErr means this exact bundle is already unregistered.
+  # Accept only the observed diagnostic and its optional Spotlight suffix;
+  # similarly prefixed numeric codes and any additional errors remain fatal.
+  while IFS= read -r line; do
+    case "$line" in
+      "failed to scan $bundle: -10814") absent=1 ;;
+      " from spotlight"|'') ;;
+      *) unexpected=1 ;;
+    esac
+  done <<EOF_DIAGNOSTIC
+$output
+EOF_DIAGNOSTIC
+  if [ "$absent" -eq 1 ] && [ "$unexpected" -eq 0 ]; then return 0; fi
+  printf '%s\n' "$output" >&2
   return 1
 }

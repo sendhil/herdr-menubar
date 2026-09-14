@@ -7,6 +7,9 @@ struct AgentEntry: TimelineEntry {
     let snapshot: AgentWidgetSnapshot?
     let window: AgentWindow
     let amount: Int
+    var needsRefresh = false
+    // Freeze which timestamps were valid when this timeline was read.
+    var eligibilityReferenceDate: Date? = nil
     var label: String {
         switch window {
         case .all: "All agents"
@@ -16,7 +19,8 @@ struct AgentEntry: TimelineEntry {
         }
     }
     var agents: [WidgetAgent] {
-        let rows = (snapshot?.agents ?? []).filter { $0.matches(window, amount: amount, now: date) }
+        guard !needsRefresh else { return [] }
+        let rows = (snapshot?.agents ?? []).filter { $0.matches(window, amount: amount, now: date, recordedBy: eligibilityReferenceDate ?? date) }
         let groups = Dictionary(grouping: rows, by: \.groupID)
         func priority(_ agent: WidgetAgent) -> Int {
             switch agent.status { case "blocked": 0; case "working": 1; case "done": 2; default: 3 }
@@ -51,78 +55,17 @@ struct AgentProvider: AppIntentTimelineProvider {
     }
     func timeline(for configuration: AgentWidgetConfiguration, in context: Context) async -> Timeline<AgentEntry> {
         let current = read(configuration)
-        var dates = [current.date.addingTimeInterval(180)]
-        if let snapshot = current.snapshot {
-            dates.append(snapshot.writtenAt.addingTimeInterval(180))
-            if current.window == .hours || current.window == .days {
-                let interval = Double(current.amount) * (current.window == .days ? 86400 : 3600)
-                dates += snapshot.agents.compactMap { $0.lastMessageAt?.addingTimeInterval(interval) }
-            } else if current.window == .today, let midnight = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: current.date)) { dates.append(midnight) }
+        let plan = WidgetTimelinePlan(now: current.date, writtenAt: current.snapshot?.writtenAt,
+            sourceVerifiedAt: current.snapshot?.sourceVerifiedAt,
+            messageDates: current.snapshot?.agents.compactMap(\.lastMessageAt) ?? [], window: current.window, amount: current.amount)
+        let entries = plan.steps.map { step in
+            AgentEntry(date: step.date, snapshot: current.snapshot, window: current.window, amount: current.amount, needsRefresh: step.needsRefresh, eligibilityReferenceDate: current.date)
         }
-        let future = Array(Set(dates.filter { $0 > current.date })).sorted().prefix(32)
-        let entries = [current] + future.map { AgentEntry(date: $0, snapshot: current.snapshot, window: current.window, amount: current.amount) }
-        return Timeline(entries: entries, policy: .after(current.date.addingTimeInterval(300)))
+        return Timeline(entries: entries, policy: .after(plan.reloadAt))
     }
+
     private func read(_ configuration: AgentWidgetConfiguration) -> AgentEntry {
         AgentEntry(date: .now, snapshot: try? AgentWidgetSnapshot.read(), window: configuration.window, amount: max(1, min(configuration.amount, 8760)))
-    }
-}
-
-struct AgentWidgetView: View {
-    @Environment(\.widgetFamily) private var family
-    let entry: AgentEntry
-    private var limit: Int { family == .systemLarge ? 7 : 3 }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Herdr", systemImage: "terminal.fill").font(.headline)
-                Spacer()
-                Text(entry.label).font(.caption2).foregroundStyle(.secondary)
-            }
-            if let snapshot = entry.snapshot, snapshot.isRunning {
-                let agents = entry.agents
-                let shown = Array(agents.prefix(limit))
-                if agents.isEmpty {
-                    Spacer(minLength: 0)
-                    Text(entry.window == .all ? "No agents connected" : "No recorded messages in this window").font(.subheadline)
-                    Text(entry.window == .all ? "Open an agent in Herdr." : "Pi tracking begins after loading the activity extension.").font(.caption2).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                } else {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, agent in
-                            if index == 0 || shown[index - 1].groupID != agent.groupID {
-                                Text(agent.workspace).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Link(destination: agent.url) {
-                                HStack(spacing: 6) {
-                                    Circle().fill(color(agent.status)).frame(width: 5, height: 5)
-                                    Text(agent.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                    Spacer(minLength: 3)
-                                    Text(agent.status.capitalized).font(.system(size: 10)).foregroundStyle(.secondary)
-                                }
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                HStack {
-                    if entry.date.timeIntervalSince(snapshot.writtenAt) >= 180 { Text("Updates delayed") }
-                    else if snapshot.unavailableSessions > 0 { Text("Some sessions unavailable") }
-                    else { Text("Updated"); Text(snapshot.writtenAt, style: .relative) }
-                    Spacer(minLength: 0)
-                    if agents.count > limit { Text("+\(agents.count - limit) more") }
-                }.font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
-            } else {
-                Spacer()
-                Text("Open Herdr Menubar").font(.subheadline)
-                Text("Your agents will appear here.").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-            }
-        }
-        .containerBackground(.background, for: .widget)
-    }
-    private func color(_ status: String) -> Color {
-        switch status { case "working": .blue; case "blocked": .orange; case "done": .green; default: .secondary }
     }
 }
 

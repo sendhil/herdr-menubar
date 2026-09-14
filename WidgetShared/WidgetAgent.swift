@@ -31,9 +31,9 @@ struct WidgetAgent: Codable, Equatable, Identifiable, Sendable {
         components.queryItems = [URLQueryItem(name: "session", value: session), URLQueryItem(name: "pane", value: paneID)]
         return components.url!
     }
-    func matches(_ window: AgentWindow, amount: Int, now: Date, calendar: Calendar = .current) -> Bool {
+    func matches(_ window: AgentWindow, amount: Int, now: Date, calendar: Calendar = .current, recordedBy: Date? = nil) -> Bool {
         if window == .all { return true }
-        guard let lastMessageAt, lastMessageAt <= now else { return false }
+        guard let lastMessageAt, lastMessageAt <= now, lastMessageAt <= (recordedBy ?? now) else { return false }
         if window == .today { return lastMessageAt >= calendar.startOfDay(for: now) }
         let interval = Double(max(1, min(amount, 8760))) * (window == .days ? 86400 : 3600)
         return lastMessageAt > now.addingTimeInterval(-interval)
@@ -61,6 +61,17 @@ struct AgentWidgetSnapshot: Codable, Equatable, Sendable {
     let agents: [WidgetAgent]
     let unavailableSessions: Int
     var isRunning = true
+    /// Oldest successful source snapshot receipt across currently connected sessions.
+    var sourceVerifiedAt: Date? = nil
+    func isPublicationStale(at date: Date) -> Bool {
+        let age = date.timeIntervalSince(writtenAt)
+        return age < 0 || age >= 180
+    }
+    func isSourceUnverified(at date: Date) -> Bool {
+        guard let sourceVerifiedAt else { return !agents.isEmpty }
+        let age = date.timeIntervalSince(sourceVerifiedAt)
+        return age < 0 || age >= 180
+    }
     static func fileURL() throws -> URL {
         try WidgetProbeRepository.shared().url.deletingLastPathComponent().appendingPathComponent("agents.json")
     }

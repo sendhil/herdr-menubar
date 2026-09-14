@@ -86,6 +86,14 @@
 		6675AD98B119511636B79EFE /* HerdrWidgets/AgentWidget.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = EB73117D9CEEECAE87055046; };
 		E366A38DA1614C7E4495ACA3 /* WidgetShared/AgentWidgetConfiguration.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = CA847326A312CAD0DBBC701F; };
 		082783EE8D651963F8F63BB3 /* WidgetShared/AgentWidgetConfiguration.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = CA847326A312CAD0DBBC701F; };
+		535D3221186E44B94C44A170 /* HerdrMenubarTests/WidgetTimelinePlanTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = E70D00613CE363E39CE945B6; };
+		5F4A0E22418E91FF8CD3EA01 /* HerdrMenubarTests/AgentWidgetPresentationTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = 93E30C88D9038C56AC110DB3; };
+		A0A4C8BFC727705B551CF336 /* HerdrMenubarTests/AgentWidgetPublisherTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = 87B036C23BCF2D6FEAD051F6; };
+		7BB123E1F9D2511E38FAA96F /* WidgetShared/WidgetTimelinePlan.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = C707D85D03F787A4E90122CB; };
+		C4F745CB2B2DD993C0F1B60A /* WidgetShared/WidgetTimelinePlan.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = C707D85D03F787A4E90122CB; };
+		16D443DB86ECCD1985B96672 /* WidgetShared/AgentWidgetPresentation.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = 2AF215F1BDAC671C56E037A5; };
+		B4E5040E5BD3AF0146CDD225 /* WidgetShared/AgentWidgetPresentation.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = 2AF215F1BDAC671C56E037A5; };
+		EA3F84570DEF6AE0673E78AC /* HerdrWidgets/AgentWidgetView.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = D5010C69049E9486891FFEF1; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -180,6 +188,13 @@
 		F4C05BC4BB57650A61D0DABA /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubar/Widgets/AgentWidgetPublisher.swift"; sourceTree = SOURCE_ROOT; };
 		EB73117D9CEEECAE87055046 /* HerdrWidgets/AgentWidget.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidget.swift"; sourceTree = SOURCE_ROOT; };
 		CA847326A312CAD0DBBC701F /* WidgetShared/AgentWidgetConfiguration.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/AgentWidgetConfiguration.swift"; sourceTree = SOURCE_ROOT; };
+		E70D00613CE363E39CE945B6 /* HerdrMenubarTests/WidgetTimelinePlanTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/WidgetTimelinePlanTests.swift"; sourceTree = SOURCE_ROOT; };
+		93E30C88D9038C56AC110DB3 /* HerdrMenubarTests/AgentWidgetPresentationTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/AgentWidgetPresentationTests.swift"; sourceTree = SOURCE_ROOT; };
+		87B036C23BCF2D6FEAD051F6 /* HerdrMenubarTests/AgentWidgetPublisherTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/AgentWidgetPublisherTests.swift"; sourceTree = SOURCE_ROOT; };
+		C707D85D03F787A4E90122CB /* WidgetShared/WidgetTimelinePlan.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetTimelinePlan.swift"; sourceTree = SOURCE_ROOT; };
+		2AF215F1BDAC671C56E037A5 /* WidgetShared/AgentWidgetPresentation.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/AgentWidgetPresentation.swift"; sourceTree = SOURCE_ROOT; };
+		D5010C69049E9486891FFEF1 /* HerdrWidgets/AgentWidgetView.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidgetView.swift"; sourceTree = SOURCE_ROOT; };
+		A47001309BDEA512FCF04111 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Version.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -233,6 +248,18 @@
 				EB73117D9CEEECAE87055046,
 
 				CA847326A312CAD0DBBC701F,
+
+				E70D00613CE363E39CE945B6,
+
+				93E30C88D9038C56AC110DB3,
+
+				87B036C23BCF2D6FEAD051F6,
+
+				C707D85D03F787A4E90122CB,
+
+				2AF215F1BDAC671C56E037A5,
+
+				D5010C69049E9486891FFEF1,
 			);
 			sourceTree = "<group>";
 		};
@@ -525,6 +552,10 @@
 				0BE559D9F3EF53012E033E17,
 
 				E366A38DA1614C7E4495ACA3,
+
+				7BB123E1F9D2511E38FAA96F,
+
+				16D443DB86ECCD1985B96672,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -565,6 +596,12 @@
 				761E1ABA45B7517C85AE7F94,
 
 				91998C8F4D7B7146F57C9E73,
+
+				535D3221186E44B94C44A170,
+
+				5F4A0E22418E91FF8CD3EA01,
+
+				A0A4C8BFC727705B551CF336,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -580,6 +617,12 @@
 				6675AD98B119511636B79EFE,
 
 				082783EE8D651963F8F63BB3,
+
+				C4F745CB2B2DD993C0F1B60A,
+
+				B4E5040E5BD3AF0146CDD225,
+
+				EA3F84570DEF6AE0673E78AC,
 			); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
@@ -653,6 +696,7 @@
 		};
 		309331E6CB13EFA673884BCF /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A47001309BDEA512FCF04111 /* Version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -743,6 +787,7 @@
 		};
 		CA82646F736E0DA28C46D118 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A47001309BDEA512FCF04111 /* Version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

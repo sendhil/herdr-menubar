@@ -64,6 +64,7 @@ executable="$destination/Contents/MacOS/HerdrMenubar"
 stage="$install_dir/.Herdr Menubar.app.install.$$"
 backup="$install_dir/.Herdr Menubar.app.backup.$$"
 lock="$install_dir/.Herdr Menubar.install.lock"
+registration_list="$install_dir/.Herdr Menubar.registration.$$"
 
 mkdir -p "$install_dir"
 acquire_install_lock "$lock"
@@ -72,6 +73,7 @@ cleanup() {
   status=$?
   trap - EXIT HUP INT TERM
   rm -rf "$stage"
+  rm -f "$registration_list"
   if [ -e "$backup" ] || [ -L "$backup" ]; then
     if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then
       mv "$backup" "$destination" || true
@@ -100,19 +102,41 @@ if [ ! -d "$product" ]; then
   exit 1
 fi
 
+# Validate the completed product before stopping or moving the installed app.
+python3 "$script_dir/validate-widget-product.py" "$product"
+codesign --verify --strict "$product/Contents/PlugIns/HerdrWidgets.appex"
+codesign --verify --strict "$product"
+python3 "$script_dir/validate-widget-product.py" --registration-candidates "$repo_root" "$product" > "$registration_list"
+
 rm -rf "$stage" "$backup"
 cp -R "$product" "$stage"
 
+stop_running_app
 if [ -e "$destination" ] || [ -L "$destination" ]; then
   mv "$destination" "$backup"
 fi
-stop_running_app
 
 if [ -e "$destination" ] || [ -L "$destination" ]; then
   echo "Error: installation destination reappeared before replacement: $destination" >&2
   exit 1
 fi
 mv "$stage" "$destination"
+
+# Remove only this build product's registration; registering .appex directly
+# with lsregister is unsupported. Keep existing desktop widget configurations.
+lsregister_tool="${HERDR_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister}"
+while IFS= read -r -d '' candidate; do
+  if ! unregister_app "$candidate"; then
+    echo "Error: widget registration failed for build copy: $candidate. Previous installation retained at: $backup" >&2
+    exit 1
+  fi
+done < "$registration_list"
+if ! unregister_app "$destination" ||
+   ! "$lsregister_tool" -f -R "$destination" ||
+   ! pluginkit -a "$destination/Contents/PlugIns/HerdrWidgets.appex"; then
+  echo "Error: widget registration failed. The new app remains installed; any previous installation is retained at: $backup" >&2
+  exit 1
+fi
 rm -rf "$backup"
 
 echo "Installed Herdr Menubar at: $destination"

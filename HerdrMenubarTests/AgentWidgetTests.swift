@@ -43,4 +43,30 @@ final class AgentWidgetTests: XCTestCase {
         XCTAssertEqual(WidgetAgentTarget(url: agent.url)?.session, "default")
         XCTAssertNil(WidgetAgentTarget(url: URL(string: "https://focus?session=default&pane=p1")!))
     }
+    func testSourceHealthDoesNotDependOnFilteredEligibility() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let oldAgent = row(now.addingTimeInterval(-7200))
+        var snapshot = AgentWidgetSnapshot(version: 1, writtenAt: now, agents: [oldAgent], unavailableSessions: 0)
+        snapshot.sourceVerifiedAt = now.addingTimeInterval(-181)
+        XCTAssertFalse(oldAgent.matches(.hours, amount: 1, now: now))
+        XCTAssertTrue(snapshot.isSourceUnverified(at: now))
+        XCTAssertFalse(snapshot.isPublicationStale(at: now))
+        let empty = AgentWidgetSnapshot(version: 1, writtenAt: now, agents: [], unavailableSessions: 0)
+        XCTAssertFalse(empty.isSourceUnverified(at: now))
+    }
+    func testFutureHealthTimestampsAreUnverified() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        var snapshot = AgentWidgetSnapshot(version: 1, writtenAt: now.addingTimeInterval(60), agents: [row()], unavailableSessions: 0)
+        snapshot.sourceVerifiedAt = now.addingTimeInterval(60)
+        XCTAssertTrue(snapshot.isPublicationStale(at: now))
+        XCTAssertTrue(snapshot.isSourceUnverified(at: now))
+    }
+    func testFutureMessageCannotBecomeEligibleInLaterEntriesOfSameTimeline() {
+        let observed = Date(timeIntervalSince1970: 100_000)
+        let futureAgent = row(observed.addingTimeInterval(60))
+        XCTAssertFalse(futureAgent.matches(.hours, amount: 1, now: observed.addingTimeInterval(180), recordedBy: observed))
+        XCTAssertTrue(futureAgent.matches(.all, amount: 1, now: observed.addingTimeInterval(180), recordedBy: observed))
+        XCTAssertTrue(futureAgent.matches(.hours, amount: 1, now: observed.addingTimeInterval(180), recordedBy: observed.addingTimeInterval(180)))
+    }
+
 }

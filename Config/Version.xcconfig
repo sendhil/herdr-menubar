@@ -1,0 +1,2 @@
+// Increment for each distributed widget build; shared by app and extension.
+CURRENT_PROJECT_VERSION = 4

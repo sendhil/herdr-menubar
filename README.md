@@ -280,3 +280,11 @@ Herdr is a separate project with its own license and maintainers. References to 
 Add **Herdr agents** through the macOS desktop widget gallery. Medium and large widgets group agents by workspace and show their tab/custom agent names. Clicking a row focuses its exact Herdr pane. Right-click → **Edit Widget** to choose Today, last N hours/days, or All agents (initial default).
 
 For Pi message-window tracking, copy `integrations/pi/herdr-widget-activity.ts` into `~/.pi/agent/extensions/`, then run `/reload` in existing sessions. Only subsequent matching interactive messages qualify; there is no historical backfill. Prompt expansion or transformation may prevent a match. Other agent types are visible under All agents. See [implementation notes](docs/superpowers/plans/2026-09-13-agent-widget.md) for capture limitations and refresh behavior.
+
+### Widget reliability and updates
+
+The host reconciles each connected Herdr session about once a minute in addition to listening for live changes. The footer distinguishes stale publication from an unverified Herdr connection; these are separate timestamps. Known filter expirations remain scheduled even when the host stops. Extremely dense expiration schedules show a refresh-needed state instead of silently retaining expired rows.
+
+The Pi companion retains long-queued inputs without a two-hour cutoff. Identical overlapping submissions are excluded until a session reset because Pi delivery events do not identify the originating submission. At 1,024 outstanding/ambiguous hashes, tracking also pauses until reset; it never evicts provenance and guesses. Run `/reload` in existing Pi sessions after updating the companion. Expanded or transformed inputs can still remain untracked.
+
+`Config/Version.xcconfig` is the single build-number source for the app and widget. Increment it for distributed builds. The installer verifies matching resolved versions, configuration metadata, and signatures before replacement, stops both installed processes, and refreshes only this checkout’s Herdr build registrations and the installed app. Existing widget settings are preserved. Registration failure retains the prior app backup and reports its path.
