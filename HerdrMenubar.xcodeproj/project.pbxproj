@@ -84,6 +84,8 @@
 		9E1B5ACAEAD6663D911AA102 /* WidgetShared/WidgetAgent.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = FDA781E11C9EC76C4E74EB46; };
 		0BE559D9F3EF53012E033E17 /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = F4C05BC4BB57650A61D0DABA; };
 		6675AD98B119511636B79EFE /* HerdrWidgets/AgentWidget.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = EB73117D9CEEECAE87055046; };
+		E366A38DA1614C7E4495ACA3 /* WidgetShared/AgentWidgetConfiguration.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = CA847326A312CAD0DBBC701F; };
+		082783EE8D651963F8F63BB3 /* WidgetShared/AgentWidgetConfiguration.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = CA847326A312CAD0DBBC701F; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -177,6 +179,7 @@
 		FDA781E11C9EC76C4E74EB46 /* WidgetShared/WidgetAgent.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetAgent.swift"; sourceTree = SOURCE_ROOT; };
 		F4C05BC4BB57650A61D0DABA /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubar/Widgets/AgentWidgetPublisher.swift"; sourceTree = SOURCE_ROOT; };
 		EB73117D9CEEECAE87055046 /* HerdrWidgets/AgentWidget.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidget.swift"; sourceTree = SOURCE_ROOT; };
+		CA847326A312CAD0DBBC701F /* WidgetShared/AgentWidgetConfiguration.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/AgentWidgetConfiguration.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -228,6 +231,8 @@
 				F4C05BC4BB57650A61D0DABA,
 
 				EB73117D9CEEECAE87055046,
+
+				CA847326A312CAD0DBBC701F,
 			);
 			sourceTree = "<group>";
 		};
@@ -518,6 +523,8 @@
 				57165E7327A472DBA43C8D89,
 
 				0BE559D9F3EF53012E033E17,
+
+				E366A38DA1614C7E4495ACA3,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -571,6 +578,8 @@
 				9E1B5ACAEAD6663D911AA102,
 
 				6675AD98B119511636B79EFE,
+
+				082783EE8D651963F8F63BB3,
 			); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
