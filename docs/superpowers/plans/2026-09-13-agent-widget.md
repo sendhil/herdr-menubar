@@ -29,3 +29,7 @@ Unit coverage: naming, exact rolling boundary, unknown/future timestamps, local 
 Signed universal Release build and installed app/extension signature checks passed. Live snapshot contained five agents, including Luna Escalation / New Session marked working. Final affected suites: 20 Swift tests passed. Pi suite: five tests, 12 assertions passed, including timestamp-only persistence. Full regression: 409 unit tests, four assertions failed in the same two pre-existing tests (process overflow timing and rendered shortcut accessibility); one UI smoke test passed.
 
 New agent-widget desktop rendering remains unverified: native UI automation selects other widget windows and cannot reliably address the gallery. The earlier refresh-probe widget's rendering was confirmed by the user's screenshot. Actual message capture in an existing live session awaits the user's /reload and subsequent message.
+
+### Gallery registration correction
+
+The user confirmed the gallery still offered only the probe. chronod retained descriptors because both bundle build versions stayed at 1; unregistering/re-registering alone reported descriptors up to date. Incremented app and extension CFBundleVersion to 2 and reinstalled. At 17:01:33, chronod discovered HerdrAgents with medium/large support and successfully generated both gallery placeholders. Future widget catalog changes must increment both build numbers. Native UI capture of the gallery remains unavailable through the control tool.
