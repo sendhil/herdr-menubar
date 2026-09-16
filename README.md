@@ -4,9 +4,9 @@ Herdr Menubar is a native, menu-bar-only macOS companion for [Herdr](https://her
 
 Herdr remains the source of truth. The app reads Herdr's public socket API and does not maintain separate agent status or acknowledgement state.
 
-## Native widget prototype
+## Native desktop widgets
 
-This branch includes a native WidgetKit refresh probe embedded in Herdr Menubar. It is a feasibility build, not yet the configurable agent-list widget. The planned design and measured implementation status are in [the widget experiment record](docs/superpowers/experiments/2026-09-13-widget-refresh.md).
+Herdr Menubar includes configurable native agent widgets. See [Native agent widgets](#native-agent-widgets) for message-window filters and Pi activity tracking. A separate refresh probe remains available for diagnostics; measurements are in [the widget experiment record](docs/superpowers/experiments/2026-09-13-widget-refresh.md).
 
 The widget's shared container requires development-team signing. Ad-hoc signing does not establish widget shared-container access. For widget testing, provide `DEVELOPMENT_TEAM`, `CODE_SIGN_STYLE = Manual`, and a matching `CODE_SIGN_IDENTITY` in a local xcconfig file. Pass that file to the existing installer through `XCODE_XCCONFIG_FILE`:
 
@@ -37,7 +37,7 @@ Measure the installed Release app outside Xcode with widget developer mode disab
 - Supports an optional **Launch at Login** setting.
 - Supports two independently configurable global keyboard shortcuts.
 - Uses a native macOS menu, template icon, accessibility labels, and unified logging.
-- Stores preferences only; pane and agent state is never persisted.
+- Shares local agent snapshots and message-activity metadata with its widget extension.
 
 ## Status behavior
 
@@ -85,19 +85,27 @@ Global registration and event delivery use [KeyboardShortcuts](https://github.co
 - Xcode 26 or newer, including the macOS SDK and command-line tools. After installing Xcode, select it in **Xcode > Settings > Locations**, or with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
 - One of the recognized terminal applications for click-through activation. WezTerm is the default; session-aware tab focus requires the installed app's `Contents/MacOS/wezterm` CLI.
 
-No Homebrew packages or third-party build tools are required. Signing, notarization, packaged releases, and Homebrew distribution are not currently included.
+No Homebrew packages or third-party build tools are required. A valid Apple Development signing identity is required for the widget. Notarized packaged releases and Homebrew distribution are not currently included.
 
 ## Quick Install
 
-Clone the repository, then run this command from the checkout:
+Clone the repository (or run `git pull --ff-only` in an existing checkout). On each Mac, select a valid identity with `security find-identity -v -p codesigning`. Create a local file outside the repository, such as `~/.config/herdr-signing.xcconfig`, containing your own signing values:
+
+```xcconfig
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = YOUR_SIGNING_IDENTITY_HASH
+```
+
+The certificate and its private key must be available in that Mac’s keychain. Then run from the checkout:
 
 ```bash
-./scripts/install.sh
+XCODE_XCCONFIG_FILE="$HOME/.config/herdr-signing.xcconfig" ./scripts/install.sh
 ```
 
 The script makes a Release build using repository-local derived data under `.build/`, installs it as `~/Applications/Herdr Menubar.app`, safely replaces a previous installation, and launches it. It can be invoked from any working directory. To install without launching, use `./scripts/install.sh --no-launch`; `--install-dir DIR` selects a different applications directory.
 
-To update or reinstall, pull the desired source revision and run `./scripts/install.sh` again. The script stops the running app before replacing it, then relaunches the new build. Install and uninstall operations share a per-install-directory lock so they cannot modify the app concurrently. A lock whose numeric owner PID is no longer running is recovered automatically; an invalid lock owner is left in place with a cleanup message so the lock is never removed based on an unsafe guess.
+To update or reinstall, pull the desired source revision and run the same signed installation command again. The script stops the running app before replacing it, then relaunches the new build. Install and uninstall operations share a per-install-directory lock so they cannot modify the app concurrently. A lock whose numeric owner PID is no longer running is recovered automatically; an invalid lock owner is left in place with a cleanup message so the lock is never removed based on an unsafe guess.
 
 To uninstall:
 
@@ -109,7 +117,7 @@ This stops Herdr Menubar and removes `~/Applications/Herdr Menubar.app`. Prefere
 
 Installation does not automatically enable Launch at Login. Use **Launch at Login** in the Herdr Menubar menu if desired.
 
-This local Release build is ad-hoc signed by Xcode; it is not Developer ID signed or notarized. macOS Gatekeeper may ask you to confirm opening it. Developer ID signing and notarized release distribution remain future work; do not bypass organizational security policy to run the app.
+This local Release build uses your configured development identity; it is not Developer ID signed or notarized. macOS Gatekeeper may ask you to confirm opening it. Developer ID signing and notarized release distribution remain future work; do not bypass organizational security policy to run the app.
 
 ## Build and run
 
@@ -246,7 +254,7 @@ The UI-test target is present for future smoke coverage, but routine validation 
 
 ## Preferences and privacy
 
-The app persists only:
+The app persists these preferences:
 
 - Selected terminal bundle identifier.
 - Launch at Login intent.
@@ -255,14 +263,14 @@ The app persists only:
 - Toggle-menu shortcut assignment.
 - Latest-notification shortcut assignment.
 
-Actual login-item state is read from macOS through `SMAppService`. Pane snapshots, agent status, terminal output, session state, and acknowledgement state are not written to disk by Herdr Menubar. Herdr remains the source of truth for all runtime state.
+Actual login-item state is read from macOS through `SMAppService`. The app also writes agent snapshots and message-activity metadata to its local shared App Group container for the widget. Herdr remains the source of truth for agent status and acknowledgement state.
 
 Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynamic socket, server, focus, activation, and error details are logged as private values.
 
 ## Current limitations
 
 - Local source build and install workflow only.
-- No Developer ID signed or notarized release artifacts; local builds are ad-hoc signed and distributable releases remain future work.
+- No Developer ID signed or notarized release artifacts; local widget builds require development-team signing and distributable releases remain future work.
 - No automatic updater or package-manager installation.
 - Menu presentation intentionally uses native macOS menu behavior rather than a custom dashboard or popover.
 - Terminal activation uses a user-selected terminal because Herdr's public API does not currently identify the macOS application hosting an attached client.

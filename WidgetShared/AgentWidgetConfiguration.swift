@@ -13,4 +13,3 @@ struct AgentWidgetConfiguration: WidgetConfigurationIntent {
     @Parameter(title: "Message window", default: .all) var window: AgentWindow
     @Parameter(title: "Number of hours or days", default: 24, inclusiveRange: (1, 8760)) var amount: Int
 }
-
