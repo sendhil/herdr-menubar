@@ -6,10 +6,6 @@
 	objectVersion = 54;
 	objects = {
 
-/* Begin PBXCopyFilesBuildPhase section */
-		F8A53580CD24E1EC55443FF6 /* Embed app extensions */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (8FB1161982D008A4F7C8B37B); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXBuildFile section */
 		12A000000000000000000001 /* JSONLineFramerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000011 /* JSONLineFramerTests.swift */; };
 		12A000000000000000000003 /* JSONLineFramer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000013 /* JSONLineFramer.swift */; };
@@ -71,30 +67,7 @@
 		E3000000000000000000002B /* ApplicationRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000000000000000000002A /* ApplicationRuntimeTests.swift */; };
 		E30000000000000000000029 /* ApplicationRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30000000000000000000028 /* ApplicationRuntime.swift */; };
 		DB27A5C2669727F2ABADA836 /* HerdrMenubarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121841B405280CF092113C53 /* HerdrMenubarUITests.swift */; };
-		F6C5BABE55615E6A030EC7B8 /* HerdrMenubarTests/WidgetProbeRepositoryTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = A464C22179BC2EFADA5963B8; };
-		C963FE7EEC30F996CBD9CCBE /* WidgetShared/WidgetProbeSnapshot.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = 7ADCE56280907B896815CB78; };
-		65D3D7615BD176E15A7F56F9 /* WidgetShared/WidgetProbeRepository.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = D562F2D6DC8C812FF75EE721; };
-		761E1ABA45B7517C85AE7F94 /* HerdrMenubarTests/WidgetProbePublisherTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = A518F6E283EFC699986211A5; };
-		7ED78EFB5B394DBC6345E827 /* HerdrWidgets/HerdrWidgets.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = B8F20F74A9E9BFFDF1BCCD7A; };
-		BE1D62EBA727F48C980F8976 /* WidgetShared/WidgetProbeSnapshot.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = 7ADCE56280907B896815CB78; };
-		5B34D36292BA85E261D44958 /* WidgetShared/WidgetProbeRepository.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = D562F2D6DC8C812FF75EE721; };
-		8FB1161982D008A4F7C8B37B /* Embed HerdrWidgets */ = { isa = PBXBuildFile; fileRef = B0C953A1066804D4DF3ED4F4; settings = { ATTRIBUTES = (RemoveHeadersOnCopy); }; };
-		088FA2F91C1AD12244BEE136 /* HerdrMenubar/Widgets/WidgetProbePublisher.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = 654E6EDA47509D8D65077A2B; };
-		91998C8F4D7B7146F57C9E73 /* HerdrMenubarTests/AgentWidgetTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = 6C17DE7B584496ABC9127F08; };
-		57165E7327A472DBA43C8D89 /* WidgetShared/WidgetAgent.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = FDA781E11C9EC76C4E74EB46; };
-		9E1B5ACAEAD6663D911AA102 /* WidgetShared/WidgetAgent.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = FDA781E11C9EC76C4E74EB46; };
-		0BE559D9F3EF53012E033E17 /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = F4C05BC4BB57650A61D0DABA; };
-		6675AD98B119511636B79EFE /* HerdrWidgets/AgentWidget.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = EB73117D9CEEECAE87055046; };
-		E366A38DA1614C7E4495ACA3 /* WidgetShared/AgentWidgetConfiguration.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = CA847326A312CAD0DBBC701F; };
-		082783EE8D651963F8F63BB3 /* WidgetShared/AgentWidgetConfiguration.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = CA847326A312CAD0DBBC701F; };
-		535D3221186E44B94C44A170 /* HerdrMenubarTests/WidgetTimelinePlanTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = E70D00613CE363E39CE945B6; };
-		5F4A0E22418E91FF8CD3EA01 /* HerdrMenubarTests/AgentWidgetPresentationTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = 93E30C88D9038C56AC110DB3; };
-		A0A4C8BFC727705B551CF336 /* HerdrMenubarTests/AgentWidgetPublisherTests.swift:E757C085039C0A48930F6D5E */ = { isa = PBXBuildFile; fileRef = 87B036C23BCF2D6FEAD051F6; };
-		7BB123E1F9D2511E38FAA96F /* WidgetShared/WidgetTimelinePlan.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = C707D85D03F787A4E90122CB; };
-		C4F745CB2B2DD993C0F1B60A /* WidgetShared/WidgetTimelinePlan.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = C707D85D03F787A4E90122CB; };
-		16D443DB86ECCD1985B96672 /* WidgetShared/AgentWidgetPresentation.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = 2AF215F1BDAC671C56E037A5; };
-		B4E5040E5BD3AF0146CDD225 /* WidgetShared/AgentWidgetPresentation.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = 2AF215F1BDAC671C56E037A5; };
-		EA3F84570DEF6AE0673E78AC /* HerdrWidgets/AgentWidgetView.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = D5010C69049E9486891FFEF1; };
+
 		F90000000000000000000002 /* SketchyBarIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000001; };
 		F90000000000000000000004 /* SketchyBarStatusPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000003; };
 		F90000000000000000000006 /* DetachedMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000005; };
@@ -116,7 +89,7 @@
 			remoteGlobalIDString = 06C84F28A441AEE68F573249;
 			remoteInfo = HerdrMenubar;
 		};
-		C974277400A0DF51D17E87E4 /* Widget proxy */ = { isa = PBXContainerItemProxy; containerPortal = 6FC917FB5923306F8A330ABB; proxyType = 1; remoteGlobalIDString = 4E33DB20F0863507A85DCAFC; remoteInfo = HerdrWidgets; };
+
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -182,24 +155,7 @@
 		BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HerdrMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CDFE47EF5F85F8D28CCD48F4 /* APIModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModelsTests.swift; sourceTree = "<group>"; };
 		FBD9BB0C078EEA3C2D5A8EDA /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
-		A464C22179BC2EFADA5963B8 /* HerdrMenubarTests/WidgetProbeRepositoryTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/WidgetProbeRepositoryTests.swift"; sourceTree = SOURCE_ROOT; };
-		7ADCE56280907B896815CB78 /* WidgetShared/WidgetProbeSnapshot.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetProbeSnapshot.swift"; sourceTree = SOURCE_ROOT; };
-		D562F2D6DC8C812FF75EE721 /* WidgetShared/WidgetProbeRepository.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetProbeRepository.swift"; sourceTree = SOURCE_ROOT; };
-		A518F6E283EFC699986211A5 /* HerdrMenubarTests/WidgetProbePublisherTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/WidgetProbePublisherTests.swift"; sourceTree = SOURCE_ROOT; };
-		B8F20F74A9E9BFFDF1BCCD7A /* HerdrWidgets/HerdrWidgets.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/HerdrWidgets.swift"; sourceTree = SOURCE_ROOT; };
-		B0C953A1066804D4DF3ED4F4 /* HerdrWidgets.appex */ = { isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = HerdrWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		654E6EDA47509D8D65077A2B /* HerdrMenubar/Widgets/WidgetProbePublisher.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubar/Widgets/WidgetProbePublisher.swift"; sourceTree = SOURCE_ROOT; };
-		6C17DE7B584496ABC9127F08 /* HerdrMenubarTests/AgentWidgetTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/AgentWidgetTests.swift"; sourceTree = SOURCE_ROOT; };
-		FDA781E11C9EC76C4E74EB46 /* WidgetShared/WidgetAgent.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetAgent.swift"; sourceTree = SOURCE_ROOT; };
-		F4C05BC4BB57650A61D0DABA /* HerdrMenubar/Widgets/AgentWidgetPublisher.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubar/Widgets/AgentWidgetPublisher.swift"; sourceTree = SOURCE_ROOT; };
-		EB73117D9CEEECAE87055046 /* HerdrWidgets/AgentWidget.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidget.swift"; sourceTree = SOURCE_ROOT; };
-		CA847326A312CAD0DBBC701F /* WidgetShared/AgentWidgetConfiguration.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/AgentWidgetConfiguration.swift"; sourceTree = SOURCE_ROOT; };
-		E70D00613CE363E39CE945B6 /* HerdrMenubarTests/WidgetTimelinePlanTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/WidgetTimelinePlanTests.swift"; sourceTree = SOURCE_ROOT; };
-		93E30C88D9038C56AC110DB3 /* HerdrMenubarTests/AgentWidgetPresentationTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/AgentWidgetPresentationTests.swift"; sourceTree = SOURCE_ROOT; };
-		87B036C23BCF2D6FEAD051F6 /* HerdrMenubarTests/AgentWidgetPublisherTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrMenubarTests/AgentWidgetPublisherTests.swift"; sourceTree = SOURCE_ROOT; };
-		C707D85D03F787A4E90122CB /* WidgetShared/WidgetTimelinePlan.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/WidgetTimelinePlan.swift"; sourceTree = SOURCE_ROOT; };
-		2AF215F1BDAC671C56E037A5 /* WidgetShared/AgentWidgetPresentation.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/AgentWidgetPresentation.swift"; sourceTree = SOURCE_ROOT; };
-		D5010C69049E9486891FFEF1 /* HerdrWidgets/AgentWidgetView.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidgetView.swift"; sourceTree = SOURCE_ROOT; };
+
 		A47001309BDEA512FCF04111 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Version.xcconfig; sourceTree = SOURCE_ROOT; };
 		F90000000000000000000001 /* SketchyBarIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchyBarIntegrationTests.swift; sourceTree = "<group>"; };
 		F90000000000000000000003 /* SketchyBarStatusPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchyBarStatusPublisher.swift; sourceTree = "<group>"; };
@@ -215,7 +171,6 @@
 				BCE782D22F8D640210AC8629 /* HerdrMenubarTests.xctest */,
 				B1A8F550ECCFB06B9856737D /* HerdrMenubarUITests.xctest */,
 
-				B0C953A1066804D4DF3ED4F4,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -237,39 +192,6 @@
 				EAF73B15421E23EBCBEED006 /* HerdrMenubarUITests */,
 				70CC1189A6D60506EC82E1E0 /* Products */,
 
-				A464C22179BC2EFADA5963B8,
-
-				7ADCE56280907B896815CB78,
-
-				D562F2D6DC8C812FF75EE721,
-
-				A518F6E283EFC699986211A5,
-
-				B8F20F74A9E9BFFDF1BCCD7A,
-
-				654E6EDA47509D8D65077A2B,
-
-				6C17DE7B584496ABC9127F08,
-
-				FDA781E11C9EC76C4E74EB46,
-
-				F4C05BC4BB57650A61D0DABA,
-
-				EB73117D9CEEECAE87055046,
-
-				CA847326A312CAD0DBBC701F,
-
-				E70D00613CE363E39CE945B6,
-
-				93E30C88D9038C56AC110DB3,
-
-				87B036C23BCF2D6FEAD051F6,
-
-				C707D85D03F787A4E90122CB,
-
-				2AF215F1BDAC671C56E037A5,
-
-				D5010C69049E9486891FFEF1,
 			);
 			sourceTree = "<group>";
 		};
@@ -415,13 +337,11 @@
 				F90000000000000000000009 /* Resources */,
 				E30000000000000000000026 /* Frameworks */,
 
-				F8A53580CD24E1EC55443FF6,
 			);
 			buildRules = (
 			);
 			dependencies = (
 
-				E24EB89FBD933DBCA4B4BE0B,
 			);
 			name = HerdrMenubar;
 			packageProductDependencies = (
@@ -463,7 +383,7 @@
 			productReference = B1A8F550ECCFB06B9856737D /* HerdrMenubarUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
-		4E33DB20F0863507A85DCAFC /* HerdrWidgets */ = { isa = PBXNativeTarget; buildConfigurationList = C52E4F576AB2E2F205DDAF24; buildPhases = (312D02098E28EFE72FB39C1B); buildRules = (); dependencies = (); name = HerdrWidgets; productName = HerdrWidgets; productReference = B0C953A1066804D4DF3ED4F4; productType = "com.apple.product-type.app-extension"; };
+
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -497,7 +417,6 @@
 				07253FE511ABC573A2C3FD26 /* HerdrMenubarTests */,
 				AE921F302682C186B1089D94 /* HerdrMenubarUITests */,
 
-				4E33DB20F0863507A85DCAFC,
 			);
 		};
 /* End PBXProject section */
@@ -568,21 +487,6 @@
 				902C7C14F6FE548250F313B4 /* HerdrMenubarApp.swift in Sources */,
 				E30000000000000000000029 /* ApplicationRuntime.swift in Sources */,
 
-				C963FE7EEC30F996CBD9CCBE,
-
-				65D3D7615BD176E15A7F56F9,
-
-				088FA2F91C1AD12244BEE136,
-
-				57165E7327A472DBA43C8D89,
-
-				0BE559D9F3EF53012E033E17,
-
-				E366A38DA1614C7E4495ACA3,
-
-				7BB123E1F9D2511E38FAA96F,
-
-				16D443DB86ECCD1985B96672,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -620,39 +524,10 @@
 				12A000000000000000000010 /* PreferencesTests.swift in Sources */,
 				12A00000000000000000002A /* SystemServiceTests.swift in Sources */,
 
-				F6C5BABE55615E6A030EC7B8,
-
-				761E1ABA45B7517C85AE7F94,
-
-				91998C8F4D7B7146F57C9E73,
-
-				535D3221186E44B94C44A170,
-
-				5F4A0E22418E91FF8CD3EA01,
-
-				A0A4C8BFC727705B551CF336,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		312D02098E28EFE72FB39C1B /* Widget sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
-				7ED78EFB5B394DBC6345E827,
 
-				BE1D62EBA727F48C980F8976,
-
-				5B34D36292BA85E261D44958,
-
-				9E1B5ACAEAD6663D911AA102,
-
-				6675AD98B119511636B79EFE,
-
-				082783EE8D651963F8F63BB3,
-
-				C4F745CB2B2DD993C0F1B60A,
-
-				B4E5040E5BD3AF0146CDD225,
-
-				EA3F84570DEF6AE0673E78AC,
-			); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -666,7 +541,7 @@
 			target = 06C84F28A441AEE68F573249 /* HerdrMenubar */;
 			targetProxy = 7F957B4A7E80403C779B4428 /* PBXContainerItemProxy */;
 		};
-		E24EB89FBD933DBCA4B4BE0B /* Widget dependency */ = { isa = PBXTargetDependency; target = 4E33DB20F0863507A85DCAFC; targetProxy = C974277400A0DF51D17E87E4; };
+
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -674,7 +549,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = HerdrMenubar/HerdrMenubar.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HerdrMenubar/Info.plist;
@@ -692,7 +568,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = HerdrMenubar/HerdrMenubar.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HerdrMenubar/Info.plist;
@@ -895,8 +772,7 @@
 			};
 			name = Release;
 		};
-		DC25247B43FFECC09EDDE2E1 /* Widget Debug */ = { isa = XCBuildConfiguration; buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = HerdrWidgets/HerdrWidgets.entitlements; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = HerdrWidgets/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", "@executable_path/../../../../Frameworks"); MACOSX_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar.widgets; PRODUCT_NAME = HerdrWidgets; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; }; name = Debug; };
-		59A1607AB482B6B096B66122 /* Widget Release */ = { isa = XCBuildConfiguration; buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = HerdrWidgets/HerdrWidgets.entitlements; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = HerdrWidgets/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", "@executable_path/../../../../Frameworks"); MACOSX_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = dev.herdr.menubar.widgets; PRODUCT_NAME = HerdrWidgets; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; }; name = Release; };
+
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -936,7 +812,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		C52E4F576AB2E2F205DDAF24 /* Widget configurations */ = { isa = XCConfigurationList; buildConfigurations = (DC25247B43FFECC09EDDE2E1, 59A1607AB482B6B096B66122); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */

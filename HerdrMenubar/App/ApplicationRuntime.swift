@@ -6,11 +6,11 @@ protocol ApplicationRuntimeServing: AnyObject {
     func start() async
     func applicationDidBecomeActive() async
     func stop() async
-    func openWidgetURL(_ url: URL) async
+    func openURL(_ url: URL) async
 }
 
 extension ApplicationRuntimeServing {
-    func openWidgetURL(_ url: URL) async {}
+    func openURL(_ url: URL) async {}
 }
 
 @MainActor
@@ -28,7 +28,6 @@ struct ApplicationRuntimeDependencies {
     let refreshNotifications: () async -> Void
     let setNotifications: (Bool) async throws -> Void
     let setSound: (Bool) -> Void
-    var setWidgetUpdates: (Bool) async -> Void = { _ in }
     let refreshShortcutRegistration: () -> Void
     let startStore: () async -> Void
     let stopStore: () async -> Void
@@ -58,7 +57,6 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     private var isStopped = false
     private var observationArm: PresentationObservationArm?
     private var menuActions: [UUID: OwnedMenuAction] = [:]
-    private var widgetUpdatesAction: UUID?
 
     init(dependencies: ApplicationRuntimeDependencies) {
         self.dependencies = dependencies
@@ -71,7 +69,6 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             discovery: SessionDiscovery(),
             clientFactory: LiveSessionClientFactory()
         )
-        let widgetPublisher = AgentWidgetPublisher(supervisor: supervisor)
         let processRunner = BoundedProcessRunner()
         let wezTermCLI = LiveWezTermCLI(runner: processRunner)
         let wezTermFocuser = LiveWezTermFocusAdapter(
@@ -142,16 +139,11 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
                 try await notificationSettings.setNotificationsEnabled(enabled)
             },
             setSound: { notificationSettings.setSoundEnabled($0) },
-            setWidgetUpdates: { enabled in
-                guard !Task.isCancelled else { return }
-                preferences.widgetUpdatesEnabled = enabled
-                await widgetPublisher.setUpdatesEnabled(enabled)
-            },
             refreshShortcutRegistration: {
                 assignmentController.refreshRegistrationStatus()
             },
-            startStore: { await widgetPublisher.start(updatesEnabled: preferences.widgetUpdatesEnabled); await store.start() },
-            stopStore: { await widgetPublisher.stop(); await store.stop() },
+            startStore: { await store.start() },
+            stopStore: { await store.stop() },
             retryStore: { await store.retry() },
             selectTarget: { store.select($0) },
             selectTerminal: {
@@ -218,18 +210,11 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         }
     }
 
-    func openWidgetURL(_ url: URL) async {
-        if url.absoluteString == "herdr-menubar://menu" {
-            await start()
-            guard let token = readyGeneration, isReady(token) else { return }
-            dependencies.showDetachedMenu()
-            return
-        }
-        guard let target = WidgetAgentTarget(url: url) else { return }
+    func openURL(_ url: URL) async {
+        guard url.absoluteString == "herdr-menubar://menu" else { return }
         await start()
         guard let token = readyGeneration, isReady(token) else { return }
-        let session: SessionID = target.session == "default" ? .default : .named(String(target.session.dropFirst(6)))
-        dependencies.selectTarget(NotificationSelectionTarget(sessionID: session, paneID: target.paneID))
+        dependencies.showDetachedMenu()
     }
 
     func applicationDidBecomeActive() async {
@@ -294,12 +279,6 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             }
         case .setSound(let enabled):
             dependencies.setSound(enabled)
-        case .setWidgetUpdates(let enabled):
-            if let widgetUpdatesAction { menuActions[widgetUpdatesAction]?.task.cancel() }
-            let dependencies = dependencies
-            widgetUpdatesAction = launchMenuAction(generation: token) {
-                await dependencies.setWidgetUpdates(enabled)
-            }
         case .retryUnavailable:
             let dependencies = dependencies
             launchMenuAction(generation: token) {
@@ -391,7 +370,6 @@ private extension ApplicationRuntime {
     func completeMenuAction(id: UUID, generation token: UUID) {
         guard menuActions[id]?.generation == token else { return }
         menuActions[id] = nil
-        if widgetUpdatesAction == id { widgetUpdatesAction = nil }
     }
 
     func cancelAndDrainMenuActions() async {

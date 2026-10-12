@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
-"""Reject incomplete widget products before an installer changes the live app."""
-import json
+"""Reject incomplete app products before an installer changes the live app."""
 import plistlib
 import sys
 from pathlib import Path
 
 
 def validate(app):
-    bundles = (app, app / 'Contents/PlugIns/HerdrWidgets.appex')
-    versions = []
-    for bundle in bundles:
-        with (bundle / 'Contents/Info.plist').open('rb') as source:
-            version = plistlib.load(source).get('CFBundleVersion')
-        if not isinstance(version, str) or not version or '$(' in version:
-            raise ValueError(f'Missing or unresolved CFBundleVersion in {bundle}')
-        versions.append(version)
-        metadata = bundle / 'Contents/Resources/Metadata.appintents/extract.actionsdata'
-        with metadata.open() as source:
-            actions = json.load(source).get('actions', {})
-        action = actions.get('AgentWidgetConfiguration')
-        if not isinstance(action, dict) or action.get('identifier') != 'AgentWidgetConfiguration':
-            raise ValueError(f'Missing AgentWidgetConfiguration metadata in {bundle}')
-    if versions[0] != versions[1]:
-        raise ValueError(f'Host/widget CFBundleVersion mismatch: {versions[0]} != {versions[1]}')
+    with (app / 'Contents/Info.plist').open('rb') as source:
+        info = plistlib.load(source)
+    version = info.get('CFBundleVersion')
+    if not isinstance(version, str) or not version or '$(' in version:
+        raise ValueError(f'Missing or unresolved CFBundleVersion in {app}')
+    if info.get('CFBundleIdentifier') != 'dev.herdr.menubar':
+        raise ValueError(f'Unexpected CFBundleIdentifier in {app}')
+    if info.get('CFBundleExecutable') != 'HerdrMenubar' or not (app / 'Contents/MacOS/HerdrMenubar').is_file():
+        raise ValueError(f'Missing app executable in {app}')
+    if any((app / 'Contents/PlugIns').glob('*.appex')):
+        raise ValueError(f'Unexpected embedded extension in {app}')
 
 
 def registration_candidates(repo, product):
@@ -50,5 +44,5 @@ if __name__ == '__main__':
         else:
             validate(Path(sys.argv[1]))
     except (OSError, ValueError, TypeError, AttributeError, plistlib.InvalidFileException) as error:
-        print(f'Error: invalid widget product: {error}', file=sys.stderr)
+        print(f'Error: invalid app product: {error}', file=sys.stderr)
         sys.exit(1)

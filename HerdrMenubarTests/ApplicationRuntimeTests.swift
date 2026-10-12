@@ -11,29 +11,18 @@ final class ApplicationRuntimeTests: XCTestCase {
         var shown = 0
         dependencies.showDetachedMenu = { shown += 1 }
         let runtime = ApplicationRuntime(dependencies: dependencies)
-        for invalid in ["https://menu", "herdr-menubar://menu/extra", "herdr-menubar://menu?pane=x", "herdr-menubar://menu#x"] {
-            await runtime.openWidgetURL(URL(string: invalid)!)
+        for invalid in ["https://menu", "herdr-menubar://menu/extra", "herdr-menubar://menu?pane=x", "herdr-menubar://menu#x", "herdr-menubar://agent?session=default&pane=old"] {
+            await runtime.openURL(URL(string: invalid)!)
         }
         XCTAssertEqual(harness.storeStartCount, 0)
-        await runtime.openWidgetURL(URL(string: "herdr-menubar://menu")!)
-        await runtime.openWidgetURL(URL(string: "herdr-menubar://menu")!)
+        await runtime.openURL(URL(string: "herdr-menubar://menu")!)
+        await runtime.openURL(URL(string: "herdr-menubar://menu")!)
         XCTAssertEqual(shown, 2)
         XCTAssertEqual(harness.storeStartCount, 1)
         XCTAssertTrue(harness.selectedTargets.isEmpty)
         await runtime.stop()
-        await runtime.openWidgetURL(URL(string: "herdr-menubar://menu")!)
+        await runtime.openURL(URL(string: "herdr-menubar://menu")!)
         XCTAssertEqual(shown, 2)
-    }
-
-    func testWidgetURLStartsRuntimeAndSelectsExactNamedSession() async {
-        let harness = RuntimeHarness()
-        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
-        await runtime.openWidgetURL(URL(string: "herdr-menubar://agent?session=named%3Awork&pane=wT%3Ap7")!)
-        XCTAssertEqual(harness.storeStartCount, 1)
-        XCTAssertEqual(harness.selectedTargets, [NotificationSelectionTarget(sessionID: .named("work"), paneID: "wT:p7")])
-        await runtime.openWidgetURL(URL(string: "https://agent?session=default&pane=unwanted")!)
-        XCTAssertEqual(harness.selectedTargets.count, 1)
-        await runtime.stop()
     }
 
     func testStartInstallsHandlersRefreshesSettingsObservesThenStartsStoreExactlyOnce() async {
@@ -212,57 +201,6 @@ final class ApplicationRuntimeTests: XCTestCase {
 }
 
 extension ApplicationRuntimeTests {
-    func testWidgetUpdateActionsForwardExactModeAndRemainInertAfterStop() async {
-        let harness = RuntimeHarness()
-        var modes: [Bool] = []
-        let applied = expectation(description: "widget modes forwarded")
-        applied.expectedFulfillmentCount = 2
-        harness.customSetWidgetUpdates = { enabled in modes.append(enabled); applied.fulfill() }
-        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
-        runtime.perform(.setWidgetUpdates(false))
-        XCTAssertTrue(modes.isEmpty)
-        await runtime.start()
-        runtime.perform(.setWidgetUpdates(false))
-        for _ in 0..<100 where modes.isEmpty { await Task.yield() }
-        runtime.perform(.setWidgetUpdates(true))
-        await fulfillment(of: [applied], timeout: 1)
-        XCTAssertEqual(modes, [false, true])
-        await runtime.stop()
-        runtime.perform(.setWidgetUpdates(false))
-        XCTAssertEqual(modes, [false, true])
-    }
-    func testLatestWidgetModeCancelsSupersededPendingAction() async {
-        let harness = RuntimeHarness()
-        let entered = expectation(description: "first widget action entered")
-        let latestApplied = expectation(description: "latest widget action applied")
-        let release = RuntimeSignal()
-        var firstEntered = false
-        var observedCancellation = false
-        var appliedModes: [Bool] = []
-        harness.customSetWidgetUpdates = { enabled in
-            if !enabled {
-                firstEntered = true
-                entered.fulfill()
-                await release.wait()
-                observedCancellation = Task.isCancelled
-            }
-            if !Task.isCancelled { appliedModes.append(enabled) }
-            if enabled { latestApplied.fulfill() }
-        }
-        let runtime = ApplicationRuntime(dependencies: harness.dependencies())
-        await runtime.start()
-        runtime.perform(.setWidgetUpdates(false))
-        await fulfillment(of: [entered], timeout: 1)
-        guard firstEntered else { await runtime.stop(); return }
-        runtime.perform(.setWidgetUpdates(true))
-        await fulfillment(of: [latestApplied], timeout: 1)
-        await release.signal()
-        await runtime.stop()
-        XCTAssertTrue(observedCancellation)
-        XCTAssertEqual(appliedModes, [true])
-    }
-
-    func testStopOwnsCancelsAndDrainsWidgetMenuAction() async { await assertStopOwnsCancelsAndDrains(.widgets) }
     func testStopOwnsCancelsAndDrainsLoginMenuAction() async { await assertStopOwnsCancelsAndDrains(.login) }
     func testStopOwnsCancelsAndDrainsNotificationMenuAction() async { await assertStopOwnsCancelsAndDrains(.notifications) }
     func testStopOwnsCancelsAndDrainsRetryMenuAction() async { await assertStopOwnsCancelsAndDrains(.retry) }
@@ -468,14 +406,6 @@ extension ApplicationRuntimeTests {
                 completedActions += 1
                 harness.events.append("notification.action.finished")
             }
-        case .widgets:
-            harness.customSetWidgetUpdates = { _ in
-                await entered.signal()
-                await release.wait()
-                observedCancellation = Task.isCancelled
-                completedActions += 1
-                harness.events.append("widget.action.finished")
-            }
         case .retry:
             harness.customRetryStore = {
                 await entered.signal()
@@ -531,14 +461,12 @@ private enum RuntimeGatedMenuActionKind {
     case login
     case notifications
     case retry
-    case widgets
 
     var action: StatusMenuAction {
         switch self {
         case .login: .setLaunchAtLogin(true)
         case .notifications: .setNotifications(true)
         case .retry: .retryUnavailable
-        case .widgets: .setWidgetUpdates(false)
         }
     }
 
@@ -547,7 +475,6 @@ private enum RuntimeGatedMenuActionKind {
         case .login: "login.action.finished"
         case .notifications: "notification.action.finished"
         case .retry: "retry.action.finished"
-        case .widgets: "widget.action.finished"
         }
     }
 }
@@ -589,7 +516,6 @@ private final class RuntimeHarness {
     var customStopStore: (() async -> Void)?
     var customSetLoginItem: ((Bool) async throws -> Void)?
     var customSetNotifications: ((Bool) async throws -> Void)?
-    var customSetWidgetUpdates: ((Bool) async -> Void)?
     var customRetryStore: (() async -> Void)?
     var customSealAndResetLatestTarget: (() async -> Void)?
 
@@ -659,7 +585,6 @@ private final class RuntimeHarness {
                 self?.markAsyncAction()
             },
             setSound: { [weak self] enabled in self?.events.append("sound.set.\(enabled)") },
-            setWidgetUpdates: { [weak self] enabled in await self?.customSetWidgetUpdates?(enabled) },
             refreshShortcutRegistration: { [weak self] in self?.events.append("shortcut.refresh") },
             startStore: { [weak self] in
                 self?.storeStartCount += 1

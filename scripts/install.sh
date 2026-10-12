@@ -89,13 +89,21 @@ trap 'exit 1' HUP INT TERM
 
 mkdir -p "$derived_data"
 rm -rf "$product"
-echo "Building Herdr Menubar (Release)..."
+echo "Building Herdr Menubar (Release, local signing)..."
+# Older install instructions supplied a team/certificate override. This local
+# build deliberately needs neither a certificate nor shared-container access.
+unset XCODE_XCCONFIG_FILE
 xcodebuild build \
   -project "$repo_root/HerdrMenubar.xcodeproj" \
   -scheme HerdrMenubar \
   -configuration Release \
   -destination 'platform=macOS' \
-  -derivedDataPath "$derived_data"
+  -derivedDataPath "$derived_data" \
+  CODE_SIGN_IDENTITY=- \
+  CODE_SIGN_STYLE=Manual \
+  DEVELOPMENT_TEAM= \
+  CODE_SIGN_ENTITLEMENTS= \
+  CODE_SIGNING_ALLOWED=YES
 
 if [ ! -d "$product" ]; then
   echo "Error: xcodebuild completed but HerdrMenubar.app was not found at: $product" >&2
@@ -103,10 +111,9 @@ if [ ! -d "$product" ]; then
 fi
 
 # Validate the completed product before stopping or moving the installed app.
-python3 "$script_dir/validate-widget-product.py" "$product"
-codesign --verify --strict "$product/Contents/PlugIns/HerdrWidgets.appex"
+python3 "$script_dir/validate-app-product.py" "$product"
 codesign --verify --strict "$product"
-python3 "$script_dir/validate-widget-product.py" --registration-candidates "$repo_root" "$product" > "$registration_list"
+python3 "$script_dir/validate-app-product.py" --registration-candidates "$repo_root" "$product" > "$registration_list"
 
 rm -rf "$stage" "$backup"
 cp -R "$product" "$stage"
@@ -122,19 +129,17 @@ if [ -e "$destination" ] || [ -L "$destination" ]; then
 fi
 mv "$stage" "$destination"
 
-# Remove only this build product's registration; registering .appex directly
-# with lsregister is unsupported. Keep existing desktop widget configurations.
+# Unregister only this checkout's build copies, then register the installed app.
 lsregister_tool="${HERDR_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister}"
 while IFS= read -r -d '' candidate; do
   if ! unregister_app "$candidate"; then
-    echo "Error: widget registration failed for build copy: $candidate. Previous installation retained at: $backup" >&2
+    echo "Error: app registration failed for build copy: $candidate. Previous installation retained at: $backup" >&2
     exit 1
   fi
 done < "$registration_list"
 if ! unregister_app "$destination" ||
-   ! "$lsregister_tool" -f -R "$destination" ||
-   ! pluginkit -a "$destination/Contents/PlugIns/HerdrWidgets.appex"; then
-  echo "Error: widget registration failed. The new app remains installed; any previous installation is retained at: $backup" >&2
+   ! "$lsregister_tool" -f -R "$destination"; then
+  echo "Error: app registration failed. The new app remains installed; any previous installation is retained at: $backup" >&2
   exit 1
 fi
 rm -rf "$backup"

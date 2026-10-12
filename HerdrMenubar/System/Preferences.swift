@@ -8,13 +8,8 @@ final class Preferences {
     static let launchAtLoginIntentKey = "launchAtLoginIntent"
     static let notificationsEnabledKey = "notificationsEnabled"
     static let notificationSoundEnabledKey = "notificationSoundEnabled"
-    static let widgetUpdatesEnabledKey = "widgetUpdatesEnabled"
 
     private let defaults: UserDefaults
-
-    var widgetUpdatesEnabled: Bool {
-        didSet { defaults.set(widgetUpdatesEnabled, forKey: Self.widgetUpdatesEnabledKey) }
-    }
 
     var selectedTerminalBundleIdentifier: String {
         didSet {
@@ -38,8 +33,6 @@ final class Preferences {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        widgetUpdatesEnabled = defaults.object(forKey: Self.widgetUpdatesEnabledKey) == nil
-            || defaults.bool(forKey: Self.widgetUpdatesEnabledKey)
         selectedTerminalBundleIdentifier = defaults.string(forKey: Self.selectedTerminalKey)
             ?? Self.defaultTerminalBundleIdentifier
         launchAtLoginIntent = defaults.bool(forKey: Self.launchAtLoginIntentKey)

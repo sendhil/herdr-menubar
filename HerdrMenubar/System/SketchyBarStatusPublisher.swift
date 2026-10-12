@@ -9,7 +9,7 @@ struct SketchyBarSnapshot: Codable, Equatable {
     let summary: String
 }
 
-/// A separate, aggregate-only feed; independent of widgets and their opt-in.
+/// Aggregate-only status feed for external menu bars.
 @MainActor
 final class SketchyBarStatusPublisher {
     static let notificationName = Notification.Name("dev.herdr.menubar.statusChanged")

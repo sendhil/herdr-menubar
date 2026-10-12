@@ -1,6 +1,6 @@
 # SketchyBar integration
 
-Herdr Menubar is the companion app; core Herdr needs no changes. The companion publishes aggregate status without opening another Herdr connection. Widgets and notifications can remain disabled.
+Herdr Menubar is the companion app; core Herdr needs no changes. The companion publishes aggregate status without opening another Herdr connection. Notifications can remain disabled; no desktop widget or Apple signing certificate is needed.
 
 Copy `herdr.py` into your SketchyBar plugins directory and add this to `sketchybarrc` (adjust styling to match your theme):
 
@@ -31,6 +31,6 @@ Run `sketchybar --reload`. The badge shows only the icon until agents need atten
 
 Writes replace the file atomically with mode 0600 inside a 0700 directory. After each successful write the app posts `dev.herdr.menubar.statusChanged` through macOS DistributedNotificationCenter. It does not launch SketchyBar or require it to be installed. The plugin also refreshes on wake and every 30 seconds; missing, invalid, stopped, or over-90-second-old state renders dimmed. Local files remain inside the user's account.
 
-The URL endpoint accepts exactly `herdr-menubar://menu`. Existing widget agent URLs continue to work. Menu content stays fixed while tracking and updates the next time it opens.
+The URL endpoint accepts exactly `herdr-menubar://menu`. The retired widget agent URLs are ignored. Menu content stays fixed while tracking and updates the next time it opens.
 
 Test the portable plugin with `python3 -m unittest discover -s integrations/sketchybar -v`.

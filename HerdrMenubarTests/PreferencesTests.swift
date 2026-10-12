@@ -71,41 +71,6 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
-    func testWidgetUpdatesDefaultToAutomaticWithoutChangingOtherPreferences() {
-        withDefaults { defaults in
-            let preferences = Preferences(defaults: defaults)
-            XCTAssertTrue(preferences.widgetUpdatesEnabled)
-            XCTAssertFalse(preferences.notificationsEnabled)
-            XCTAssertFalse(preferences.launchAtLoginIntent)
-            XCTAssertNil(defaults.object(forKey: "widgetUpdatesEnabled"))
-        }
-    }
-
-    func testWidgetUpdatesOffPersistsAcrossRestartsIndependently() {
-        withDefaults { defaults in
-            let preferences = Preferences(defaults: defaults)
-            preferences.notificationsEnabled = true
-            preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty"
-            preferences.widgetUpdatesEnabled = false
-
-            let restored = Preferences(defaults: defaults)
-            XCTAssertFalse(restored.widgetUpdatesEnabled)
-            XCTAssertFalse(defaults.bool(forKey: "widgetUpdatesEnabled"))
-            XCTAssertTrue(restored.notificationsEnabled)
-            XCTAssertEqual(restored.selectedTerminalBundleIdentifier, "com.mitchellh.ghostty")
-            restored.widgetUpdatesEnabled = true
-            XCTAssertTrue(Preferences(defaults: defaults).widgetUpdatesEnabled)
-            XCTAssertTrue(Preferences(defaults: defaults).notificationsEnabled)
-        }
-    }
-
-    func testWidgetUpdatesLoadsExplicitOffBeforeAnySetter() {
-        withDefaults { defaults in
-            defaults.set(false, forKey: "widgetUpdatesEnabled")
-            XCTAssertFalse(Preferences(defaults: defaults).widgetUpdatesEnabled)
-        }
-    }
-
     private func withDefaults(_ body: @MainActor (UserDefaults) -> Void) {
         let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {

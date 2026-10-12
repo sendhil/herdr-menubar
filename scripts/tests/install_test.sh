@@ -6,7 +6,7 @@ REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 FIXTURE_REPO=$(mktemp -d "${TMPDIR:-/tmp}/herdr-installer-repo.XXXXXX") || exit 1
 FIXTURE_REPO=$(cd "$FIXTURE_REPO" && pwd)
 mkdir -p "$FIXTURE_REPO/scripts"
-cp "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/lib.sh" "$REPO_ROOT/scripts/validate-widget-product.py" "$FIXTURE_REPO/scripts/"
+cp "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/lib.sh" "$REPO_ROOT/scripts/validate-app-product.py" "$FIXTURE_REPO/scripts/"
 INSTALLER="$FIXTURE_REPO/scripts/install.sh"
 UNINSTALLER="$REPO_ROOT/scripts/uninstall.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/herdr-install-tests.XXXXXX") || exit 1
@@ -42,6 +42,7 @@ make_fakes() {
   for argument in "$@"; do printf 'arg=%s\n' "$argument"; done
   printf 'end\n'
 } >> "$FAKE_LOG/xcodebuild"
+[ -z "${XCODE_XCCONFIG_FILE:-}" ] || { echo "unexpected signing override" >&2; exit 66; }
 derived=
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-derivedDataPath" ]; then shift; derived=$1; fi
@@ -52,18 +53,17 @@ if [ "${FAKE_XCODEBUILD_NO_PRODUCT:-0}" != 1 ]; then
   mkdir -p "$derived/Build/Products/Release/HerdrMenubar.app/Contents/MacOS"
   printf '#!/bin/sh\n' > "$derived/Build/Products/Release/HerdrMenubar.app/Contents/MacOS/HerdrMenubar"
   python3 - "$derived/Build/Products/Release/HerdrMenubar.app" <<'PYFAKE'
-import json,os,plistlib,sys
+import os,plistlib,sys
 from pathlib import Path
 app=Path(sys.argv[1])
-for name,bundle in [('host',app),('widget',app/'Contents/PlugIns/HerdrWidgets.appex')]:
- (bundle/'Contents/MacOS').mkdir(parents=True,exist_ok=True)
- (bundle/'Contents/MacOS'/('HerdrMenubar' if name=='host' else 'HerdrWidgets')).write_text('fake')
- version='5' if name=='widget' and os.getenv('FAKE_VERSION_MISMATCH')=='1' else '4'
- with (bundle/'Contents/Info.plist').open('wb') as f: plistlib.dump({'CFBundleVersion':version},f)
- metadata=bundle/'Contents/Resources/Metadata.appintents'
- metadata.mkdir(parents=True)
- actions={} if os.getenv('FAKE_MISSING_METADATA')==name else {'AgentWidgetConfiguration':{'identifier':'AgentWidgetConfiguration'}}
- (metadata/'extract.actionsdata').write_text(json.dumps({'actions':actions}))
+mode=os.getenv('FAKE_INVALID_PRODUCT','')
+info={'CFBundleIdentifier':'dev.herdr.menubar','CFBundleVersion':'6','CFBundleExecutable':'HerdrMenubar'}
+if mode == 'identifier': info['CFBundleIdentifier']='dev.other.app'
+if mode == 'version': info['CFBundleVersion']='$(CURRENT_PROJECT_VERSION)'
+if mode == 'executable': (app/'Contents/MacOS/HerdrMenubar').unlink()
+if mode == 'extension': (app/'Contents/PlugIns/Old.appex').mkdir(parents=True)
+with (app/'Contents/Info.plist').open('wb') as f: plistlib.dump(info,f)
+
 PYFAKE
 fi
 FAKE
@@ -181,11 +181,14 @@ run_uninstaller() {
 
 # Success and argument boundaries, including the app path containing spaces.
 case_dir="$TEST_ROOT/success"; make_fakes "$case_dir"
-output=$(cd / && run_installer "$case_dir" --install-dir "$case_dir/Applications"); status=$?
+output=$(cd / && XCODE_XCCONFIG_FILE=/missing/old-signing.xcconfig run_installer "$case_dir" --install-dir "$case_dir/Applications"); status=$?
 if [ "$status" -eq 0 ] && assert_file "$case_dir/Applications/Herdr Menubar.app/Contents/MacOS/HerdrMenubar" \
   && assert_log_call "$case_dir/log/open" "$case_dir/Applications/Herdr Menubar.app" \
   && assert_contains "$(cat "$case_dir/log/pgrep")" "arg=HerdrWidgets" \
-  && assert_contains "$(cat "$case_dir/log/xcodebuild")" "arg=$case_dir/derived data"; then pass "success preserves argument boundaries"; else fail "success preserves argument boundaries"; fi
+  && assert_contains "$(cat "$case_dir/log/xcodebuild")" "arg=$case_dir/derived data" \
+  && assert_contains "$(cat "$case_dir/log/xcodebuild")" "arg=CODE_SIGN_IDENTITY=-" \
+  && assert_contains "$(cat "$case_dir/log/xcodebuild")" "arg=DEVELOPMENT_TEAM=" \
+  && assert_not_path "$case_dir/Applications/Herdr Menubar.app/Contents/PlugIns"; then pass "success preserves argument boundaries"; else fail "success preserves argument boundaries"; fi
 
 # Build failure must not stop or alter the prior installation.
 case_dir="$TEST_ROOT/build-failure"; make_fakes "$case_dir"; mkdir -p "$case_dir/Applications/Herdr Menubar.app"; printf old > "$case_dir/Applications/Herdr Menubar.app/old"
@@ -279,22 +282,22 @@ if [ "$status" -eq 0 ] && assert_not_path "$case_dir/Applications/Herdr Menubar.
 
 case_dir="$TEST_ROOT/widget-process"; make_fakes "$case_dir"
 output=$(FAKE_PGREP_PIDS='101 202' FAKE_WIDGET_PIDS='303 404' run_installer "$case_dir" --no-launch --install-dir "$case_dir/Applications"); status=$?
-if [ "$status" -eq 0 ] && assert_contains "$(cat "$case_dir/log/kill")" 'arg=303' && [ "$(grep -c '^arg=404$' "$case_dir/log/kill")" -eq 0 ]; then pass "stops exact embedded widget but ignores debug copies"; else fail "stops exact embedded widget but ignores debug copies"; fi
+if [ "$status" -eq 0 ] && assert_contains "$(cat "$case_dir/log/kill")" 'arg=303' && [ "$(grep -c '^arg=404$' "$case_dir/log/kill")" -eq 0 ]; then pass "stops legacy embedded widget during upgrade but ignores debug copies"; else fail "stops legacy embedded widget during upgrade but ignores debug copies"; fi
 
-for mode in host widget version signature; do
+for mode in identifier version executable extension signature; do
  case_dir="$TEST_ROOT/invalid-$mode"; make_fakes "$case_dir"; mkdir -p "$case_dir/Applications/Herdr Menubar.app"; printf old > "$case_dir/Applications/Herdr Menubar.app/old"
- missing=; mismatch=0; toolfail=
- case "$mode" in host|widget) missing=$mode;; version) mismatch=1;; signature) toolfail=codesign;; esac
- output=$(FAKE_MISSING_METADATA="$missing" FAKE_VERSION_MISMATCH="$mismatch" FAKE_TOOL_FAIL="$toolfail" run_installer "$case_dir" --no-launch --install-dir "$case_dir/Applications"); status=$?
+ toolfail=
+ [ "$mode" != signature ] || toolfail=codesign
+ output=$(FAKE_INVALID_PRODUCT="$mode" FAKE_TOOL_FAIL="$toolfail" run_installer "$case_dir" --no-launch --install-dir "$case_dir/Applications"); status=$?
  if [ "$status" -ne 0 ] && assert_file "$case_dir/Applications/Herdr Menubar.app/old" && assert_not_path "$case_dir/log/kill"; then pass "rejects invalid $mode before replacing installation"; else fail "rejects invalid $mode before replacing installation"; fi
 done
 
 case_dir="$TEST_ROOT/registration"; make_fakes "$case_dir"
 output=$(run_installer "$case_dir" --no-launch --install-dir "$case_dir/Applications"); status=$?
-if [ "$status" -eq 0 ] && assert_contains "$(cat "$case_dir/log/lsregister" 2>/dev/null)" "-u $case_dir/derived data/Build/Products/Release/HerdrMenubar.app" && assert_contains "$(cat "$case_dir/log/lsregister")" "-u $case_dir/Applications/Herdr Menubar.app" && assert_contains "$(cat "$case_dir/log/lsregister")" "-f -R $case_dir/Applications/Herdr Menubar.app" && assert_contains "$(cat "$case_dir/log/pluginkit")" "-a $case_dir/Applications/Herdr Menubar.app/Contents/PlugIns/HerdrWidgets.appex"; then pass "registers only installed host and extension"; else fail "registers only installed host and extension"; fi
+if [ "$status" -eq 0 ] && assert_contains "$(cat "$case_dir/log/lsregister" 2>/dev/null)" "-u $case_dir/derived data/Build/Products/Release/HerdrMenubar.app" && assert_contains "$(cat "$case_dir/log/lsregister")" "-u $case_dir/Applications/Herdr Menubar.app" && assert_contains "$(cat "$case_dir/log/lsregister")" "-f -R $case_dir/Applications/Herdr Menubar.app" && assert_not_path "$case_dir/log/pluginkit"; then pass "registers only installed host"; else fail "registers only installed host"; fi
 
 case_dir="$TEST_ROOT/registration-failure"; make_fakes "$case_dir"; mkdir -p "$case_dir/Applications/Herdr Menubar.app"; printf old > "$case_dir/Applications/Herdr Menubar.app/old"
-output=$(FAKE_TOOL_FAIL=pluginkit run_installer "$case_dir" --no-launch --install-dir "$case_dir/Applications"); status=$?
+output=$(FAKE_TOOL_FAIL=lsregister run_installer "$case_dir" --no-launch --install-dir "$case_dir/Applications"); status=$?
 backup=$(find "$case_dir/Applications" -name '.Herdr Menubar.app.backup.*' -print | head -1)
 if [ "$status" -ne 0 ] && [ -n "$backup" ] && assert_file "$backup/old" && assert_contains "$output" 'registration failed'; then pass "registration failure retains prior backup and reports failure"; else fail "registration failure retains prior backup and reports failure"; fi
 

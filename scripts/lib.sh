@@ -71,6 +71,7 @@ release_install_lock() {
 }
 
 owned_pids() {
+  # HerdrWidgets is only for safely upgrading an older installed bundle.
   for process_name in HerdrMenubar HerdrWidgets; do
   if matches=$(pgrep -x "$process_name" 2>/dev/null); then
     pgrep_status=0

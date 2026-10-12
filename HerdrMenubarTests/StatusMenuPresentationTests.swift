@@ -22,10 +22,6 @@ final class StatusMenuPresentationTests: XCTestCase {
                     title: "Launch at Login", isOn: false, isEnabled: true,
                     action: .setLaunchAtLogin(true)
                 ),
-                .submenu(title: "Widget Updates", children: [
-                    .action(title: "Off", state: .off, isEnabled: true, action: .setWidgetUpdates(false)),
-                    .action(title: "Automatic", state: .on, isEnabled: true, action: .setWidgetUpdates(true))
-                ]),
                 .heading("NOTIFICATIONS"),
                 .toggle(
                     title: "Notifications", isOn: false, isEnabled: true,
@@ -43,33 +39,6 @@ final class StatusMenuPresentationTests: XCTestCase {
                 .action(title: "Quit", state: .off, isEnabled: true, action: .quit)
             ]
         ))
-    }
-
-    func testWidgetUpdatesSubmenuStartsInAutomatic() throws {
-        let menu = PresentationFixture().presentation().menu
-        let children = try XCTUnwrap(menu.compactMap { node -> [StatusMenuNode]? in
-            guard case .submenu(title: "Widget Updates", children: let children) = node else { return nil }
-            return children
-        }.first)
-        XCTAssertEqual(children.count, 2)
-        guard case .action(title: "Off", state: .off, isEnabled: true, action: _) = children[0],
-              case .action(title: "Automatic", state: .on, isEnabled: true, action: _) = children[1] else {
-            return XCTFail("Automatic must be the default checked choice")
-        }
-    }
-
-    func testWidgetUpdatesSubmenuReflectsPersistedOffAndExplicitActionPayloads() {
-        let fixture = PresentationFixture()
-        fixture.preferences.widgetUpdatesEnabled = false
-        XCTAssertTrue(fixture.presentation().menu.contains(.submenu(title: "Widget Updates", children: [
-            .action(title: "Off", state: .on, isEnabled: true, action: .setWidgetUpdates(false)),
-            .action(title: "Automatic", state: .off, isEnabled: true, action: .setWidgetUpdates(true))
-        ])))
-        fixture.preferences.widgetUpdatesEnabled = true
-        XCTAssertTrue(fixture.presentation().menu.contains(.submenu(title: "Widget Updates", children: [
-            .action(title: "Off", state: .off, isEnabled: true, action: .setWidgetUpdates(false)),
-            .action(title: "Automatic", state: .on, isEnabled: true, action: .setWidgetUpdates(true))
-        ])))
     }
 
     func testNoSessionsConnectingAndConnectedIdleUseExactConnectionCopy() async {

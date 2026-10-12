@@ -8,7 +8,6 @@ final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
     private let runtime: any ApplicationRuntimeServing
     private let terminationReply: TerminationReply
     private var didFinishLaunching = false
-    private var widgetProbe: WidgetProbePublisher?
     private var terminationTask: Task<Void, Never>?
     private var pendingTerminationSenders: [NSApplication] = []
     private var didCompleteTermination = false
@@ -31,17 +30,11 @@ final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
-        let process = ProcessInfo.processInfo
-        if WidgetProbePublisher.shouldRun(arguments: process.arguments, environment: process.environment) {
-            let probe = WidgetProbePublisher.live()
-            widgetProbe = probe
-            probe.start(interval: process.arguments.contains("--widget-refresh-probe-fast") ? .seconds(5) : .seconds(30))
-        }
         Task { await runtime.start() }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls { Task { await runtime.openWidgetURL(url) } }
+        for url in urls { Task { await runtime.openURL(url) } }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -50,7 +43,6 @@ final class HerdrAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !didCompleteTermination else { return .terminateNow }
-        widgetProbe?.stop()
         pendingTerminationSenders.append(sender)
         if terminationTask == nil {
             terminationTask = Task { [weak self] in
