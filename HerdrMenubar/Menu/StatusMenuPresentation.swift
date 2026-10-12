@@ -49,6 +49,7 @@ enum StatusMenuAction: Equatable, Sendable {
     case setLaunchAtLogin(Bool)
     case setNotifications(Bool)
     case setSound(Bool)
+    case setWidgetUpdates(Bool)
     case retryUnavailable
     case openKeyboardShortcuts
     case quit
@@ -137,6 +138,13 @@ private extension StatusMenuPresentationBuilder {
             error: loginItem.errorMessage,
             to: &nodes
         )
+
+        nodes.append(.submenu(title: "Widget Updates", children: [
+            .action(title: "Off", state: preferences.widgetUpdatesEnabled ? .off : .on,
+                    isEnabled: true, action: .setWidgetUpdates(false)),
+            .action(title: "Automatic", state: preferences.widgetUpdatesEnabled ? .on : .off,
+                    isEnabled: true, action: .setWidgetUpdates(true))
+        ]))
 
         nodes.append(.heading("NOTIFICATIONS"))
         nodes.append(.toggle(

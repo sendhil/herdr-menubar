@@ -10,6 +10,10 @@ actor AgentWidgetPublisher {
         var write: @Sendable (AgentWidgetSnapshot) throws -> Void
         var reload: @Sendable () -> Void
         var interval: Duration = .seconds(2)
+        var configuredWidgetKinds: @Sendable () async throws -> [String] = {
+            try await WidgetCenter.shared.currentConfigurations().map(\.kind)
+        }
+        var configurationInterval: Duration = .seconds(60)
 
         static let live = Dependencies(now: { .now }, activity: { reference in
             guard let reference, reference.agent == "pi", reference.kind == "path" else { return nil }
@@ -36,7 +40,11 @@ actor AgentWidgetPublisher {
     private var unavailable: Set<SessionID> = []
     private var eventsTask: Task<Void, Never>?
     private var timerTask: Task<Void, Never>?
+    private var configurationTask: Task<Void, Never>?
     private var generation: UUID?
+    private var updatesEnabled = true
+    private var publicationGeneration: UUID?
+    private var tickGeneration: UUID?
     private var lastAgents: [WidgetAgent] = []
     private var lastUnavailable = -1
     private var lastWrite = Date.distantPast
@@ -48,8 +56,17 @@ actor AgentWidgetPublisher {
         self.dependencies = dependencies
     }
 
-    func start() async {
+    func setUpdatesEnabled(_ enabled: Bool) {
+        guard !Task.isCancelled, updatesEnabled != enabled else { return }
+        updatesEnabled = enabled
+        configurationTask?.cancel(); configurationTask = nil
+        stopPublishing()
+        if enabled, let generation { startConfigurationMonitoring(generation: generation) }
+    }
+
+    func start(updatesEnabled: Bool = true) async {
         guard generation == nil else { return }
+        self.updatesEnabled = updatesEnabled
         let token = UUID()
         generation = token
         lastWrite = .distantPast
@@ -63,19 +80,30 @@ actor AgentWidgetPublisher {
                 await self?.consume(event, generation: token)
             }
         }
-        timerTask = Task { [weak self, interval = dependencies.interval] in
+        startConfigurationMonitoring(generation: token)
+    }
+
+    private func startConfigurationMonitoring(generation token: UUID) {
+        guard updatesEnabled, generation == token, !Task.isCancelled else { return }
+        // WidgetKit discovery must not hold up the menu's own synchronization startup.
+        configurationTask = Task { [weak self, interval = dependencies.configurationInterval] in
+            await self?.checkWidgetConfiguration(generation: token)
             while !Task.isCancelled {
                 do { try await Task.sleep(for: interval) } catch { return }
-                await self?.tick(generation: token)
+                await self?.checkWidgetConfiguration(generation: token)
             }
         }
     }
 
     func stop() {
+        guard generation != nil else { return }
+        let wasPublishing = publicationGeneration != nil
         generation = nil
+        configurationTask?.cancel(); configurationTask = nil
         eventsTask?.cancel(); eventsTask = nil
-        timerTask?.cancel(); timerTask = nil
+        stopPublishing()
         sessions.removeAll(); verified.removeAll(); refreshRequested.removeAll(); unavailable.removeAll()
+        guard wasPublishing else { return }
         do {
             var snapshot = AgentWidgetSnapshot(version: 1, writtenAt: dependencies.now(), agents: [], unavailableSessions: 0)
             snapshot.isRunning = false
@@ -84,14 +112,55 @@ actor AgentWidgetPublisher {
         } catch { logger.error("Widget shutdown snapshot failed") }
     }
 
-    /// One coalescing/publication cycle. Source requests are bounded and independent of publication.
-    func tick() async {
-        guard let generation else { return }
-        await tick(generation: generation)
+    private func checkWidgetConfiguration(generation token: UUID) async {
+        guard updatesEnabled, generation == token, !Task.isCancelled else { return }
+        let hasAgentWidget: Bool
+        do {
+            hasAgentWidget = try await dependencies.configuredWidgetKinds().contains("HerdrAgents")
+        } catch {
+            hasAgentWidget = false
+            logger.debug("Widget configuration unavailable; pausing publication")
+        }
+        guard updatesEnabled, generation == token, !Task.isCancelled else { return }
+        guard hasAgentWidget else { stopPublishing(); return }
+        guard publicationGeneration == nil else { return }
+        let publication = UUID()
+        publicationGeneration = publication
+        lastWrite = .distantPast
+        lastUnavailable = -1
+        lastSourceVerification = nil
+        timerTask = Task { [weak self, interval = dependencies.interval] in
+            // Publish cached menubar events immediately, including when a widget is added later.
+            await self?.tick(generation: token, publication: publication)
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: interval) } catch { return }
+                await self?.tick(generation: token, publication: publication)
+            }
+        }
     }
 
-    private func tick(generation token: UUID) async {
-        guard generation == token else { return }
+    private func stopPublishing() {
+        publicationGeneration = nil
+        tickGeneration = nil
+        timerTask?.cancel(); timerTask = nil
+    }
+
+    /// One coalescing/publication cycle, only while an agent widget is configured.
+    func tick() async {
+        guard let generation, let publicationGeneration else { return }
+        await tick(generation: generation, publication: publicationGeneration)
+    }
+
+    private func ownsPublication(generation token: UUID, publication: UUID) -> Bool {
+        updatesEnabled && generation == token && publicationGeneration == publication && !Task.isCancelled
+    }
+
+    private func tick(generation token: UUID, publication: UUID) async {
+        guard ownsPublication(generation: token, publication: publication), tickGeneration == nil else { return }
+        tickGeneration = publication
+        defer {
+            if tickGeneration == publication { tickGeneration = nil }
+        }
         let now = dependencies.now()
         let due = sessions.keys.filter {
             now.timeIntervalSince(refreshRequested[$0] ?? .distantPast) >= 60
@@ -100,13 +169,13 @@ actor AgentWidgetPublisher {
             return left == right ? $0.displayName < $1.displayName : left < right
         }.prefix(4)
         for id in due {
-            guard generation == token else { return }
+            guard ownsPublication(generation: token, publication: publication) else { return }
             refreshRequested[id] = now
             // Existing client coalesces refreshes and bounds each source request with its timeout.
             // Only a resulting snapshot event advances verification, never the request itself.
             await supervisor.refresh(sessionID: id)
         }
-        guard generation == token else { return }
+        guard ownsPublication(generation: token, publication: publication) else { return }
         publishIfNeeded()
     }
 

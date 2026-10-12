@@ -18,6 +18,7 @@
 		12A000000000000000000007 /* HerdrClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000017 /* HerdrClient.swift */; };
 		12A000000000000000000008 /* HerdrClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000018 /* HerdrClientTests.swift */; };
 		12A000000000000000000035 /* HerdrClientTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000036 /* HerdrClientTestSupport.swift */; };
+		F00000000000000000000012 /* Protocol16HerdrClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000022 /* Protocol16HerdrClientTests.swift */; };
 		12A000000000000000000009 /* AgentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000019 /* AgentStoreTests.swift */; };
 		12A000000000000000000033 /* MenuBarIconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000034 /* MenuBarIconTests.swift */; };
 		12A00000000000000000000A /* AgentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000020 /* AgentStore.swift */; };
@@ -122,6 +123,7 @@
 		12A000000000000000000017 /* HerdrClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrClient.swift; sourceTree = "<group>"; };
 		12A000000000000000000018 /* HerdrClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrClientTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000036 /* HerdrClientTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrClientTestSupport.swift; sourceTree = "<group>"; };
+		F00000000000000000000022 /* Protocol16HerdrClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol16HerdrClientTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000019 /* AgentStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStoreTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000034 /* MenuBarIconTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarIconTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000020 /* AgentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStore.swift; sourceTree = "<group>"; };
@@ -289,6 +291,7 @@
 				12A000000000000000000016 /* HerdrConnectionTests.swift */,
 				12A000000000000000000018 /* HerdrClientTests.swift */,
 				12A000000000000000000036 /* HerdrClientTestSupport.swift */,
+				F00000000000000000000022 /* Protocol16HerdrClientTests.swift */,
 				12A000000000000000000019 /* AgentStoreTests.swift */,
 				12A000000000000000000034 /* MenuBarIconTests.swift */,
 				12A000000000000000000026 /* PreferencesTests.swift */,
@@ -586,6 +589,7 @@
 				12A000000000000000000006 /* HerdrConnectionTests.swift in Sources */,
 				12A000000000000000000008 /* HerdrClientTests.swift in Sources */,
 				12A000000000000000000035 /* HerdrClientTestSupport.swift in Sources */,
+				F00000000000000000000012 /* Protocol16HerdrClientTests.swift in Sources */,
 				12A000000000000000000009 /* AgentStoreTests.swift in Sources */,
 				12A000000000000000000033 /* MenuBarIconTests.swift in Sources */,
 				12A000000000000000000010 /* PreferencesTests.swift in Sources */,

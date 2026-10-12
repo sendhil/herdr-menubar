@@ -27,10 +27,10 @@ struct PaneInfo: Codable, Identifiable, Equatable, Sendable {
     let tabID: String
     let focused: Bool
     let label: String?
-    let agent: String?
+    var agent: String?
     let title: String?
-    let displayAgent: String?
-    let agentStatus: AgentStatus
+    var displayAgent: String?
+    var agentStatus: AgentStatus
     let revision: UInt64
     var agentSession: AgentSessionReference? = nil
 

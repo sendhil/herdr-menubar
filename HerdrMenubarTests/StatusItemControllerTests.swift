@@ -300,6 +300,23 @@ final class StatusItemControllerTests: XCTestCase {
         ])
     }
 
+    func testNativeWidgetChoicesRenderCheckmarksAndDispatchExactModes() throws {
+        var received: [StatusMenuAction] = []
+        let renderer = NativeStatusMenuRenderer { received.append($0) }
+        let menu = renderer.makeMenu([.submenu(title: "Widget Updates", children: [
+            .action(title: "Off", state: .on, isEnabled: true, action: .setWidgetUpdates(false)),
+            .action(title: "Automatic", state: .off, isEnabled: true, action: .setWidgetUpdates(true))
+        ])])
+        let submenu = try XCTUnwrap(menu.items.first?.submenu)
+        XCTAssertEqual(submenu.items.map(\.title), ["Off", "Automatic"])
+        XCTAssertEqual(submenu.items.map(\.state), [.on, .off])
+        for item in submenu.items {
+            XCTAssertTrue(item.isEnabled)
+            XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+        }
+        XCTAssertEqual(received, [.setWidgetUpdates(false), .setWidgetUpdates(true)])
+    }
+
     func testNativeIconApplicationPreservesExactAttentionCountAndAccessibility() throws {
         let button = NSButton()
         let snapshot = presentation(12, node: .heading("TWELVE"))

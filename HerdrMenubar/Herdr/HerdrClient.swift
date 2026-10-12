@@ -52,10 +52,10 @@ struct BackoffPolicy: Sendable {
 
 actor HerdrClient {
     private static let lifecycleEvents: Set<String> = [
-        "pane_created", "pane_closed", "pane_moved", "pane_exited", "pane_agent_detected"
+        "pane_created", "pane_closed", "pane_moved", "pane_exited"
     ]
     private static let refreshEvents: Set<String> = [
-        "pane_focused", "pane_agent_status_changed", "workspace_renamed", "tab_renamed"
+        "pane_focused", "workspace_renamed", "tab_renamed"
     ]
     private static let globalSubscriptionEvents = [
         "pane.created", "pane.closed", "pane.focused", "pane.moved", "pane.exited",
@@ -69,7 +69,11 @@ actor HerdrClient {
     private let requestSleeper: any Sleeper
     private let requestTimeout: Duration
     private let subscriptionRebuildDebounce: Duration
+    private let requestLimiter = RequestConnectionLimiter(limit: 4)
 
+    private var presentation: PresentationSnapshot?
+    private var subscriptionPaneIDs: Set<String> = []
+    private var liveStatuses: [String: AgentStatus] = [:]
     private var subscriptionConnection: (any HerdrConnection)?
     private var subscriptionToken: UUID?
     private var reconnectTask: Task<Void, Never>?
@@ -78,6 +82,15 @@ actor HerdrClient {
     private var refreshRequested = false
     private var rebuildTask: Task<Void, Never>?
     private var rebuildToken: UUID?
+    private var rebuildInFlight = false
+    private var rebuildDirty = false
+    private var metadataTask: Task<Void, Never>?
+    private var metadataToken: UUID?
+    private var metadataInFlight = false
+    private var metadataDirty = false
+    private var detectionTask: Task<Void, Never>?
+    private var detectionToken: UUID?
+    private var detectionPaneIDs: Set<String> = []
     private var presentationGeneration: UInt64 = 0
     private var eventContinuations: [UUID: AsyncStream<HerdrClientEvent>.Continuation] = [:]
     private var running = false
@@ -135,6 +148,20 @@ actor HerdrClient {
         rebuildTask?.cancel()
         rebuildTask = nil
         rebuildToken = nil
+        rebuildInFlight = false
+        rebuildDirty = false
+        metadataTask?.cancel()
+        metadataTask = nil
+        metadataToken = nil
+        metadataInFlight = false
+        metadataDirty = false
+        detectionTask?.cancel()
+        detectionTask = nil
+        detectionToken = nil
+        detectionPaneIDs.removeAll()
+        presentation = nil
+        subscriptionPaneIDs.removeAll()
+        liveStatuses.removeAll()
         let connection = subscriptionConnection
         subscriptionConnection = nil
         subscriptionToken = nil
@@ -152,6 +179,20 @@ actor HerdrClient {
         rebuildTask?.cancel()
         rebuildTask = nil
         rebuildToken = nil
+        rebuildInFlight = false
+        rebuildDirty = false
+        metadataTask?.cancel()
+        metadataTask = nil
+        metadataToken = nil
+        metadataInFlight = false
+        metadataDirty = false
+        detectionTask?.cancel()
+        detectionTask = nil
+        detectionToken = nil
+        detectionPaneIDs.removeAll()
+        presentation = nil
+        subscriptionPaneIDs.removeAll()
+        liveStatuses.removeAll()
         let connection = subscriptionConnection
         subscriptionConnection = nil
         subscriptionToken = nil
@@ -276,39 +317,34 @@ actor HerdrClient {
     }
 
     private func bootstrap(generation: UUID) async throws {
-        var snapshot = try await paneList()
-        var reconciliationAttempt = 0
+        var panes = try await paneList()
+        var needsAnotherPass = false
 
-        while true {
+        for attempt in 0 ..< 3 {
             try ensureOwnership(generation)
-            let subscribedPaneIDs = Set(snapshot.map(\.paneID))
-            let candidate = try await makeSubscription(paneIDs: Array(subscribedPaneIDs))
-            do {
-                try ensureOwnership(generation)
-                snapshot = try await paneList()
-                try ensureOwnership(generation)
-                guard Set(snapshot.map(\.paneID)) == subscribedPaneIDs else {
-                    await candidate.connection.close()
-                    try await sleeper.sleep(for: backoff.delay(attempt: reconciliationAttempt))
-                    reconciliationAttempt += 1
-                    continue
-                }
-                let oldConnection = subscriptionConnection
-                subscriptionConnection = candidate.connection
-                subscriptionToken = candidate.token
-                let presentation = try await presentationSnapshot(panes: snapshot)
-                try ensureOwnership(generation)
-                connected = true
-                disconnectedPublished = false
-                AppLog.synchronization.info("Connected to Herdr")
-                publish(.connected(presentation))
-                await oldConnection?.close()
-                return
-            } catch {
+            let ids = Set(panes.map(\.paneID))
+            let candidate = try await makeSubscription(paneIDs: Array(ids))
+            guard owns(generation), !Task.isCancelled else {
                 await candidate.connection.close()
-                throw error
+                throw CancellationError()
             }
+            await installSubscription(candidate, paneIDs: ids)
+            try ensureOwnership(generation)
+            panes = try await paneList()
+            try ensureOwnership(generation)
+            needsAnotherPass = Set(panes.map(\.paneID)) != ids
+            if !needsAnotherPass { break }
+            if attempt < 2 { try await sleeper.sleep(for: backoff.delay(attempt: attempt)) }
         }
+
+        let snapshot = try await presentationSnapshot(panes: panes)
+        try ensureOwnership(generation)
+        presentation = snapshot
+        connected = true
+        disconnectedPublished = false
+        AppLog.synchronization.info("Connected to Herdr")
+        publish(.connected(snapshot))
+        if needsAnotherPass { scheduleSubscriptionRebuild(generation: generation) }
     }
 
 }
@@ -345,6 +381,17 @@ private extension HerdrClient {
         }
     }
 
+    private func installSubscription(
+        _ candidate: (connection: any HerdrConnection, token: UUID), paneIDs: Set<String>
+    ) async {
+        let oldConnection = subscriptionConnection
+        subscriptionConnection = candidate.connection
+        subscriptionToken = candidate.token
+        subscriptionPaneIDs = paneIDs
+        liveStatuses.removeAll()
+        await oldConnection?.close()
+    }
+
     private func readSubscriptionEvents(generation: UUID) async throws {
         while owns(generation), !Task.isCancelled {
             guard let connection = subscriptionConnection, let token = subscriptionToken else {
@@ -355,11 +402,16 @@ private extension HerdrClient {
                     guard let line = try await connection.nextLine() else {
                         throw HerdrClientError.connectionClosed
                     }
+                    guard subscriptionToken == token else { break } // never process an old socket after a swap
                     do {
                         let event = try JSONDecoder().decode(EventEnvelope.self, from: line)
                         let eventName = event.event.replacingOccurrences(of: ".", with: "_")
                         if Self.lifecycleEvents.contains(eventName) {
                             scheduleSubscriptionRebuild(generation: generation)
+                        } else if eventName == "pane_agent_detected" {
+                            if let paneID = event.data.paneID { scheduleDetectionRefresh(paneID: paneID) }
+                        } else if eventName == "pane_agent_status_changed" {
+                            applyStatusEvent(event.data)
                         } else if Self.refreshEvents.contains(eventName) {
                             scheduleRefresh()
                         } else {
@@ -376,20 +428,165 @@ private extension HerdrClient {
         throw CancellationError()
     }
 
-    private func scheduleSubscriptionRebuild(generation: UUID) {
+    private func publishSnapshot(_ snapshot: PresentationSnapshot) {
+        guard snapshot != presentation else { return }
+        presentation = snapshot
+        publish(.snapshot(snapshot))
+    }
+
+    private func mergingLiveStatuses(into snapshot: PresentationSnapshot) -> PresentationSnapshot {
+        var panes = snapshot.panes
+        for index in panes.indices {
+            if let status = liveStatuses[panes[index].paneID] {
+                panes[index].agentStatus = status
+            }
+        }
+        return PresentationSnapshot(panes: panes, workspaces: snapshot.workspaces, tabs: snapshot.tabs)
+    }
+
+    private func applyStatusEvent(_ data: EventData) {
+        guard let paneID = data.paneID, let status = data.agentStatus else {
+            scheduleRefresh() // tolerate incomplete/older events without losing the subscription
+            return
+        }
+        guard subscriptionPaneIDs.contains(paneID) else { return }
+        liveStatuses[paneID] = status
+        guard var snapshot = presentation,
+              let index = snapshot.panes.firstIndex(where: { $0.paneID == paneID }) else { return }
+        guard snapshot.panes[index].agentStatus != status else { return }
+        var panes = snapshot.panes
+        panes[index].agentStatus = status
+        snapshot = PresentationSnapshot(panes: panes, workspaces: snapshot.workspaces, tabs: snapshot.tabs)
+        publishSnapshot(snapshot)
+        scheduleMetadataRefresh()
+    }
+
+    private func scheduleDetectionRefresh(paneID: String) {
+        guard running, connected else { return }
+        detectionPaneIDs.insert(paneID)
+        guard detectionTask == nil else { return }
+        let token = UUID()
+        let generation = lifecycleGeneration
+        detectionToken = token
+        detectionTask = Task { [weak self] in
+            await self?.runDetectionRefreshes(generation: generation, token: token)
+        }
+    }
+
+    private func runDetectionRefreshes(generation: UUID, token: UUID) async {
+        defer {
+            if detectionToken == token {
+                detectionTask = nil
+                detectionToken = nil
+            }
+        }
+        while owns(generation), connected, detectionToken == token, !detectionPaneIDs.isEmpty {
+            let ids = detectionPaneIDs
+            detectionPaneIDs.removeAll()
+            let subscribedToken = subscriptionToken
+            for paneID in ids {
+                do {
+                    let result: PaneFocusResult = try await request(
+                        method: "pane.get", params: PaneTargetParams(paneID: paneID), as: PaneFocusResult.self
+                    )
+                    guard result.type == "pane_info" else {
+                        throw HerdrClientError.unexpectedResponseType(expected: "pane_info", actual: result.type)
+                    }
+                    guard owns(generation), connected, detectionToken == token, !Task.isCancelled else { return }
+                    guard subscriptionToken == subscribedToken,
+                          let current = presentation,
+                          let index = current.panes.firstIndex(where: { $0.paneID == paneID }) else { continue }
+                    var panes = current.panes
+                    panes[index].agent = result.pane.agent
+                    panes[index].displayAgent = result.pane.displayAgent
+                    publishSnapshot(PresentationSnapshot(
+                        panes: panes, workspaces: current.workspaces, tabs: current.tabs
+                    ))
+                } catch let error as HerdrAPIError
+                    where error.code == "pane_not_found" || error.code == "not_found" {
+                    continue // the pane closed while its detection refresh was in flight
+                } catch {
+                    if owns(generation), detectionToken == token, shouldInvalidate(for: error) {
+                        await invalidate(reason: description(for: error), generation: generation)
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    private func scheduleMetadataRefresh() {
+        guard running, connected else { return }
+        if metadataTask != nil {
+            if metadataInFlight { metadataDirty = true }
+            return
+        }
+        let token = UUID()
+        let generation = lifecycleGeneration
+        metadataToken = token
+        metadataTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+                await self?.runMetadataRefresh(generation: generation, token: token)
+            } catch {}
+        }
+    }
+
+    private func runMetadataRefresh(generation: UUID, token: UUID) async {
+        metadataInFlight = true
+        defer {
+            if metadataToken == token {
+                let dirty = metadataDirty
+                metadataTask = nil
+                metadataToken = nil
+                metadataInFlight = false
+                metadataDirty = false
+                if dirty, owns(generation), connected {
+                    if rebuildToken == nil { scheduleMetadataRefresh() }
+                    else { metadataDirty = true }
+                }
+            }
+        }
+        do {
+            let subscribedToken = subscriptionToken
+            let snapshotGeneration = presentationGeneration
+            async let workspaces = workspaceListWithFallback()
+            async let tabs = tabListWithFallback()
+            let updatedWorkspaces = try await workspaces
+            let updatedTabs = try await tabs
+            guard owns(generation), connected, metadataToken == token,
+                  subscriptionToken == subscribedToken,
+                  presentationGeneration == snapshotGeneration,
+                  !Task.isCancelled, let current = presentation else { return }
+            guard rebuildToken == nil else {
+                metadataDirty = true
+                return
+            }
+            publishSnapshot(PresentationSnapshot(
+                panes: current.panes, workspaces: updatedWorkspaces, tabs: updatedTabs
+            ))
+        } catch {
+            if owns(generation), metadataToken == token, shouldInvalidate(for: error) {
+                await invalidate(reason: description(for: error), generation: generation)
+            }
+        }
+    }
+
+    private func scheduleSubscriptionRebuild(generation: UUID, delay: Duration? = nil) {
         guard owns(generation), connected else { return }
-        rebuildTask?.cancel()
+        if rebuildTask != nil {
+            if rebuildInFlight { rebuildDirty = true }
+            return
+        }
         let token = UUID()
         rebuildToken = token
-        presentationGeneration &+= 1
-        let rebuildPresentationGeneration = presentationGeneration
+        presentationGeneration &+= 1 // a full refresh started before this rebuild is stale
+        let expected = presentationGeneration
         rebuildTask = Task { [weak self, subscriptionRebuildDebounce] in
             do {
-                try await Task.sleep(for: subscriptionRebuildDebounce)
+                try await Task.sleep(for: delay ?? subscriptionRebuildDebounce)
                 await self?.runSubscriptionRebuild(
-                    generation: generation,
-                    token: token,
-                    presentationGeneration: rebuildPresentationGeneration
+                    generation: generation, token: token, presentationGeneration: expected
                 )
             } catch {}
         }
@@ -400,68 +597,67 @@ private extension HerdrClient {
         token: UUID,
         presentationGeneration expectedPresentationGeneration: UInt64
     ) async {
+        rebuildInFlight = true
+        var retryDelay: Duration?
         defer {
             if rebuildToken == token {
+                let dirty = rebuildDirty
                 rebuildTask = nil
                 rebuildToken = nil
-                if refreshRequested, owns(generation), connected {
-                    scheduleRefresh()
+                rebuildInFlight = false
+                rebuildDirty = false
+                if owns(generation), connected {
+                    if dirty { scheduleSubscriptionRebuild(generation: generation, delay: retryDelay ?? .zero) }
+                    else if refreshRequested { scheduleRefresh() }
+                    if metadataDirty, metadataTask == nil {
+                        metadataDirty = false
+                        scheduleMetadataRefresh()
+                    }
                 }
             }
         }
         do {
-            var snapshot = try await paneList()
-            var reconciliationAttempt = 0
-
-            while true {
+            var panes = try await paneList()
+            for attempt in 0 ..< 3 {
                 try ensureOwnership(
-                    generation,
-                    rebuildToken: token,
+                    generation, rebuildToken: token,
                     presentationGeneration: expectedPresentationGeneration
                 )
-                let subscribedPaneIDs = Set(snapshot.map(\.paneID))
-                let candidate = try await makeSubscription(paneIDs: Array(subscribedPaneIDs))
-                do {
-                    try ensureOwnership(
-                        generation,
-                        rebuildToken: token,
-                        presentationGeneration: expectedPresentationGeneration
-                    )
-                    snapshot = try await paneList()
-                    try ensureOwnership(
-                        generation,
-                        rebuildToken: token,
-                        presentationGeneration: expectedPresentationGeneration
-                    )
-                    guard Set(snapshot.map(\.paneID)) == subscribedPaneIDs else {
-                        await candidate.connection.close()
-                        try await sleeper.sleep(for: backoff.delay(attempt: reconciliationAttempt))
-                        reconciliationAttempt += 1
-                        continue
-                    }
-                    let presentation = try await presentationSnapshot(panes: snapshot)
-                    try ensureOwnership(
-                        generation,
-                        rebuildToken: token,
-                        presentationGeneration: expectedPresentationGeneration
-                    )
-                    let oldConnection = subscriptionConnection
-                    subscriptionConnection = candidate.connection
-                    subscriptionToken = candidate.token
+                let ids = Set(panes.map(\.paneID))
+                if ids == subscriptionPaneIDs {
+                    let snapshot = try await presentationSnapshot(panes: panes)
+                    try ensureOwnership(generation, rebuildToken: token)
+                    publishSnapshot(mergingLiveStatuses(into: snapshot))
                     presentationGeneration &+= 1
-                    publish(.snapshot(presentation))
-                    await oldConnection?.close()
                     return
-                } catch {
-                    await candidate.connection.close()
-                    throw error
                 }
+                let candidate = try await makeSubscription(paneIDs: Array(ids))
+                guard owns(generation), rebuildToken == token, !Task.isCancelled else {
+                    await candidate.connection.close()
+                    throw CancellationError()
+                }
+                await installSubscription(candidate, paneIDs: ids)
+                try ensureOwnership(generation, rebuildToken: token)
+                panes = try await paneList() // events on the new socket can be read while this is in flight
+                let snapshot = try await presentationSnapshot(panes: panes)
+                try ensureOwnership(generation, rebuildToken: token)
+                publishSnapshot(mergingLiveStatuses(into: snapshot))
+                if Set(panes.map(\.paneID)) == ids {
+                    presentationGeneration &+= 1
+                    return
+                }
+                if attempt == 2 {
+                    presentationGeneration &+= 1
+                    rebuildDirty = true
+                    retryDelay = max(.milliseconds(500), backoff.delay(attempt: attempt))
+                    return // keep the current events connection; try again later
+                }
+                try await sleeper.sleep(for: backoff.delay(attempt: attempt))
             }
         } catch is CancellationError {
             if owns(generation), rebuildToken == token, !Task.isCancelled {
                 await invalidate(reason: "Herdr request was cancelled", generation: generation)
             }
-            return
         } catch {
             if owns(generation), rebuildToken == token {
                 await invalidate(reason: description(for: error), generation: generation)
@@ -518,7 +714,7 @@ private extension HerdrClient {
                       rebuildToken == nil,
                       presentationGeneration == expectedPresentationGeneration,
                       !Task.isCancelled else { return }
-                publish(.snapshot(snapshot))
+                publishSnapshot(mergingLiveStatuses(into: snapshot))
             } catch is CancellationError {
                 let isAuthoritativeRefresh = owns(generation)
                     && refreshToken == token
@@ -604,17 +800,24 @@ private extension HerdrClient {
         timeout: Duration? = nil
     ) async throws -> Result
     where Params: Encodable & Sendable, Result: Decodable & Sendable {
-        return try await withTimeout(timeout: timeout) { [connectionFactory, socketURL] in
-            let connection = try await connectionFactory.connect(to: socketURL)
+        return try await withTimeout(timeout: timeout) { [connectionFactory, socketURL, requestLimiter] in
+            try await requestLimiter.acquire()
             do {
-                let requestID = UUID().uuidString
-                let request = HerdrRequest(id: requestID, method: method, params: params)
-                try await connection.sendLine(JSONEncoder().encode(request))
-                let result = try await Self.readResponse(from: connection, expectedID: requestID, as: type)
-                await connection.close()
-                return result
+                let connection = try await connectionFactory.connect(to: socketURL)
+                do {
+                    let requestID = UUID().uuidString
+                    let request = HerdrRequest(id: requestID, method: method, params: params)
+                    try await connection.sendLine(JSONEncoder().encode(request))
+                    let result = try await Self.readResponse(from: connection, expectedID: requestID, as: type)
+                    await connection.close()
+                    await requestLimiter.release()
+                    return result
+                } catch {
+                    await connection.close()
+                    throw error
+                }
             } catch {
-                await connection.close()
+                await requestLimiter.release()
                 throw error
             }
         }
@@ -668,6 +871,20 @@ private extension HerdrClient {
         rebuildTask?.cancel()
         rebuildTask = nil
         rebuildToken = nil
+        rebuildInFlight = false
+        rebuildDirty = false
+        metadataTask?.cancel()
+        metadataTask = nil
+        metadataToken = nil
+        metadataInFlight = false
+        metadataDirty = false
+        detectionTask?.cancel()
+        detectionTask = nil
+        detectionToken = nil
+        detectionPaneIDs.removeAll()
+        presentation = nil
+        subscriptionPaneIDs.removeAll()
+        liveStatuses.removeAll()
         let connection = subscriptionConnection
         subscriptionConnection = nil
         subscriptionToken = nil
@@ -733,4 +950,48 @@ private struct Subscription: Encodable, Sendable {
 
 private struct SubscriptionResult: Decodable, Sendable {
     let type: String
+}
+
+private actor RequestConnectionLimiter {
+    private var available: Int
+    private var waiters: [(UUID, CheckedContinuation<Void, any Error>)] = []
+
+    init(limit: Int) { available = limit }
+
+    func acquire() async throws {
+        try Task.checkCancellation()
+        if available > 0 {
+            available -= 1
+            return
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await enqueue(id)
+        } onCancel: {
+            Task { await self.cancel(id) }
+        }
+    }
+
+    private func enqueue(_ id: UUID) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            if Task.isCancelled {
+                continuation.resume(throwing: CancellationError())
+            } else {
+                waiters.append((id, continuation))
+            }
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            available += 1
+        } else {
+            waiters.removeFirst().1.resume()
+        }
+    }
+
+    private func cancel(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.0 == id }) else { return }
+        waiters.remove(at: index).1.resume(throwing: CancellationError())
+    }
 }

@@ -8,6 +8,19 @@ Herdr remains the source of truth. The app reads Herdr's public socket API and d
 
 Herdr Menubar includes configurable native agent widgets. See [Native agent widgets](#native-agent-widgets) for message-window filters and Pi activity tracking. A separate refresh probe remains available for diagnostics; measurements are in [the widget experiment record](docs/superpowers/experiments/2026-09-13-widget-refresh.md).
 
+Choose **Widget Updates → Off** or **Automatic** in the menubar menu. The choice persists across launches;
+Automatic is the default. **Off** cancels both the configuration-check and publication timers and prevents
+widget-specific activity reads, snapshot writes, timeline reloads, and session refreshes. Operations already
+started may finish, but their late results cannot resume publishing or write snapshots.
+
+**Automatic** checks WidgetKit configurations at startup and roughly once a minute. It runs the two-second
+publication timer only when macOS reports a **Herdr agents** widget; absent or probe-only configurations and
+query errors pause publication. macOS can report stale configurations after removal, so this is not reliable
+proof of physical widget placement. Select **Off** to stop host publishing regardless of those reports.
+The app retains a small in-memory cache of existing menubar events for safe re-enable; normal monitoring and
+notifications are unchanged. The explicitly launched refresh probe is independent. This setting does not
+prevent macOS from launching the widget extension for configurations it still caches.
+
 The widget's shared container requires development-team signing. Ad-hoc signing does not establish widget shared-container access. For widget testing, provide `DEVELOPMENT_TEAM`, `CODE_SIGN_STYLE = Manual`, and a matching `CODE_SIGN_IDENTITY` in a local xcconfig file. Pass that file to the existing installer through `XCODE_XCCONFIG_FILE`:
 
 ```bash
@@ -260,6 +273,7 @@ The app persists these preferences:
 - Launch at Login intent.
 - Notifications intent.
 - Notification sound intent.
+- Widget Updates mode (Off or Automatic).
 - Toggle-menu shortcut assignment.
 - Latest-notification shortcut assignment.
 
@@ -291,7 +305,7 @@ For Pi message-window tracking, copy `integrations/pi/herdr-widget-activity.ts` 
 
 ### Widget reliability and updates
 
-The host reconciles each connected Herdr session about once a minute in addition to listening for live changes. The footer distinguishes stale publication from an unverified Herdr connection; these are separate timestamps. Known filter expirations remain scheduled even when the host stops. Extremely dense expiration schedules show a refresh-needed state instead of silently retaining expired rows.
+While Automatic publishing is active, the host reconciles each connected Herdr session about once a minute in addition to listening for live changes. The footer distinguishes stale publication from an unverified Herdr connection; these are separate timestamps. Known filter expirations remain scheduled even when the host stops. Extremely dense expiration schedules show a refresh-needed state instead of silently retaining expired rows.
 
 The Pi companion retains long-queued inputs without a two-hour cutoff. Identical overlapping submissions are excluded until a session reset because Pi delivery events do not identify the originating submission. At 1,024 outstanding/ambiguous hashes, tracking also pauses until reset; it never evicts provenance and guesses. Run `/reload` in existing Pi sessions after updating the companion. Expanded or transformed inputs can still remain untracked.
 

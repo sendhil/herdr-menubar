@@ -284,8 +284,9 @@ final class HerdrClientTests: XCTestCase {
         let replacementSubscribe = await replacement.nextSent()
         XCTAssertEqual(replacementSubscribe.subscriptionPaneIDs, ["p1", "p2", "p3"])
         let staleBootstrapClosed = await staleSubscription.isClosed
-        XCTAssertTrue(staleBootstrapClosed)
+        XCTAssertFalse(staleBootstrapClosed)
         await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
+        await waitUntil { await staleSubscription.isClosed }
 
         let settledPost = await factory.connection(at: 4)
         let settledPostList = await settledPost.nextSent()
@@ -296,6 +297,9 @@ final class HerdrClientTests: XCTestCase {
         await client.stop()
     }
 
+}
+
+extension HerdrClientTests {
     func testConnectedSnapshotCarriesMetadataWithExactWireRequests() async throws {
         let factory = FakeHerdrConnectionFactory()
         let client = makeClient(factory: factory)
@@ -593,7 +597,7 @@ extension HerdrClientTests {
         let postSubscription = await factory.connection(at: 7)
         let postRequest = await postSubscription.nextSent()
         let oldClosedBeforeAuthoritativeSnapshot = await oldSubscription.isClosed
-        XCTAssertFalse(oldClosedBeforeAuthoritativeSnapshot)
+        XCTAssertTrue(oldClosedBeforeAuthoritativeSnapshot)
         await postSubscription.reply(to: postRequest, result: paneListResult(ids: ["new", "old"]))
         await completeMetadata(factory: factory, startIndex: 8)
         let replacementSnapshot = await events.next()
@@ -674,7 +678,7 @@ extension HerdrClientTests {
         let authoritative = await factory.connection(at: 7)
         let authoritativeRequest = await authoritative.nextSent()
 
-        await oldSubscription.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"old"}}"#)
+        await replacement.push(#"{"event":"pane.agent_status_changed","data":{"pane_id":"stale"}}"#)
         await authoritative.reply(to: authoritativeRequest, result: paneListResult(ids: ["stale"]))
         await completeMetadata(factory: factory, startIndex: 8)
         let rebuiltEvent = await events.next()
@@ -717,22 +721,20 @@ extension HerdrClientTests {
         let stalePostRequest = await stalePost.nextSent()
         await stalePost.reply(to: stalePostRequest, result: paneListResult(ids: ["old"]))
 
-        let replacement = await factory.connection(at: 8)
+        await completeMetadata(factory: factory, startIndex: 8)
+        let replacement = await factory.connection(at: 10)
         let replacementSubscribe = await replacement.nextSent()
         XCTAssertEqual(replacementSubscribe.subscriptionPaneIDs, ["old"])
         let staleReplacementClosed = await staleReplacement.isClosed
         let oldSubscriptionClosed = await oldSubscription.isClosed
-        XCTAssertTrue(staleReplacementClosed)
-        XCTAssertFalse(oldSubscriptionClosed)
+        XCTAssertFalse(staleReplacementClosed)
+        XCTAssertTrue(oldSubscriptionClosed)
         await replacement.reply(to: replacementSubscribe, result: #"{"type":"subscription_started"}"#)
-        let settledPost = await factory.connection(at: 9)
+        let settledPost = await factory.connection(at: 11)
         let settledPostRequest = await settledPost.nextSent()
         await settledPost.reply(to: settledPostRequest, result: paneListResult(ids: ["old"]))
-        await completeMetadata(factory: factory, startIndex: 10)
-
-        let replacementSnapshot = await events.next()
-        XCTAssertEqual(replacementSnapshot, .snapshot(clientSnapshot([pane("old")])))
-        await waitUntil { await oldSubscription.isClosed }
+        await completeMetadata(factory: factory, startIndex: 12)
+        await waitUntil { await staleReplacement.isClosed }
         await client.stop()
     }
 
@@ -985,142 +987,4 @@ extension HerdrClientTests {
         XCTAssertEqual(BackoffPolicy(delays: [.seconds(15)], jitter: { -1 }).delay(attempt: 100), .seconds(12))
     }
 
-    private enum MetadataFailure: Equatable {
-        case transport
-        case timeout
-        case connectionClosed
-        case cancellation
-        case decoding
-        case idMismatch
-        case malformed
-    }
-
-    private func assertMetadataFailureRestartsBootstrap(
-        method failedMethod: String,
-        failure: MetadataFailure
-    ) async throws {
-        let factory = FakeHerdrConnectionFactory()
-        let client = HerdrClient(
-            socketURL: URL(fileURLWithPath: "/tmp/fake-herdr.sock"),
-            connectionFactory: factory,
-            backoff: .immediate,
-            sleeper: ImmediateSleeper(),
-            requestTimeout: .milliseconds(25)
-        )
-        let events = await client.events()
-        await client.start()
-
-        let initial = await factory.connection(at: 0)
-        let initialRequest = await initial.nextSent()
-        await initial.reply(to: initialRequest, result: paneListResult(ids: ["pane"]))
-        let subscription = await factory.connection(at: 1)
-        let subscribe = await subscription.nextSent()
-        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
-        let authoritative = await factory.connection(at: 2)
-        let paneRequest = await authoritative.nextSent()
-        await authoritative.reply(to: paneRequest, result: paneListResult(ids: ["pane"]))
-
-        let first = await factory.connection(at: 3)
-        let firstRequest = await first.nextSent()
-        let second = await factory.connection(at: 4)
-        let secondRequest = await second.nextSent()
-        for (connection, request) in [(first, firstRequest), (second, secondRequest)] {
-            if request.method == failedMethod {
-                switch failure {
-                case .transport:
-                    await connection.fail(TransportError.receiveFailed("metadata socket failed"))
-                case .timeout:
-                    break
-                case .connectionClosed:
-                    await connection.finish()
-                case .cancellation:
-                    await connection.fail(CancellationError())
-                case .decoding:
-                    await connection.push("not json")
-                case .idMismatch:
-                    await connection.push(#"{"id":"wrong-id","result":{"type":"workspace_list","workspaces":[]}}"#)
-                case .malformed:
-                    await connection.push(#"{"id":"\#(request.id)"}"#)
-                }
-            } else {
-                await replyToMetadata(connection: connection, request: request)
-            }
-        }
-
-        guard case .disconnected = await events.next() else {
-            await client.stop()
-            return XCTFail("Expected \(failedMethod) \(failure) to invalidate live state")
-        }
-        let replacement = await completeBootstrap(
-            factory: factory,
-            startIndex: 5,
-            discovered: ["fresh"],
-            authoritative: ["fresh"]
-        )
-        let replacementSubscribe = await replacement.firstRecordedRequest
-        XCTAssertEqual(
-            replacementSubscribe?.subscriptionPaneIDs,
-            ["fresh"],
-            "metadata failure must install a usable replacement subscription"
-        )
-        let reconnected = await events.next()
-        XCTAssertEqual(
-            reconnected,
-            .connected(clientSnapshot([pane("fresh")])),
-            "metadata failure recovery must publish a fresh authoritative connected snapshot"
-        )
-        await client.stop()
-    }
-
-    private func assertRawMetadataRenameTriggersRefresh(event: String) async throws {
-        let factory = FakeHerdrConnectionFactory()
-        let client = makeClient(factory: factory)
-        let events = await client.events()
-        await client.start()
-        let subscription = await completeBootstrap(factory: factory, discovered: ["old"], authoritative: ["old"])
-        _ = await events.next()
-
-        await subscription.push(#"{"event":"\#(event)","data":{}}"#)
-        let refresh = await factory.connection(at: 5)
-        let request = await refresh.nextSent()
-        XCTAssertEqual(request.method, "pane.list")
-        await refresh.reply(to: request, result: paneListResult(ids: ["updated"]))
-        await completeMetadata(factory: factory, startIndex: 6)
-        let refreshedEvent = await events.next()
-        XCTAssertEqual(refreshedEvent, .snapshot(clientSnapshot([pane("updated")])))
-        await client.stop()
-    }
-
-    private func makeClient(
-        factory: FakeHerdrConnectionFactory,
-        socketURL: URL = URL(fileURLWithPath: "/tmp/fake-herdr.sock"),
-        debounce: Duration = .zero
-    ) -> HerdrClient {
-        HerdrClient(
-            socketURL: socketURL,
-            connectionFactory: factory,
-            backoff: .immediate,
-            sleeper: ImmediateSleeper(),
-            subscriptionRebuildDebounce: debounce
-        )
-    }
-
-    private func completeBootstrap(
-        factory: FakeHerdrConnectionFactory,
-        startIndex: Int = 0,
-        discovered: [String],
-        authoritative: [String]
-    ) async -> FakeHerdrConnection {
-        let initial = await factory.connection(at: startIndex)
-        let initialRequest = await initial.nextSent()
-        await initial.reply(to: initialRequest, result: paneListResult(ids: discovered))
-        let subscription = await factory.connection(at: startIndex + 1)
-        let subscribe = await subscription.nextSent()
-        await subscription.reply(to: subscribe, result: #"{"type":"subscription_started"}"#)
-        let post = await factory.connection(at: startIndex + 2)
-        let postRequest = await post.nextSent()
-        await post.reply(to: postRequest, result: paneListResult(ids: authoritative))
-        await completeMetadata(factory: factory, startIndex: startIndex + 3)
-        return subscription
-    }
 }
