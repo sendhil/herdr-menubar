@@ -43,6 +43,7 @@ struct ApplicationRuntimeDependencies {
     let menuActionsCancelled: () -> Void
     let menuActionsDrained: () -> Void
     let shouldStartSynchronization: Bool
+    var showDetachedMenu: () -> Void = {}
 }
 
 @MainActor
@@ -107,6 +108,9 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             driver: LiveStatusItemDriver(),
             action: { callbackRelay.perform($0) }
         )
+        let detachedMenu = DetachedMenuController.live(action: { callbackRelay.perform($0) })
+        let sketchyBarPublisher = shouldStartSynchronization(environment: environment)
+            ? SketchyBarStatusPublisher() : nil
         let shortcuts = GlobalShortcutController(
             registrar: registrar,
             latestTarget: latestTargetStore,
@@ -117,10 +121,10 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         let presentationBuilder = StatusMenuPresentationBuilder()
 
         let runtime = ApplicationRuntime(dependencies: ApplicationRuntimeDependencies(
-            startStatusItem: { statusItem.start() },
-            applyStatusItem: { statusItem.apply($0) },
+            startStatusItem: { statusItem.start(); sketchyBarPublisher?.start() },
+            applyStatusItem: { statusItem.apply($0); detachedMenu.apply($0); sketchyBarPublisher?.apply($0) },
             toggleStatusItem: { statusItem.toggle() },
-            stopStatusItem: { statusItem.stop() },
+            stopStatusItem: { detachedMenu.stop(); sketchyBarPublisher?.stop(); statusItem.stop() },
             startShortcuts: { shortcuts.start() },
             stopShortcuts: { await shortcuts.stop() },
             showShortcutSettings: { shortcutWindow.show() },
@@ -163,7 +167,8 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             observationCancelled: {},
             menuActionsCancelled: {},
             menuActionsDrained: {},
-            shouldStartSynchronization: shouldStartSynchronization(environment: environment)
+            shouldStartSynchronization: shouldStartSynchronization(environment: environment),
+            showDetachedMenu: { detachedMenu.show() }
         ))
         callbackRelay.runtime = runtime
         return runtime
@@ -214,6 +219,12 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     }
 
     func openWidgetURL(_ url: URL) async {
+        if url.absoluteString == "herdr-menubar://menu" {
+            await start()
+            guard let token = readyGeneration, isReady(token) else { return }
+            dependencies.showDetachedMenu()
+            return
+        }
         guard let target = WidgetAgentTarget(url: url) else { return }
         await start()
         guard let token = readyGeneration, isReady(token) else { return }

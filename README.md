@@ -310,3 +310,9 @@ While Automatic publishing is active, the host reconciles each connected Herdr s
 The Pi companion retains long-queued inputs without a two-hour cutoff. Identical overlapping submissions are excluded until a session reset because Pi delivery events do not identify the originating submission. At 1,024 outstanding/ambiguous hashes, tracking also pauses until reset; it never evicts provenance and guesses. Run `/reload` in existing Pi sessions after updating the companion. Expanded or transformed inputs can still remain untracked.
 
 `Config/Version.xcconfig` is the single build-number source for the app and widget. Increment it for distributed builds. The installer verifies matching resolved versions, configuration metadata, and signatures before replacement, stops both installed processes, and refreshes only this checkout’s Herdr build registrations and the installed app. Existing widget settings are preserved. Registration failure retains the prior app backup and reports its path.
+
+## SketchyBar
+
+Herdr Menubar can publish a live attention badge and open its native menu from SketchyBar. See [setup and status contract](integrations/sketchybar/README.md). This works independently of desktop widgets and notification preferences.
+
+The macOS app icon lives in `HerdrMenubar/Assets.xcassets/AppIcon.appiconset`; the small menu-bar glyph remains the system terminal symbol.

@@ -5,6 +5,26 @@ import XCTest
 
 @MainActor
 final class ApplicationRuntimeTests: XCTestCase {
+    func testMenuURLStartsOnceRejectsMalformedAndStopsRouting() async {
+        let harness = RuntimeHarness()
+        var dependencies = harness.dependencies()
+        var shown = 0
+        dependencies.showDetachedMenu = { shown += 1 }
+        let runtime = ApplicationRuntime(dependencies: dependencies)
+        for invalid in ["https://menu", "herdr-menubar://menu/extra", "herdr-menubar://menu?pane=x", "herdr-menubar://menu#x"] {
+            await runtime.openWidgetURL(URL(string: invalid)!)
+        }
+        XCTAssertEqual(harness.storeStartCount, 0)
+        await runtime.openWidgetURL(URL(string: "herdr-menubar://menu")!)
+        await runtime.openWidgetURL(URL(string: "herdr-menubar://menu")!)
+        XCTAssertEqual(shown, 2)
+        XCTAssertEqual(harness.storeStartCount, 1)
+        XCTAssertTrue(harness.selectedTargets.isEmpty)
+        await runtime.stop()
+        await runtime.openWidgetURL(URL(string: "herdr-menubar://menu")!)
+        XCTAssertEqual(shown, 2)
+    }
+
     func testWidgetURLStartsRuntimeAndSelectsExactNamedSession() async {
         let harness = RuntimeHarness()
         let runtime = ApplicationRuntime(dependencies: harness.dependencies())

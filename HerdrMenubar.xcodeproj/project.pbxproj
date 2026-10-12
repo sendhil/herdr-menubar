@@ -95,6 +95,10 @@
 		16D443DB86ECCD1985B96672 /* WidgetShared/AgentWidgetPresentation.swift:DC457981E1521EB96966F01E */ = { isa = PBXBuildFile; fileRef = 2AF215F1BDAC671C56E037A5; };
 		B4E5040E5BD3AF0146CDD225 /* WidgetShared/AgentWidgetPresentation.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = 2AF215F1BDAC671C56E037A5; };
 		EA3F84570DEF6AE0673E78AC /* HerdrWidgets/AgentWidgetView.swift:312D02098E28EFE72FB39C1B */ = { isa = PBXBuildFile; fileRef = D5010C69049E9486891FFEF1; };
+		F90000000000000000000002 /* SketchyBarIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000001; };
+		F90000000000000000000004 /* SketchyBarStatusPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000003; };
+		F90000000000000000000006 /* DetachedMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000005; };
+		F90000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F90000000000000000000007; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -197,6 +201,10 @@
 		2AF215F1BDAC671C56E037A5 /* WidgetShared/AgentWidgetPresentation.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetShared/AgentWidgetPresentation.swift"; sourceTree = SOURCE_ROOT; };
 		D5010C69049E9486891FFEF1 /* HerdrWidgets/AgentWidgetView.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HerdrWidgets/AgentWidgetView.swift"; sourceTree = SOURCE_ROOT; };
 		A47001309BDEA512FCF04111 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Version.xcconfig; sourceTree = SOURCE_ROOT; };
+		F90000000000000000000001 /* SketchyBarIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchyBarIntegrationTests.swift; sourceTree = "<group>"; };
+		F90000000000000000000003 /* SketchyBarStatusPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchyBarStatusPublisher.swift; sourceTree = "<group>"; };
+		F90000000000000000000005 /* DetachedMenuController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetachedMenuController.swift; sourceTree = "<group>"; };
+		F90000000000000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -294,6 +302,7 @@
 				F00000000000000000000022 /* Protocol16HerdrClientTests.swift */,
 				12A000000000000000000019 /* AgentStoreTests.swift */,
 				12A000000000000000000034 /* MenuBarIconTests.swift */,
+				F90000000000000000000001 /* SketchyBarIntegrationTests.swift */,
 				12A000000000000000000026 /* PreferencesTests.swift */,
 				12A000000000000000000027 /* SystemServiceTests.swift */,
 			);
@@ -315,6 +324,7 @@
 				C10000000000000000000003 /* WezTermCLI.swift */,
 				C1000000000000000000000B /* WezTermFocusAdapter.swift */,
 				12A000000000000000000024 /* Preferences.swift */,
+				F90000000000000000000003 /* SketchyBarStatusPublisher.swift */,
 				12A000000000000000000025 /* TerminalActivationService.swift */,
 				12A000000000000000000028 /* LoginItemService.swift */,
 				12A000000000000000000029 /* AppLog.swift */,
@@ -328,6 +338,7 @@
 				12A000000000000000000021 /* MenuBarIcon.swift */,
 				E30000000000000000000014 /* StatusMenuPresentation.swift */,
 				E30000000000000000000018 /* StatusItemController.swift */,
+				F90000000000000000000005 /* DetachedMenuController.swift */,
 			);
 			path = Menu;
 			sourceTree = "<group>";
@@ -361,6 +372,7 @@
 			isa = PBXGroup;
 			children = (
 				7B7F2BADAF554B3A0A94F63D /* App */,
+				F90000000000000000000007 /* Assets.xcassets */,
 				C49263C8A1747A34F59C8057 /* Herdr */,
 				D20000000000000000000001 /* Notifications */,
 				E30000000000000000000001 /* Shortcuts */,
@@ -400,6 +412,7 @@
 			buildConfigurationList = 084BB4B02CC1EE7869152719 /* Build configuration list for PBXNativeTarget "HerdrMenubar" */;
 			buildPhases = (
 				DC457981E1521EB96966F01E /* Sources */,
+				F90000000000000000000009 /* Resources */,
 				E30000000000000000000026 /* Frameworks */,
 
 				F8A53580CD24E1EC55443FF6,
@@ -500,6 +513,15 @@
 		};
 /* End PBXFrameworksBuildPhase section */
 
+/* Begin PBXResourcesBuildPhase section */
+        F90000000000000000000009 /* Resources */ = {
+            isa = PBXResourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (F90000000000000000000008 /* Assets.xcassets in Resources */,);
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		30CDFB7E1178E571B437F63F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -519,6 +541,8 @@
 				E30000000000000000000011 /* GlobalShortcutController.swift in Sources */,
 				E30000000000000000000015 /* StatusMenuPresentation.swift in Sources */,
 				E30000000000000000000019 /* StatusItemController.swift in Sources */,
+				F90000000000000000000006 /* DetachedMenuController.swift in Sources */,
+				F90000000000000000000004 /* SketchyBarStatusPublisher.swift in Sources */,
 				E3000000000000000000001D /* KeyboardShortcutSettingsView.swift in Sources */,
 				E3000000000000000000001F /* KeyboardShortcutSettingsWindowController.swift in Sources */,
 				E30000000000000000000003 /* LatestNotificationTargetStore.swift in Sources */,
@@ -592,6 +616,7 @@
 				F00000000000000000000012 /* Protocol16HerdrClientTests.swift in Sources */,
 				12A000000000000000000009 /* AgentStoreTests.swift in Sources */,
 				12A000000000000000000033 /* MenuBarIconTests.swift in Sources */,
+				F90000000000000000000002 /* SketchyBarIntegrationTests.swift in Sources */,
 				12A000000000000000000010 /* PreferencesTests.swift in Sources */,
 				12A00000000000000000002A /* SystemServiceTests.swift in Sources */,
 
