@@ -7,9 +7,9 @@ class StatusTests(unittest.TestCase):
 
     def test_modes(self):
         state = self.state()
-        self.assertIn('label=Herdr 3', properties(state, 1000))
+        self.assertIn('label=3', properties(state, 1000))
         state.update(mode='clear', attentionCount=0)
-        self.assertIn('label=Herdr', properties(state, 1000))
+        self.assertIn('label=', properties(state, 1000))
         self.assertIn('icon.color=0xff94e2d5', properties(state, 1000))
         state.update(mode='disconnected')
         self.assertIn('icon.color=0xff6c7086', properties(state, 1000))
@@ -21,7 +21,7 @@ class StatusTests(unittest.TestCase):
         for state in cases:
             with self.subTest(state=state):
                 self.assertIn('icon.color=0xff6c7086', properties(state, 1000))
-                self.assertIn('label=Herdr', properties(state, 1000))
+                self.assertIn('label=', properties(state, 1000))
 
     def test_summary_cannot_become_a_command_or_property(self):
         state = self.state() | {'summary': '$(touch /tmp/pwn)\n--remove all'}

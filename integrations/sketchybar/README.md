@@ -7,13 +7,13 @@ Copy `herdr.py` into your SketchyBar plugins directory and add this to `sketchyb
 ```bash
 sketchybar --add event herdr_status_changed dev.herdr.menubar.statusChanged
 sketchybar --add item herdr right \
-  --set herdr icon='󰆍' label=Herdr update_freq=30 \
+  --set herdr icon='󰆍' label='' label.drawing=off icon.padding_right=8 update_freq=30 \
     script="python3 '$CONFIG_DIR/plugins/herdr.py'" \
     click_script="open 'herdr-menubar://menu'" \
   --subscribe herdr herdr_status_changed system_woke
 ```
 
-Run `sketchybar --reload`. Clicking the badge opens the same native menu and routes agent selection through the same session-aware app actions. The regular macOS status item remains available. The popup is positioned near the pointer on its display; opening the URL from a keyboard or terminal uses the current pointer location.
+Run `sketchybar --reload`. The badge shows only the icon until agents need attention, then adds their count. Clicking the badge opens the same native menu and routes agent selection through the same session-aware app actions. The regular macOS status item remains available. The popup is positioned near the pointer on its display; opening the URL from a keyboard or terminal uses the current pointer location.
 
 ## Status contract (version 1)
 

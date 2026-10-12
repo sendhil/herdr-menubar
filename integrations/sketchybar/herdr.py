@@ -11,7 +11,7 @@ STATUS_FILE = Path.home() / 'Library/Application Support/Herdr Menubar/sketchyba
 
 
 def properties(state, now):
-    color, label = '0xff6c7086', 'Herdr'
+    color, label = '0xff6c7086', ''
     if isinstance(state, dict):
         timestamp = state.get('writtenAt')
         count = state.get('attentionCount')
@@ -27,8 +27,10 @@ def properties(state, now):
         if valid and mode != 'disconnected':
             color = '0xfff9e2af' if mode == 'attention' else '0xff94e2d5'
             if mode == 'attention' and count:
-                label = f'Herdr {count}'
-    return [f'label={label}', f'icon.color={color}', f'label.color={color}']
+                label = str(count)
+    return [f'label={label}', f'label.drawing={"on" if label else "off"}',
+            f'icon.padding_right={5 if label else 8}',
+            f'icon.color={color}', f'label.color={color}']
 
 
 def main():
