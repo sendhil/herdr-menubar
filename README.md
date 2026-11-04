@@ -12,9 +12,9 @@ Herdr remains the source of truth. The app reads Herdr's public socket API and d
 - Shows active agents separately under **Working**, grouped by session.
 - Uses Herdr-compatible workspace, tab, and agent labels.
 - Focuses the exact Herdr pane when an agent is selected.
-- Switches to the owning session's existing WezTerm tab, or activates another configured terminal application.
+- Uses native Ghostty Apple Events to focus the owning session's existing terminal surface, or activates another configured terminal application.
 - Optionally posts native macOS notifications for new blocked and completed-agent transitions.
-- Defaults to WezTerm and discovers supported terminals installed on the Mac.
+- Defaults to Ghostty and discovers supported terminals installed on the Mac.
 - Discovers sessions while running and reconnects them independently when Herdr starts, stops, or restarts.
 - Keeps healthy sessions visible when another session is unavailable.
 - Supports an optional **Launch at Login** setting.
@@ -34,7 +34,7 @@ The menu reflects Herdr's semantic pane status across all connected sessions:
 | `idle` | Hidden. |
 | `unknown` | Hidden. |
 
-Selecting a row sends `pane.focus` to that row's owning Herdr session. When WezTerm is selected, Herdr Menubar also switches to the existing WezTerm tab containing that session's foreground attached client. It never opens a new tab when no client is attached; the menu reports that partial-focus condition instead. Other recognized terminals retain application-level activation without session-aware tab selection.
+Selecting a row sends `pane.focus` to that row's owning Herdr session. When Ghostty is selected, Herdr Menubar then targets the exact existing terminal surface hosting that session's foreground attached client. It never creates a window, tab, or split, substitutes another session, or falls back to generic Ghostty activation. An unavailable or ambiguous target produces a session-qualified partial-focus error instead. Other recognized terminals, including WezTerm, retain application-level activation without session-aware surface selection.
 
 For completed work, Herdr owns the resulting seen-state transition from `done` to `idle`; Herdr Menubar does not acknowledge it independently.
 
@@ -44,7 +44,7 @@ Native notifications are opt-in. Turn on **Notifications** in the Herdr Menubar 
 
 After that baseline, each distinct transition into `blocked` or `done` creates one notification for that pane. A change from `blocked` to `done`, or from `done` to `blocked`, creates another notification because the two states call for different attention. Repeated snapshots and an unchanged reconnect do not create duplicates. **Sound** is a separate opt-in setting, defaults off, and is unavailable while Notifications is off.
 
-Clicking a notification uses the same exact-session focus path as selecting a menu row: it focuses the identified pane in its owning Herdr session and, when WezTerm is selected, activates that session's existing attached WezTerm tab. It does not open a replacement tab or choose another session when the original target is unavailable.
+Clicking a notification uses the same exact-session focus path as selecting a menu row: it focuses the identified pane in its owning Herdr session and, when Ghostty is selected, focuses that session's exact existing attached Ghostty surface. The latest-notification shortcut uses this same route. Neither route opens a replacement terminal or chooses another session when the original target is unavailable.
 
 Notification labels are visible to macOS and follow the notification-preview choices in System Settings. The menu toggles record local app intent; macOS notification settings, Focus modes, and sound settings can still suppress presentation or sound. If permission is later disabled in System Settings, Herdr monitoring and the menu badge continue to work.
 
@@ -64,9 +64,9 @@ Global registration and event delivery use [KeyboardShortcuts](https://github.co
 ## Requirements
 
 - A current macOS release supported by the project deployment target.
-- A running Herdr default or named session. Session-aware WezTerm tab focus is verified with Herdr 0.7.3 or newer.
+- A running Herdr default or named session. Exact Ghostty focus requires a foreground attached client and Herdr's client-window-title API; an older unsupported session produces an update message.
 - Xcode 26 or newer, including the macOS SDK and command-line tools. After installing Xcode, select it in **Xcode > Settings > Locations**, or with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
-- One of the recognized terminal applications for click-through activation. WezTerm is the default; session-aware tab focus requires the installed app's `Contents/MacOS/wezterm` CLI.
+- Ghostty **1.4.0 or later** with native Apple Event support for exact surface focus, or another recognized terminal for generic application activation. Ghostty is the default. See the live-verification limitation below.
 
 No Homebrew packages, Apple Developer account, or signing certificate are required. Local builds use ad-hoc signing. Notarized packaged releases and Homebrew distribution are not currently included.
 
@@ -80,7 +80,9 @@ Clone the repository (or run `git pull --ff-only` in an existing checkout), then
 
 The installer signs the local build without a certificate or development team. It ignores
 `XCODE_XCCONFIG_FILE` from older install instructions; no signing configuration is needed.
-Desktop widgets and their shared App Group are no longer included.
+Desktop widgets and their shared App Group are no longer included. The app declares
+Apple Events Automation; Xcode can also inject local-development entitlements under the
+existing ad-hoc signing settings. No signing team or certificate is needed.
 
 The script makes a Release build using repository-local derived data under `.build/`, installs it as `~/Applications/Herdr Menubar.app`, safely replaces a previous installation, and launches it. It can be invoked from any working directory. To install without launching, use `./scripts/install.sh --no-launch`; `--install-dir DIR` selects a different applications directory.
 
@@ -150,11 +152,13 @@ Each session has its own connection, subscription, snapshot, reconnect loop, and
 Selecting an agent performs the following sequence:
 
 1. Ask the owning Herdr session to focus the exact pane.
-2. When WezTerm is selected, briefly mark that session's foreground attached client, locate its existing pane with the installed WezTerm CLI, clear the marker, and activate that pane.
-3. Activate the configured terminal through macOS.
+2. When Ghostty is selected, authorize native Apple Events, briefly mark that session's foreground attached client, locate the exact title match within a process-qualified surface snapshot, clear the marker, and focus the matched surface by its stable ID.
+3. Otherwise, activate the configured terminal through macOS. Ghostty success or failure never falls through to this generic route.
 4. Refresh only the owning Herdr session.
 
-The WezTerm adapter runs only when a row is clicked. It installs no background helper, shell hook, or WezTerm configuration, and it never creates a tab.
+The Ghostty adapter runs only for a menu, notification, or shortcut focus request. It uses native Apple Events, not keystrokes, Accessibility scripting, a CLI, shell hooks, plugins, or terminal configuration changes. Lookup and cleanup are bounded; cancellation and session removal invalidate stale work. No new terminal is created.
+
+The first exact Ghostty focus request may prompt for Automation permission. If denied, allow **Herdr Menubar** to control **Ghostty** in **System Settings > Privacy & Security > Automation**. This is separate from notification permission. If permission, supported scripting, exact lookup, or marker cleanup fails, the pane may already be focused inside Herdr, but terminal focus does not fall back to another target.
 
 The app recognizes these terminal bundle identifiers:
 
@@ -165,7 +169,7 @@ The app recognizes these terminal bundle identifiers:
 - Kitty
 - Alacritty
 
-If the configured terminal is unavailable, the menu retains the preference as unavailable and offers installed alternatives.
+If the configured terminal is unavailable, the menu retains the preference as unavailable and offers installed alternatives. Existing saved WezTerm selections migrate to Ghostty once; selections of other terminals are preserved. After that migration, explicitly selecting WezTerm again remains a valid generic-activation choice.
 
 ## Architecture
 
@@ -188,6 +192,8 @@ The main runtime boundaries are:
 - **`SessionSupervisor`** — owns one `HerdrClient` per discovered session and isolates discovery, reconnect, retry, and removal behavior.
 - **`HerdrClient`** — an actor that owns one session's socket requests, event subscriptions, snapshots, reconnects, and synchronization generations.
 - **`AgentStore`** — a main-actor observable model that aggregates session-qualified menu sections and coordinates routed focus and activation.
+- **`LiveGhosttyFocusAdapter`** — coordinates exact marker lookup, clear-before-focus, cancellation, and per-session cleanup lifecycle.
+- **`LiveGhosttyControl` / `LiveGhosttyAppleEventTransport`** — validate the running process and supported version, authorize Automation, and encode bounded native surface enumeration/focus events.
 - **`AttentionNotificationCoordinator`** — tracks per-session pane transitions and suppresses startup and reconnect duplicates.
 - **`NativeNotificationService`** — owns macOS permission, delivery, and exact session-and-pane response routing.
 - **`GlobalShortcutController`** — consumes registered key-up events and routes menu toggles or the current-run notification target.
@@ -227,7 +233,7 @@ xcodebuild analyze \
   -destination 'platform=macOS'
 ```
 
-The unit suite is hermetic and suppresses production Herdr synchronization while hosted by XCTest. Transport and synchronization tests use fake or temporary Unix-domain sockets.
+The unit suite is hermetic and suppresses production Herdr synchronization while hosted by XCTest. Hosted preferences use a private suite before any default migration, leaving real saved preferences untouched. Transport and synchronization tests use fake or temporary Unix-domain sockets; Ghostty tests inject permission and event-send boundaries and never request Automation consent or contact live Ghostty.
 
 The UI-test target is present for future smoke coverage, but routine validation uses unit tests plus a bounded ordinary-app launch. Do not use unsigned UI-test runners for local validation; macOS may reject those runner bundles.
 
@@ -242,6 +248,8 @@ The app persists these preferences:
 - Toggle-menu shortcut assignment.
 - Latest-notification shortcut assignment.
 
+The app also records whether the one-time Ghostty default migration has run. Native Automation decisions remain managed by macOS, not by these preferences.
+
 Actual login-item state is read from macOS through `SMAppService`. The app writes aggregate connection and attention status for SketchyBar to a private local file. Herdr remains the source of truth for agent status and acknowledgement state.
 
 Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynamic socket, server, focus, activation, and error details are logged as private values.
@@ -253,6 +261,8 @@ Runtime diagnostics use the unified logging subsystem `dev.herdr.menubar`. Dynam
 - No automatic updater or package-manager installation.
 - Menu presentation intentionally uses native macOS menu behavior rather than a custom dashboard or popover.
 - Terminal activation uses a user-selected terminal because Herdr's public API does not currently identify the macOS application hosting an attached client.
+- Ghostty routing, native event encoding, denial/cancellation, identity checks, and marker cleanup have hermetic automated coverage. Live title propagation, exact tab/split/window focus, Automation attribution, and installed-app compatibility are still unverified; no live rollout claim is made.
+- The build-7 non-UI reassessment ran 436 tests; its only failures are three pre-existing rendered shortcut-error accessibility assertions. Reconnect and Ghostty migration cases passed, but full-green release validation remains blocked separately from this migration.
 
 ## License and disclaimer
 

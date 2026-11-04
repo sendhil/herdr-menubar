@@ -5,7 +5,8 @@ REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 # Run a copied installer so checkout-local build discovery remains fixture-only.
 FIXTURE_REPO=$(mktemp -d "${TMPDIR:-/tmp}/herdr-installer-repo.XXXXXX") || exit 1
 FIXTURE_REPO=$(cd "$FIXTURE_REPO" && pwd)
-mkdir -p "$FIXTURE_REPO/scripts"
+mkdir -p "$FIXTURE_REPO/scripts" "$FIXTURE_REPO/HerdrMenubar"
+cp "$REPO_ROOT/HerdrMenubar/HerdrMenubar.entitlements" "$FIXTURE_REPO/HerdrMenubar/"
 cp "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/lib.sh" "$REPO_ROOT/scripts/validate-app-product.py" "$FIXTURE_REPO/scripts/"
 INSTALLER="$FIXTURE_REPO/scripts/install.sh"
 UNINSTALLER="$REPO_ROOT/scripts/uninstall.sh"
@@ -189,6 +190,14 @@ if [ "$status" -eq 0 ] && assert_file "$case_dir/Applications/Herdr Menubar.app/
   && assert_contains "$(cat "$case_dir/log/xcodebuild")" "arg=CODE_SIGN_IDENTITY=-" \
   && assert_contains "$(cat "$case_dir/log/xcodebuild")" "arg=DEVELOPMENT_TEAM=" \
   && assert_not_path "$case_dir/Applications/Herdr Menubar.app/Contents/PlugIns"; then pass "success preserves argument boundaries"; else fail "success preserves argument boundaries"; fi
+
+# Local signing must retain the native Automation declaration, even from another cwd.
+if [ "$status" -eq 0 ] && assert_contains "$(cat "$case_dir/log/xcodebuild")" \
+  "arg=CODE_SIGN_ENTITLEMENTS=$FIXTURE_REPO/HerdrMenubar/HerdrMenubar.entitlements"; then
+  pass "local signing preserves Automation entitlements"
+else
+  fail "local signing preserves Automation entitlements"
+fi
 
 # Build failure must not stop or alter the prior installation.
 case_dir="$TEST_ROOT/build-failure"; make_fakes "$case_dir"; mkdir -p "$case_dir/Applications/Herdr Menubar.app"; printf old > "$case_dir/Applications/Herdr Menubar.app/old"

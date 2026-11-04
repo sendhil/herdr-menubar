@@ -99,7 +99,7 @@ private struct AgentSelectionTarget: Sendable {
 final class AgentStore {
     private let supervisor: any SessionSupervising
     private let terminalActivator: any TerminalActivating
-    private let wezTermFocuser: any WezTermSessionFocusing
+    private let ghosttyFocuser: any GhosttySessionFocusing
     private let attentionCoordinator: any AttentionNotificationCoordinating
     private let notificationService: any NativeNotificationServing
     private let preferences: Preferences
@@ -144,14 +144,14 @@ final class AgentStore {
     init(
         supervisor: any SessionSupervising,
         terminalActivator: any TerminalActivating,
-        wezTermFocuser: any WezTermSessionFocusing,
+        ghosttyFocuser: any GhosttySessionFocusing,
         attentionCoordinator: any AttentionNotificationCoordinating,
         notificationService: any NativeNotificationServing,
         preferences: Preferences = Preferences()
     ) {
         self.supervisor = supervisor
         self.terminalActivator = terminalActivator
-        self.wezTermFocuser = wezTermFocuser
+        self.ghosttyFocuser = ghosttyFocuser
         self.attentionCoordinator = attentionCoordinator
         self.notificationService = notificationService
         self.preferences = preferences
@@ -322,24 +322,24 @@ private extension AgentStore {
         }
 
         let bundleIdentifier = preferences.selectedTerminalBundleIdentifier
-        if bundleIdentifier == WezTermCLIConstants.bundleIdentifier {
+        if bundleIdentifier == GhosttyControlConstants.bundleIdentifier {
             do {
-                try await wezTermFocuser.focusAttachedClient(sessionID: target.sessionID)
+                try await ghosttyFocuser.focusAttachedClient(sessionID: target.sessionID)
             } catch {
-                AppLog.systemActions.error("WezTerm session focus failed: \(error.localizedDescription, privacy: .private)")
+                AppLog.systemActions.error("Ghostty session focus failed: \(error.localizedDescription, privacy: .private)")
                 if ownsSelection(generation) {
-                    transientError = wezTermFocusMessage(error, sessionName: target.sessionName)
+                    transientError = ghosttyFocusMessage(error, sessionName: target.sessionName)
                 }
                 await supervisor.refresh(sessionID: target.sessionID)
                 return
             }
-        }
-
-        if ownsSelection(generation) {
+        } else if ownsSelection(generation) {
             do {
                 try await terminalActivator.activate(bundleIdentifier: bundleIdentifier)
             } catch {
-                AppLog.systemActions.error("Terminal activation failed: \(error.localizedDescription, privacy: .private)")
+                AppLog.systemActions.error(
+                    "Terminal activation failed: \(error.localizedDescription, privacy: .private)"
+                )
                 if ownsSelection(generation) {
                     transientError = error.localizedDescription
                 }
@@ -352,17 +352,28 @@ private extension AgentStore {
         selectionGeneration == generation && !Task.isCancelled
     }
 
-    func wezTermFocusMessage(_ error: any Error, sessionName: String) -> String {
+    func ghosttyFocusMessage(_ error: any Error, sessionName: String) -> String {
         let prefix = "Focused the pane in \(sessionName), but "
-        switch error as? WezTermFocusError {
+        switch error as? GhosttyFocusError {
         case .noAttachedClient, .lookupTimedOut:
-            return prefix + "no attached WezTerm tab was found."
+            return prefix + "no attached Ghostty surface was found."
         case .unsupportedHerdr:
-            return prefix + "this Herdr session must be updated for WezTerm tab focus."
+            return prefix + "this Herdr session must be updated for Ghostty surface focus."
         case .markerCleanupFailed:
-            return prefix + "the temporary WezTerm focus marker could not be cleared."
-        case .wezTermUnavailable, .wezTermControlFailed, .ambiguousMarker, .none:
-            return prefix + "WezTerm could not be controlled."
+            return prefix + "the temporary Ghostty focus marker could not be cleared."
+        case .ghosttyUnavailable:
+            return prefix + "Ghostty is not running."
+        case .unsupportedGhostty:
+            return prefix + "Ghostty 1.4.0 or later with Apple Event support is required."
+        case .automationDenied:
+            return prefix + "Automation permission to control Ghostty was denied. "
+                + "Allow Herdr Menubar in System Settings > Privacy & Security > Automation."
+        case .targetGone:
+            return prefix + "the attached Ghostty surface or process disappeared."
+        case .ambiguousMarker:
+            return prefix + "more than one Ghostty surface matched the focus marker."
+        case .ghosttyControlFailed, .none:
+            return prefix + "Ghostty could not be controlled."
         }
     }
 
@@ -421,7 +432,7 @@ private extension AgentStore {
                 transientError = "\(id.displayName) is unavailable"
             }
             guard removedState != nil else { return }
-            wezTermFocuser.forget(sessionID: id)
+            ghosttyFocuser.forget(sessionID: id)
             await attentionCoordinator.remove(sessionID: id)
         }
         deriveConnectionState()

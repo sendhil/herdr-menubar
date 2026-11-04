@@ -95,6 +95,7 @@ actor SessionSupervisor {
         let generation: UInt64
         var isPresent: Bool
         var isConnected: Bool
+        var latestSnapshot: PresentationSnapshot?
         var eventTask: Task<Void, Never>?
         var graceTask: Task<Void, Never>?
     }
@@ -544,6 +545,9 @@ private extension SessionSupervisor {
                 runtime.graceTask = nil
                 runtimes[descriptor.id] = runtime
                 if returnedDuringGrace {
+                    if runtime.isConnected, let snapshot = runtime.latestSnapshot {
+                        publish(.connected(runtime.descriptor, snapshot))
+                    }
                     retriedSessionIDs.insert(descriptor.id)
                     await runtime.client.retryNow()
                     guard ownsLifecycle(generation), !Task.isCancelled else { break }
@@ -567,8 +571,8 @@ private extension SessionSupervisor {
               var runtime = runtimes[sessionID],
               runtime.isPresent else { return }
 
+        // Presence gates commands; retain the independently observed client connection state.
         runtime.isPresent = false
-        runtime.isConnected = false
         let runtimeGeneration = runtime.generation
         let graceTask = Task { [weak self, sleeper, removalGracePeriod] in
             do {
@@ -729,17 +733,21 @@ private extension SessionSupervisor {
 
         switch event {
         case .connected(let snapshot):
-            guard runtime.isPresent else { return }
             runtime.isConnected = true
+            runtime.latestSnapshot = snapshot
             runtimes[sessionID] = runtime
+            guard runtime.isPresent else { return }
             publish(.connected(runtime.descriptor, snapshot))
         case .snapshot(let snapshot):
+            runtime.latestSnapshot = snapshot
+            runtimes[sessionID] = runtime
             guard runtime.isPresent else { return }
             publish(.snapshot(sessionID, snapshot))
         case .disconnected(let reason):
-            guard runtime.isPresent else { return }
             runtime.isConnected = false
+            runtime.latestSnapshot = nil
             runtimes[sessionID] = runtime
+            guard runtime.isPresent else { return }
             publish(.unavailable(sessionID, reason))
         }
     }

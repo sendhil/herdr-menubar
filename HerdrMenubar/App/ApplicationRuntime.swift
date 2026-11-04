@@ -69,11 +69,9 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             discovery: SessionDiscovery(),
             clientFactory: LiveSessionClientFactory()
         )
-        let processRunner = BoundedProcessRunner()
-        let wezTermCLI = LiveWezTermCLI(runner: processRunner)
-        let wezTermFocuser = LiveWezTermFocusAdapter(
+        let ghosttyFocuser = LiveGhosttyFocusAdapter(
             supervisor: supervisor,
-            cli: wezTermCLI
+            control: LiveGhosttyControl.live()
         )
         let preferences = Preferences()
         let notificationService = NativeNotificationService()
@@ -90,7 +88,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         let store = AgentStore(
             supervisor: supervisor,
             terminalActivator: TerminalActivationService(),
-            wezTermFocuser: wezTermFocuser,
+            ghosttyFocuser: ghosttyFocuser,
             attentionCoordinator: attentionCoordinator,
             notificationService: notificationService,
             preferences: preferences

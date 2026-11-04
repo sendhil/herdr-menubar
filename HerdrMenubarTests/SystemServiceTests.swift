@@ -4,6 +4,33 @@ import XCTest
 
 @MainActor
 final class SystemServiceTests: XCTestCase {
+    func testHostedAppDeclaresGhosttyAutomationPurpose() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "NSAppleEventsUsageDescription") as? String,
+            "Herdr Menubar uses Ghostty Automation to focus the terminal surface "
+                + "attached to the Herdr session you select."
+        )
+    }
+
+    func testApplicationDeclaresAppleEventsAutomationEntitlement() {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let url = root.appending(path: "HerdrMenubar/HerdrMenubar.entitlements")
+        let data = try? Data(contentsOf: url)
+        let propertyList = data.flatMap {
+            try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any]
+        }
+        XCTAssertEqual(propertyList?["com.apple.security.automation.apple-events"] as? Bool, true)
+    }
+
+    func testApplicationSigningConfigurationsUseAutomationEntitlements() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let project = try String(
+            contentsOf: root.appending(path: "HerdrMenubar.xcodeproj/project.pbxproj"), encoding: .utf8
+        )
+        let setting = "CODE_SIGN_ENTITLEMENTS = HerdrMenubar/HerdrMenubar.entitlements;"
+        XCTAssertEqual(project.components(separatedBy: setting).count - 1, 2)
+    }
+
     func testCatalogReturnsOnlyInstalledKnownTerminalsInPickerOrder() {
         let installed = [
             "com.github.wez.wezterm",

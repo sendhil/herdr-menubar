@@ -18,6 +18,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Herdr Menubar uses Ghostty Automation to focus the terminal surface attached to the Herdr session you select.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>CFBundleURLTypes</key>

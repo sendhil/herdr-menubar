@@ -14,8 +14,8 @@ final class StatusMenuPresentationTests: XCTestCase {
                 .info("Searching for Herdr sessions…", tone: .secondary),
                 .submenu(title: "Terminal", children: [
                     .action(
-                        title: "WezTerm (Unavailable)", state: .on, isEnabled: false,
-                        action: .selectTerminal("com.github.wez.wezterm")
+                        title: "Ghostty (Unavailable)", state: .on, isEnabled: false,
+                        action: .selectTerminal("com.mitchellh.ghostty")
                     )
                 ]),
                 .toggle(
@@ -409,7 +409,7 @@ private final class PresentationFixture {
         store = AgentStore(
             supervisor: supervisor,
             terminalActivator: PresentationTerminalActivator(),
-            wezTermFocuser: PresentationWezTermFocuser(),
+            ghosttyFocuser: PresentationGhosttyFocuser(),
             attentionCoordinator: PresentationAttentionCoordinator(),
             notificationService: notificationService,
             preferences: preferences
@@ -588,7 +588,7 @@ private final class PresentationTerminalActivator: TerminalActivating {
 }
 
 @MainActor
-private final class PresentationWezTermFocuser: WezTermSessionFocusing {
+private final class PresentationGhosttyFocuser: GhosttySessionFocusing {
     func focusAttachedClient(sessionID: SessionID) async throws {}
     func forget(sessionID: SessionID) {}
 }

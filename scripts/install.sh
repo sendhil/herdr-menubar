@@ -102,7 +102,7 @@ xcodebuild build \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM= \
-  CODE_SIGN_ENTITLEMENTS= \
+  CODE_SIGN_ENTITLEMENTS="$repo_root/HerdrMenubar/HerdrMenubar.entitlements" \
   CODE_SIGNING_ALLOWED=YES
 
 if [ ! -d "$product" ]; then

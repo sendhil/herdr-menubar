@@ -278,7 +278,7 @@ extension ApplicationRuntimeTests {
         let store = AgentStore(
             supervisor: supervisor,
             terminalActivator: RuntimeNoopTerminalActivator(),
-            wezTermFocuser: RuntimeNoopWezTermFocuser(),
+            ghosttyFocuser: RuntimeNoopGhosttyFocuser(),
             attentionCoordinator: coordinator,
             notificationService: service,
             preferences: preferences
@@ -852,7 +852,7 @@ private struct RuntimeNoopTerminalActivator: TerminalActivating {
 }
 
 @MainActor
-private final class RuntimeNoopWezTermFocuser: WezTermSessionFocusing {
+private final class RuntimeNoopGhosttyFocuser: GhosttySessionFocusing {
     func focusAttachedClient(sessionID: SessionID) async throws {}
     func forget(sessionID: SessionID) {}
 }

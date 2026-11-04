@@ -175,10 +175,10 @@ final class AgentStoreTests: XCTestCase {
     func testUnavailablePreservesCoordinatorHistoryAndRemovedForgetsExactlyOnce() async {
         let supervisor = FakeSessionSupervisor()
         let coordinator = RecordingAttentionCoordinator()
-        let focuser = RecordingWezTermFocuser()
+        let focuser = RecordingGhosttyFocuser()
         let store = makeStore(
             supervisor: supervisor,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator
         )
         await store.start()
@@ -201,16 +201,16 @@ final class AgentStoreTests: XCTestCase {
         await store.stop()
     }
 
-    func testWezTermSelectionFocusesHerdrThenTabThenAppThenRefreshes() async {
+    func testWezTermSelectionUsesGenericActivationOnly() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(sequence: sequence)
+        let focuser = RecordingGhosttyFocuser(sequence: sequence)
         let activator = RecordingActivator(sequence: sequence)
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
-            preferences: testPreferences()
+            ghosttyFocuser: focuser,
+            preferences: testPreferences(bundleIdentifier: "com.github.wez.wezterm")
         )
         let item = AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked))
 
@@ -220,22 +220,22 @@ final class AgentStoreTests: XCTestCase {
         let focusRequests = await supervisor.focusRequests
         let refreshRequests = await supervisor.refreshRequests
         XCTAssertEqual(actions, [
-            "focus:work:p", "wezterm:work", "activate:com.github.wez.wezterm", "refresh:work"
+            "focus:work:p", "activate:com.github.wez.wezterm", "refresh:work"
         ])
         XCTAssertEqual(focusRequests, [FocusRequest(sessionID: .named("work"), paneID: "p")])
-        XCTAssertEqual(focuser.focusedSessionIDs, [.named("work")])
+        XCTAssertTrue(focuser.focusedSessionIDs.isEmpty)
         XCTAssertEqual(refreshRequests, [.named("work")])
     }
 
-    func testNonWezTermSelectionSkipsAdapterAndPreservesGenericActivation() async {
+    func testGhosttySelectionFocusesExactSessionWithoutGenericActivation() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(sequence: sequence)
+        let focuser = RecordingGhosttyFocuser(sequence: sequence)
         let activator = RecordingActivator(sequence: sequence)
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: testPreferences(bundleIdentifier: "com.mitchellh.ghostty")
         )
 
@@ -244,9 +244,9 @@ final class AgentStoreTests: XCTestCase {
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
         XCTAssertEqual(actions, [
-            "focus:work:p", "activate:com.mitchellh.ghostty", "refresh:work"
+            "focus:work:p", "ghostty:work", "refresh:work"
         ])
-        XCTAssertTrue(focuser.focusedSessionIDs.isEmpty)
+        XCTAssertEqual(focuser.focusedSessionIDs, [.named("work")])
         XCTAssertEqual(refreshRequests, [.named("work")])
     }
 
@@ -254,12 +254,12 @@ final class AgentStoreTests: XCTestCase {
         let supervisor = FakeSessionSupervisor(
             focusError: HerdrAPIError(code: "pane_not_found", message: "Pane no longer exists")
         )
-        let focuser = RecordingWezTermFocuser()
+        let focuser = RecordingGhosttyFocuser()
         let activator = RecordingActivator()
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: testPreferences()
         )
 
@@ -272,11 +272,11 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(store.transientError, "Could not focus pane in work: Pane no longer exists")
     }
 
-    func testNoAttachedTabShowsPartialErrorAndStillRefreshesOwningSession() async {
-        for error in [WezTermFocusError.noAttachedClient, .lookupTimedOut] {
+    func testNoAttachedSurfaceShowsPartialErrorAndStillRefreshesOwningSession() async {
+        for error in [GhosttyFocusError.noAttachedClient, .lookupTimedOut] {
             await assertAdapterFailure(
                 error,
-                expectedMessage: "Focused the pane in work, but no attached WezTerm tab was found."
+                expectedMessage: "Focused the pane in work, but no attached Ghostty surface was found."
             )
         }
     }
@@ -284,37 +284,37 @@ final class AgentStoreTests: XCTestCase {
     func testUnsupportedHerdrShowsUpdateErrorAndStillRefreshes() async {
         await assertAdapterFailure(
             .unsupportedHerdr,
-            expectedMessage: "Focused the pane in work, but this Herdr session must be updated for WezTerm tab focus."
+            expectedMessage: "Focused the pane in work, but "
+                + "this Herdr session must be updated for Ghostty surface focus."
         )
     }
 
-    func testWezTermControlFailureStillRefreshesOnce() async {
-        for error in [
-            WezTermFocusError.wezTermUnavailable,
-            .wezTermControlFailed,
-            .ambiguousMarker
-        ] {
-            await assertAdapterFailure(
-                error,
-                expectedMessage: "Focused the pane in work, but WezTerm could not be controlled."
-            )
+    func testGhosttyControlFailuresAreActionableAndStillRefreshOnce() async {
+        let failures: [(GhosttyFocusError, String)] = [
+            (.ghosttyControlFailed, "Ghostty could not be controlled."),
+            (.ghosttyUnavailable, "Ghostty is not running."),
+            (.unsupportedGhostty, "Ghostty 1.4.0 or later with Apple Event support is required."),
+            (.automationDenied, "Automation permission to control Ghostty was denied. "
+                + "Allow Herdr Menubar in System Settings > Privacy & Security > Automation."),
+            (.targetGone, "the attached Ghostty surface or process disappeared."),
+            (.ambiguousMarker, "more than one Ghostty surface matched the focus marker."),
+            (.markerCleanupFailed, "the temporary Ghostty focus marker could not be cleared.")
+        ]
+        for (error, reason) in failures {
+            await assertAdapterFailure(error, expectedMessage: "Focused the pane in work, but " + reason)
         }
-        await assertAdapterFailure(
-            .markerCleanupFailed,
-            expectedMessage: "Focused the pane in work, but the temporary WezTerm focus marker could not be cleared."
-        )
     }
 
     func testMacOSActivationFailureStillRefreshesOnce() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(sequence: sequence)
+        let focuser = RecordingGhosttyFocuser(sequence: sequence)
         let activator = RecordingActivator(error: TestFailure.activation, sequence: sequence)
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
-            preferences: testPreferences()
+            ghosttyFocuser: focuser,
+            preferences: testPreferences(bundleIdentifier: "com.apple.Terminal")
         )
 
         await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .done)))
@@ -322,8 +322,9 @@ final class AgentStoreTests: XCTestCase {
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
         XCTAssertEqual(actions, [
-            "focus:work:p", "wezterm:work", "activate:com.github.wez.wezterm", "refresh:work"
+            "focus:work:p", "activate:com.apple.Terminal", "refresh:work"
         ])
+        XCTAssertTrue(focuser.focusedSessionIDs.isEmpty)
         XCTAssertEqual(refreshRequests, [.named("work")])
         XCTAssertNotNil(store.transientError)
     }
@@ -335,7 +336,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: RecordingActivator(sequence: sequence),
-            wezTermFocuser: RecordingWezTermFocuser(sequence: sequence),
+            ghosttyFocuser: RecordingGhosttyFocuser(sequence: sequence),
             notificationService: notifications
         )
         await notifications.send(NotificationSelectionTarget(
@@ -355,7 +356,7 @@ final class AgentStoreTests: XCTestCase {
             FocusRequest(sessionID: .named("work"), paneID: "p")
         ])
         XCTAssertEqual(actions, [
-            "focus:work:p", "wezterm:work", "activate:com.github.wez.wezterm", "refresh:work"
+            "focus:work:p", "ghostty:work", "refresh:work"
         ])
         await store.stop()
     }
@@ -367,7 +368,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: RecordingActivator(sequence: sequence),
-            wezTermFocuser: RecordingWezTermFocuser(sequence: sequence),
+            ghosttyFocuser: RecordingGhosttyFocuser(sequence: sequence),
             attentionCoordinator: coordinator
         )
         await store.start()
@@ -385,8 +386,7 @@ final class AgentStoreTests: XCTestCase {
             FocusRequest(sessionID: .named("work"), paneID: "p2")
         ])
         XCTAssertEqual(actions, [
-            "focus:work:p2", "wezterm:work",
-            "activate:com.github.wez.wezterm", "refresh:work"
+            "focus:work:p2", "ghostty:work", "refresh:work"
         ])
         await store.stop()
     }
@@ -459,7 +459,7 @@ final class AgentStoreTests: XCTestCase {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
         let coordinator = RecordingAttentionCoordinator()
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence,
             blockedCalls: [1],
             checksCancellationAfterGate: false
@@ -468,7 +468,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator
         )
         await store.start()
@@ -491,13 +491,10 @@ final class AgentStoreTests: XCTestCase {
 
         let actions = await sequence.values
         XCTAssertEqual(actions, [
-            "focus:work:old", "wezterm:work", "refresh:work",
-            "focus:Default:new", "wezterm:Default",
-            "activate:com.github.wez.wezterm", "refresh:Default"
+            "focus:work:old", "ghostty:work", "refresh:work",
+            "focus:Default:new", "ghostty:Default", "refresh:Default"
         ])
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [
-            WezTermCLIConstants.bundleIdentifier
-        ])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         XCTAssertNil(store.transientError)
         await store.stop()
     }
@@ -554,7 +551,7 @@ final class AgentStoreTests: XCTestCase {
         let supervisor = FakeSessionSupervisor(sequence: sequence)
         let coordinator = RecordingAttentionCoordinator()
         let notifications = RecordingNotificationService()
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence,
             blockedCalls: [1],
             checksCancellationAfterGate: false
@@ -563,7 +560,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator,
             notificationService: notifications
         )
@@ -600,9 +597,7 @@ final class AgentStoreTests: XCTestCase {
             FocusRequest(sessionID: .named("work"), paneID: "p")
         ])
         XCTAssertEqual(refreshRequests, [.default, .named("work")])
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [
-            WezTermCLIConstants.bundleIdentifier
-        ])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         XCTAssertNil(store.transientError)
         await store.stop()
     }
@@ -648,14 +643,14 @@ final class AgentStoreTests: XCTestCase {
         let supervisor = FakeSessionSupervisor()
         let coordinator = RecordingAttentionCoordinator()
         let notifications = RecordingNotificationService()
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             blockedCalls: [1], checksCancellationAfterGate: false
         )
         let activator = RecordingActivator()
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator,
             notificationService: notifications
         )
@@ -694,14 +689,14 @@ final class AgentStoreTests: XCTestCase {
         let supervisor = FakeSessionSupervisor()
         let coordinator = RecordingAttentionCoordinator()
         let notifications = RecordingNotificationService()
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             blockedCalls: [1], checksCancellationAfterGate: false
         )
         let activator = RecordingActivator()
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator,
             notificationService: notifications
         )
@@ -761,7 +756,7 @@ final class AgentStoreTests: XCTestCase {
     func testNewerNotificationSelectionSupersedesBlockedMenuSelection() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence, blockedCalls: [1], checksCancellationAfterGate: false
         )
         let activator = RecordingActivator(sequence: sequence)
@@ -769,7 +764,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             notificationService: notifications
         )
         await store.start()
@@ -786,7 +781,7 @@ final class AgentStoreTests: XCTestCase {
         await waitUntil { await supervisor.refreshRequests.count == 2 }
 
         let refreshRequests = await supervisor.refreshRequests
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [WezTermCLIConstants.bundleIdentifier])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         XCTAssertEqual(refreshRequests, [.named("work"), .default])
         XCTAssertNil(store.transientError)
         await store.stop()
@@ -824,9 +819,9 @@ final class AgentStoreTests: XCTestCase {
         let supervisor = FakeSessionSupervisor(sequence: sequence)
         let coordinator = RecordingAttentionCoordinator()
         let notifications = RecordingNotificationService()
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence,
-            results: [.failure(WezTermFocusError.noAttachedClient), .success(())],
+            results: [.failure(GhosttyFocusError.noAttachedClient), .success(())],
             blockedCalls: [1],
             checksCancellationAfterGate: false
         )
@@ -834,7 +829,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator,
             notificationService: notifications
         )
@@ -869,102 +864,81 @@ final class AgentStoreTests: XCTestCase {
         ])
         XCTAssertEqual(refreshRequests, [.named("work"), .default])
         XCTAssertEqual(actions, [
-            "focus:work:p1", "wezterm:work", "refresh:work",
-            "focus:Default:p2", "wezterm:Default",
-            "activate:com.github.wez.wezterm", "refresh:Default"
+            "focus:work:p1", "ghostty:work", "refresh:work",
+            "focus:Default:p2", "ghostty:Default", "refresh:Default"
         ])
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [
-            WezTermCLIConstants.bundleIdentifier
-        ])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         XCTAssertEqual(focuser.cancellationObservedSessionIDs, [.named("work")])
         XCTAssertNil(store.transientError)
         await store.stop()
     }
 
     func testStopAndRestartClearsPendingNotificationWhileFreshResponseStillSelects() async {
-        let sequence = ActionSequence()
-        let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let coordinator = RecordingAttentionCoordinator()
-        let notifications = RecordingNotificationService()
-        let focuser = RecordingWezTermFocuser(
-            sequence: sequence,
-            blockedCalls: [1],
-            checksCancellationAfterGate: false
-        )
-        let activator = RecordingActivator(sequence: sequence)
-        let store = makeStore(
-            supervisor: supervisor,
-            terminalActivator: activator,
-            wezTermFocuser: focuser,
-            attentionCoordinator: coordinator,
-            notificationService: notifications
-        )
-        await store.start()
+        let fixture = makeRestartSelectionFixture()
+        await fixture.store.start()
 
         let precedingSelection = Task {
-            await store.select(AgentMenuItem(
+            await fixture.store.select(AgentMenuItem(
                 session: defaultDescriptor, pane: pane("pre", .working)
             ))
         }
-        await focuser.waitForCalls(1)
-        await notifications.send(NotificationSelectionTarget(
+        await fixture.focuser.waitForCalls(1)
+        await fixture.notifications.send(NotificationSelectionTarget(
             sessionID: .named("work"), paneID: "p1"
         ))
-        await focuser.waitForCancellations(1)
-        await focuser.releaseBlockedCalls()
+        await fixture.focuser.waitForCancellations(1)
+        await fixture.focuser.releaseBlockedCalls()
         await precedingSelection.value
-        await supervisor.waitForRefreshRequests(1)
-        var focusRequests = await supervisor.focusRequests
+        await fixture.supervisor.waitForRefreshRequests(1)
+        var focusRequests = await fixture.supervisor.focusRequests
         XCTAssertEqual(focusRequests, [
             FocusRequest(sessionID: .default, paneID: "pre")
         ])
 
-        await store.stop()
-        await notifications.waitForCancellations(1)
-        await store.start()
-        await notifications.waitForResponseCalls(2)
+        await fixture.store.stop()
+        await fixture.notifications.waitForCancellations(1)
+        await fixture.store.start()
+        await fixture.notifications.waitForResponseCalls(2)
 
-        await supervisor.send(.discoverySnapshot([workDescriptor]))
-        await supervisor.send(.connected(workDescriptor, snapshot([
+        await fixture.supervisor.send(.discoverySnapshot([workDescriptor]))
+        await fixture.supervisor.send(.connected(workDescriptor, snapshot([
             pane("p1", .done), pane("p2", .working)
         ])))
-        await coordinator.waitForReconciliations(1)
-        await coordinator.barrier()
-        focusRequests = await supervisor.focusRequests
+        await fixture.coordinator.waitForReconciliations(1)
+        await fixture.coordinator.barrier()
+        focusRequests = await fixture.supervisor.focusRequests
         XCTAssertEqual(focusRequests, [
             FocusRequest(sessionID: .default, paneID: "pre")
         ])
-        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
+        XCTAssertTrue(fixture.activator.activatedBundleIdentifiers.isEmpty)
 
-        await notifications.send(NotificationSelectionTarget(
+        await fixture.notifications.send(NotificationSelectionTarget(
             sessionID: .named("work"), paneID: "p2"
         ))
-        await supervisor.waitForRefreshRequests(2)
+        await fixture.supervisor.waitForRefreshRequests(2)
 
-        focusRequests = await supervisor.focusRequests
-        let refreshRequests = await supervisor.refreshRequests
+        focusRequests = await fixture.supervisor.focusRequests
+        let refreshRequests = await fixture.supervisor.refreshRequests
         XCTAssertEqual(focusRequests, [
             FocusRequest(sessionID: .default, paneID: "pre"),
             FocusRequest(sessionID: .named("work"), paneID: "p2")
         ])
         XCTAssertEqual(refreshRequests, [.default, .named("work")])
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [
-            WezTermCLIConstants.bundleIdentifier
-        ])
-        XCTAssertNil(store.transientError)
-        await store.stop()
-        await notifications.waitForCancellations(2)
+        XCTAssertTrue(fixture.activator.activatedBundleIdentifiers.isEmpty)
+        XCTAssertNil(fixture.store.transientError)
+        await fixture.store.stop()
+        await fixture.notifications.waitForCancellations(2)
     }
 
     func testRapidSecondSelectionCancelsAndAwaitsFirstFinalization() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(sequence: sequence, blockedCalls: [1])
+        let focuser = RecordingGhosttyFocuser(sequence: sequence, blockedCalls: [1])
         let activator = RecordingActivator(sequence: sequence)
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: testPreferences()
         )
         let first = Task {
@@ -987,9 +961,8 @@ final class AgentStoreTests: XCTestCase {
 
         let actions = await sequence.values
         XCTAssertEqual(actions, [
-            "focus:work:first", "wezterm:work", "refresh:work",
-            "focus:Default:second", "wezterm:Default",
-            "activate:com.github.wez.wezterm", "refresh:Default"
+            "focus:work:first", "ghostty:work", "refresh:work",
+            "focus:Default:second", "ghostty:Default", "refresh:Default"
         ])
         XCTAssertNil(store.transientError)
     }
@@ -997,7 +970,7 @@ final class AgentStoreTests: XCTestCase {
     func testSupersededSuccessfulSelectionCannotActivateAndStillRefreshes() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence,
             results: [.success(()), .success(())],
             blockedCalls: [1],
@@ -1007,7 +980,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: testPreferences()
         )
         let first = Task {
@@ -1025,12 +998,11 @@ final class AgentStoreTests: XCTestCase {
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
         XCTAssertEqual(actions, [
-            "focus:work:first", "wezterm:work", "refresh:work",
-            "focus:Default:second", "wezterm:Default",
-            "activate:com.github.wez.wezterm", "refresh:Default"
+            "focus:work:first", "ghostty:work", "refresh:work",
+            "focus:Default:second", "ghostty:Default", "refresh:Default"
         ])
         XCTAssertEqual(focuser.cancellationObservedSessionIDs, [.named("work")])
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [WezTermCLIConstants.bundleIdentifier])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         XCTAssertEqual(refreshRequests, [.named("work"), .default])
         XCTAssertNil(store.transientError)
     }
@@ -1038,9 +1010,9 @@ final class AgentStoreTests: XCTestCase {
     func testSupersededFailedSelectionCannotActivateOrPublishError() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence,
-            results: [.failure(WezTermFocusError.noAttachedClient), .success(())],
+            results: [.failure(GhosttyFocusError.noAttachedClient), .success(())],
             blockedCalls: [1],
             checksCancellationAfterGate: false
         )
@@ -1048,7 +1020,7 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: testPreferences()
         )
         let first = Task {
@@ -1063,7 +1035,7 @@ final class AgentStoreTests: XCTestCase {
         await first.value
         await second.value
 
-        XCTAssertEqual(activator.activatedBundleIdentifiers, [WezTermCLIConstants.bundleIdentifier])
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         let refreshRequests = await supervisor.refreshRequests
         XCTAssertEqual(refreshRequests, [.named("work"), .default])
         XCTAssertNil(store.transientError)
@@ -1072,11 +1044,11 @@ final class AgentStoreTests: XCTestCase {
     func testStopCancelsAndAwaitsSelectionBeforeSupervisorStop() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(sequence: sequence, blockedCalls: [1])
+        let focuser = RecordingGhosttyFocuser(sequence: sequence, blockedCalls: [1])
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: RecordingActivator(sequence: sequence),
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: testPreferences()
         )
         await store.start()
@@ -1096,15 +1068,15 @@ final class AgentStoreTests: XCTestCase {
         let actions = await sequence.values
         let finalStopCount = await supervisor.stopCount
         XCTAssertEqual(actions, [
-            "focus:work:p", "wezterm:work", "refresh:work", "stop"
+            "focus:work:p", "ghostty:work", "refresh:work", "stop"
         ])
         XCTAssertEqual(finalStopCount, 1)
     }
 
-    func testRemovedSessionForgetsPendingWezTermCleanup() async {
+    func testRemovedSessionForgetsPendingGhosttyCleanup() async {
         let supervisor = FakeSessionSupervisor()
-        let focuser = RecordingWezTermFocuser()
-        let store = makeStore(supervisor: supervisor, wezTermFocuser: focuser)
+        let focuser = RecordingGhosttyFocuser()
+        let store = makeStore(supervisor: supervisor, ghosttyFocuser: focuser)
         await store.start()
         await supervisor.send(.discoverySnapshot([workDescriptor]))
         await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
@@ -1454,22 +1426,23 @@ final class AgentStoreTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let preferences = Preferences(defaults: defaults)
+        preferences.selectedTerminalBundleIdentifier = "com.apple.Terminal"
         let supervisor = FakeSessionSupervisor(focusAction: {
             await MainActor.run { preferences.selectedTerminalBundleIdentifier = "com.mitchellh.ghostty" }
         })
         let activator = RecordingActivator()
-        let focuser = RecordingWezTermFocuser()
+        let focuser = RecordingGhosttyFocuser()
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             preferences: preferences
         )
 
         await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("p", .blocked)))
 
-        XCTAssertEqual(activator.activatedBundleIdentifiers, ["com.mitchellh.ghostty"])
-        XCTAssertTrue(focuser.focusedSessionIDs.isEmpty)
+        XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
+        XCTAssertEqual(focuser.focusedSessionIDs, [.default])
     }
 
     func testHostedXCTestEnvironmentDisablesProductionSynchronization() {
@@ -1480,14 +1453,14 @@ final class AgentStoreTests: XCTestCase {
     }
 
     private func assertAdapterFailure(
-        _ error: WezTermFocusError,
+        _ error: GhosttyFocusError,
         expectedMessage: String,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
-        let focuser = RecordingWezTermFocuser(
+        let focuser = RecordingGhosttyFocuser(
             sequence: sequence,
             results: [.failure(error)]
         )
@@ -1495,24 +1468,43 @@ final class AgentStoreTests: XCTestCase {
         let store = makeStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
-            preferences: testPreferences()
+            ghosttyFocuser: focuser,
+            preferences: testPreferences(bundleIdentifier: GhosttyControlConstants.bundleIdentifier)
         )
 
         await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked)))
 
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
-        XCTAssertEqual(actions, ["focus:work:p", "wezterm:work", "refresh:work"], file: file, line: line)
+        XCTAssertEqual(actions, ["focus:work:p", "ghostty:work", "refresh:work"], file: file, line: line)
         XCTAssertEqual(refreshRequests, [.named("work")], file: file, line: line)
         XCTAssertEqual(activator.activationCount, 0, file: file, line: line)
         XCTAssertEqual(store.transientError, expectedMessage, file: file, line: line)
     }
 
+    private func makeRestartSelectionFixture() -> AgentStoreRestartSelectionFixture {
+        let sequence = ActionSequence()
+        let supervisor = FakeSessionSupervisor(sequence: sequence)
+        let coordinator = RecordingAttentionCoordinator()
+        let notifications = RecordingNotificationService()
+        let focuser = RecordingGhosttyFocuser(
+            sequence: sequence, blockedCalls: [1], checksCancellationAfterGate: false
+        )
+        let activator = RecordingActivator(sequence: sequence)
+        let store = makeStore(
+            supervisor: supervisor, terminalActivator: activator, ghosttyFocuser: focuser,
+            attentionCoordinator: coordinator, notificationService: notifications
+        )
+        return AgentStoreRestartSelectionFixture(
+            store: store, supervisor: supervisor, coordinator: coordinator,
+            notifications: notifications, focuser: focuser, activator: activator
+        )
+    }
+
     private func makeStore(
         supervisor: any SessionSupervising,
         terminalActivator: any TerminalActivating = RecordingActivator(),
-        wezTermFocuser: any WezTermSessionFocusing = RecordingWezTermFocuser(),
+        ghosttyFocuser: any GhosttySessionFocusing = RecordingGhosttyFocuser(),
         attentionCoordinator: any AttentionNotificationCoordinating = RecordingAttentionCoordinator(),
         notificationService: any NativeNotificationServing = RecordingNotificationService(),
         preferences: Preferences = testPreferences()
@@ -1520,7 +1512,7 @@ final class AgentStoreTests: XCTestCase {
         AgentStore(
             supervisor: supervisor,
             terminalActivator: terminalActivator,
-            wezTermFocuser: wezTermFocuser,
+            ghosttyFocuser: ghosttyFocuser,
             attentionCoordinator: attentionCoordinator,
             notificationService: notificationService,
             preferences: preferences
@@ -1932,11 +1924,11 @@ private final class RecordingActivator: TerminalActivating {
 }
 
 @MainActor
-private final class RecordingWezTermFocuser: WezTermSessionFocusing {
+private final class RecordingGhosttyFocuser: GhosttySessionFocusing {
     private(set) var focusedSessionIDs: [SessionID] = []
     private(set) var forgottenSessionIDs: [SessionID] = []
     private(set) var cancellationObservedSessionIDs: [SessionID] = []
-    private var results: [Result<Void, WezTermFocusError>]
+    private var results: [Result<Void, GhosttyFocusError>]
     private let sequence: ActionSequence?
     private let blockedCalls: Set<Int>
     private let checksCancellationAfterGate: Bool
@@ -1946,7 +1938,7 @@ private final class RecordingWezTermFocuser: WezTermSessionFocusing {
 
     init(
         sequence: ActionSequence? = nil,
-        results: [Result<Void, WezTermFocusError>] = [],
+        results: [Result<Void, GhosttyFocusError>] = [],
         blockedCalls: Set<Int> = [],
         checksCancellationAfterGate: Bool = true
     ) {
@@ -1959,7 +1951,7 @@ private final class RecordingWezTermFocuser: WezTermSessionFocusing {
     func focusAttachedClient(sessionID: SessionID) async throws {
         focusedSessionIDs.append(sessionID)
         let call = focusedSessionIDs.count
-        await sequence?.append("wezterm:\(sessionID.displayName)")
+        await sequence?.append("ghostty:\(sessionID.displayName)")
         await callSignal.record()
         if blockedCalls.contains(call) {
             let cancellationSignal = self.cancellationSignal
@@ -2003,8 +1995,18 @@ private let defaultDescriptor = SessionDescriptor(
 private let workDescriptor = descriptor("work")
 
 @MainActor
+private struct AgentStoreRestartSelectionFixture {
+    let store: AgentStore
+    let supervisor: FakeSessionSupervisor
+    let coordinator: RecordingAttentionCoordinator
+    let notifications: RecordingNotificationService
+    let focuser: RecordingGhosttyFocuser
+    let activator: RecordingActivator
+}
+
+@MainActor
 private func testPreferences(
-    bundleIdentifier: String = WezTermCLIConstants.bundleIdentifier
+    bundleIdentifier: String = GhosttyControlConstants.bundleIdentifier
 ) -> Preferences {
     let defaults = UserDefaults(suiteName: "dev.herdr.menubar.agent-store-tests.\(UUID().uuidString)")!
     let preferences = Preferences(defaults: defaults)

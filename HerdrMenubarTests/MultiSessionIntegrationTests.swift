@@ -225,13 +225,13 @@ final class MultiSessionIntegrationTests: XCTestCase {
             latestTargetRecorder: observedLatestTarget
         )
         let activator = IntegrationRecordingActivator()
-        let focuser = IntegrationRecordingWezTermFocuser()
+        let focuser = IntegrationRecordingGhosttyFocuser()
         let preferencesFixture = try IntegrationPreferencesFixture()
         preferencesFixture.preferences.notificationsEnabled = true
         let store = AgentStore(
             supervisor: supervisor,
             terminalActivator: activator,
-            wezTermFocuser: focuser,
+            ghosttyFocuser: focuser,
             attentionCoordinator: coordinator,
             notificationService: notifications,
             preferences: preferencesFixture.preferences
@@ -383,7 +383,12 @@ final class MultiSessionIntegrationTests: XCTestCase {
         }
         let reconnectedNamedFocus = await reconnectedNamedServer.focusedPaneIDs
         let defaultFocusAfterReconnect = await defaultServer.focusedPaneIDs
-        XCTAssertEqual(reconnectedNamedFocus, ["duplicate"])
+        let reconnectRequests = await reconnectedNamedServer.paneListRequestCount
+        XCTAssertEqual(
+            reconnectedNamedFocus, ["duplicate"],
+            "Reconnect requests=\(reconnectRequests), unavailable=\(store.unavailableSessions.map(\.id)), "
+                + "error=\(store.transientError ?? "none")"
+        )
         XCTAssertEqual(defaultFocusAfterReconnect, defaultFocusBeforeGraceShortcut)
         XCTAssertEqual(routedTargets, [
             NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
@@ -519,7 +524,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         )
         let coordinator = IntegrationObservingAttentionCoordinator(wrapping: liveCoordinator)
         let activator = await MainActor.run { IntegrationRecordingActivator() }
-        let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
+        let focuser = await MainActor.run { IntegrationRecordingGhosttyFocuser() }
         let preferencesFixture = try await MainActor.run { try IntegrationPreferencesFixture() }
         await MainActor.run {
             preferencesFixture.preferences.notificationsEnabled = true
@@ -528,7 +533,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
-                wezTermFocuser: focuser,
+                ghosttyFocuser: focuser,
                 attentionCoordinator: coordinator,
                 notificationService: notifications,
                 preferences: preferencesFixture.preferences
@@ -699,14 +704,14 @@ final class MultiSessionIntegrationTests: XCTestCase {
             discoveryInterval: .seconds(30)
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
-        let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
+        let focuser = await MainActor.run { IntegrationRecordingGhosttyFocuser() }
         let notifications = IntegrationNotificationService()
         let coordinator = IntegrationAttentionCoordinator()
         let store = await MainActor.run {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
-                wezTermFocuser: focuser,
+                ghosttyFocuser: focuser,
                 attentionCoordinator: coordinator,
                 notificationService: notifications
             )
@@ -749,7 +754,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await store.stop()
     }
 
-    func testDuplicatePaneIDsFocusOwningHerdrServerAndOwningWezTermPane() async throws {
+    func testDuplicatePaneIDsFocusOwningHerdrServerAndOwningGhosttySurface() async throws {
         let root = try makeTemporaryHerdrRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let defaultServer = try FakeHerdrServer(
@@ -770,18 +775,13 @@ final class MultiSessionIntegrationTests: XCTestCase {
             discoveryInterval: .seconds(30)
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
-        let wezTermCLI = await MainActor.run {
-            IntegrationWezTermCLI(
-                defaultServer: defaultServer,
-                namedServer: namedServer,
-                defaultPaneID: 41,
-                namedPaneID: 82
-            )
+        let ghosttyControl = await MainActor.run {
+            IntegrationGhosttyControl(defaultServer: defaultServer, namedServer: namedServer)
         }
-        let wezTermFocuser = await MainActor.run {
-            LiveWezTermFocusAdapter(
+        let ghosttyFocuser = await MainActor.run {
+            LiveGhosttyFocusAdapter(
                 supervisor: supervisor,
-                cli: wezTermCLI,
+                control: ghosttyControl,
                 markerGenerator: { "herdr-menubar-focus:integration" }
             )
         }
@@ -792,7 +792,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
-                wezTermFocuser: wezTermFocuser,
+                ghosttyFocuser: ghosttyFocuser,
                 attentionCoordinator: coordinator,
                 notificationService: notifications,
                 preferences: preferencesFixture.preferences
@@ -816,8 +816,8 @@ final class MultiSessionIntegrationTests: XCTestCase {
         let defaultInitiallyFocused = await defaultServer.focusedPaneIDs
         XCTAssertEqual(namedFocused, ["duplicate"])
         XCTAssertEqual(defaultInitiallyFocused, [])
-        let namedActivations = await MainActor.run { wezTermCLI.activatedPaneIDs }
-        XCTAssertEqual(namedActivations, [82])
+        let namedActivations = await MainActor.run { ghosttyControl.focusedTerminalIDs }
+        XCTAssertEqual(namedActivations, ["surface-work"])
         let namedTitleActions = await namedServer.windowTitleActions
         let defaultInitialTitleActions = await defaultServer.windowTitleActions
         XCTAssertEqual(namedTitleActions, [
@@ -834,14 +834,16 @@ final class MultiSessionIntegrationTests: XCTestCase {
         }
         await store.select(defaultItem)
 
-        let allActivations = await MainActor.run { wezTermCLI.activatedPaneIDs }
-        XCTAssertEqual(allActivations, [82, 41])
+        let allActivations = await MainActor.run { ghosttyControl.focusedTerminalIDs }
+        XCTAssertEqual(allActivations, ["surface-work", "surface-default"])
         let defaultFocused = await defaultServer.focusedPaneIDs
         let defaultTitleActions = await defaultServer.windowTitleActions
         XCTAssertEqual(defaultFocused, ["duplicate"])
         XCTAssertEqual(defaultTitleActions, [
             .set("herdr-menubar-focus:integration"), .clear
         ])
+        let genericActivations = await MainActor.run { activator.activationCount }
+        XCTAssertEqual(genericActivations, 0)
         await store.stop()
         await MainActor.run { preferencesFixture.remove() }
     }
@@ -871,14 +873,14 @@ final class MultiSessionIntegrationTests: XCTestCase {
             removalGracePeriod: .seconds(10)
         )
         let activator = await MainActor.run { IntegrationRecordingActivator() }
-        let focuser = await MainActor.run { IntegrationRecordingWezTermFocuser() }
+        let focuser = await MainActor.run { IntegrationRecordingGhosttyFocuser() }
         let notifications = IntegrationNotificationService()
         let coordinator = IntegrationAttentionCoordinator()
         let store = await MainActor.run {
             AgentStore(
                 supervisor: supervisor,
                 terminalActivator: activator,
-                wezTermFocuser: focuser,
+                ghosttyFocuser: focuser,
                 attentionCoordinator: coordinator,
                 notificationService: notifications
             )
@@ -1725,7 +1727,7 @@ private final class IntegrationPreferencesFixture {
         self.defaults = defaults
         defaults.removePersistentDomain(forName: suiteName)
         preferences = Preferences(defaults: defaults)
-        preferences.selectedTerminalBundleIdentifier = WezTermCLIConstants.bundleIdentifier
+        preferences.selectedTerminalBundleIdentifier = GhosttyControlConstants.bundleIdentifier
     }
 
     func remove() {
@@ -1734,7 +1736,7 @@ private final class IntegrationPreferencesFixture {
 }
 
 @MainActor
-private final class IntegrationRecordingWezTermFocuser: WezTermSessionFocusing {
+private final class IntegrationRecordingGhosttyFocuser: GhosttySessionFocusing {
     private(set) var focusedSessionIDs: [SessionID] = []
     private(set) var forgottenSessionIDs: [SessionID] = []
 
@@ -1748,48 +1750,32 @@ private final class IntegrationRecordingWezTermFocuser: WezTermSessionFocusing {
 }
 
 @MainActor
-private final class IntegrationWezTermCLI: WezTermCLIControlling {
+private final class IntegrationGhosttyControl: GhosttyControlling {
     private let defaultServer: FakeHerdrServer
     private let namedServer: FakeHerdrServer
-    private let defaultPaneID: Int
-    private let namedPaneID: Int
-    private(set) var activatedPaneIDs: [Int] = []
+    private let process = GhosttyProcessIdentity(pid: 451, launchDate: Date(timeIntervalSince1970: 100))
+    private(set) var focusedTerminalIDs: [String] = []
 
-    init(
-        defaultServer: FakeHerdrServer,
-        namedServer: FakeHerdrServer,
-        defaultPaneID: Int,
-        namedPaneID: Int
-    ) {
+    init(defaultServer: FakeHerdrServer, namedServer: FakeHerdrServer) {
         self.defaultServer = defaultServer
         self.namedServer = namedServer
-        self.defaultPaneID = defaultPaneID
-        self.namedPaneID = namedPaneID
     }
 
-    func listPanes(timeout: Duration) async -> [WezTermPane] {
-        var panes: [WezTermPane] = []
+    func prepareForFocus() -> GhosttyProcessIdentity { process }
+
+    func listTerminals(process: GhosttyProcessIdentity, timeout: Duration) async -> GhosttyTerminalSnapshot {
+        var terminals: [GhosttyTerminal] = []
         if let title = await defaultServer.currentWindowTitle {
-            panes.append(WezTermPane(
-                windowID: 1,
-                tabID: 1,
-                paneID: defaultPaneID,
-                title: title
-            ))
+            terminals.append(GhosttyTerminal(id: "surface-default", title: title))
         }
         if let title = await namedServer.currentWindowTitle {
-            panes.append(WezTermPane(
-                windowID: 1,
-                tabID: 2,
-                paneID: namedPaneID,
-                title: title
-            ))
+            terminals.append(GhosttyTerminal(id: "surface-work", title: title))
         }
-        return panes
+        return GhosttyTerminalSnapshot(process: process, terminals: terminals)
     }
 
-    func activatePane(id: Int) {
-        activatedPaneIDs.append(id)
+    func focusTerminal(id: String, process: GhosttyProcessIdentity) {
+        focusedTerminalIDs.append(id)
     }
 }
 
