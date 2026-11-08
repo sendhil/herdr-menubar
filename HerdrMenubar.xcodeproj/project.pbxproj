@@ -42,6 +42,8 @@
 		B10000000000000000000008 /* SessionDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* SessionDiscovery.swift */; };
 		B1000000000000000000000A /* SessionDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* SessionDiscoveryTests.swift */; };
 		B10000000000000000000002 /* SessionSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* SessionSupervisor.swift */; };
+		BB0000000000000000000003 /* HerdrBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000013 /* HerdrBackend.swift */; };
+		BB0000000000000000000004 /* HerdrBackendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000014 /* HerdrBackendTests.swift */; };
 		B10000000000000000000004 /* SessionSupervisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* SessionSupervisorTests.swift */; };
 		B10000000000000000000006 /* MultiSessionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* MultiSessionIntegrationTests.swift */; };
 		D20000000000000000000003 /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* NotificationModels.swift */; };
@@ -134,6 +136,8 @@
 		B10000000000000000000007 /* SessionDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDiscovery.swift; sourceTree = "<group>"; };
 		B10000000000000000000009 /* SessionDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDiscoveryTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* SessionSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSupervisor.swift; sourceTree = "<group>"; };
+		BB0000000000000000000013 /* HerdrBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrBackend.swift; sourceTree = "<group>"; };
+		BB0000000000000000000014 /* HerdrBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrBackendTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* SessionSupervisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSupervisorTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* MultiSessionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiSessionIntegrationTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000002 /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModels.swift; sourceTree = "<group>"; };
@@ -234,6 +238,7 @@
 				F00000000000000000000022 /* Protocol16HerdrClientTests.swift */,
 				12A000000000000000000019 /* AgentStoreTests.swift */,
 				BB0000000000000000000012 /* AgentBackendTypesTests.swift */,
+				BB0000000000000000000014 /* HerdrBackendTests.swift */,
 				12A000000000000000000034 /* MenuBarIconTests.swift */,
 				F90000000000000000000001 /* SketchyBarIntegrationTests.swift */,
 				12A000000000000000000026 /* PreferencesTests.swift */,
@@ -285,6 +290,7 @@
 				12A000000000000000000013 /* JSONLineFramer.swift */,
 				B10000000000000000000007 /* SessionDiscovery.swift */,
 				B10000000000000000000001 /* SessionSupervisor.swift */,
+				BB0000000000000000000013 /* HerdrBackend.swift */,
 				12A000000000000000000015 /* HerdrConnection.swift */,
 				12A000000000000000000017 /* HerdrClient.swift */,
 			);
@@ -487,6 +493,7 @@
 				12A000000000000000000003 /* JSONLineFramer.swift in Sources */,
 				B10000000000000000000008 /* SessionDiscovery.swift in Sources */,
 				B10000000000000000000002 /* SessionSupervisor.swift in Sources */,
+				BB0000000000000000000003 /* HerdrBackend.swift in Sources */,
 				12A000000000000000000005 /* HerdrConnection.swift in Sources */,
 				12A000000000000000000007 /* HerdrClient.swift in Sources */,
 				12A00000000000000000000A /* AgentStore.swift in Sources */,
@@ -537,6 +544,7 @@
 				F00000000000000000000012 /* Protocol16HerdrClientTests.swift in Sources */,
 				12A000000000000000000009 /* AgentStoreTests.swift in Sources */,
 				BB0000000000000000000002 /* AgentBackendTypesTests.swift in Sources */,
+				BB0000000000000000000004 /* HerdrBackendTests.swift in Sources */,
 				12A000000000000000000033 /* MenuBarIconTests.swift in Sources */,
 				F90000000000000000000002 /* SketchyBarIntegrationTests.swift in Sources */,
 				12A000000000000000000010 /* PreferencesTests.swift in Sources */,
