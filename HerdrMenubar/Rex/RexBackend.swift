@@ -61,10 +61,14 @@ struct LiveRexAppControl: RexAppControlling {
         await MainActor.run { Self.runningApp() != nil }
     }
 
+    /// Brings a running Rex.app forward. Never launches it (launching is a non-goal): when it is
+    /// not running this does nothing.
     func activate() async {
         await MainActor.run {
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleIdentifier) else {
-                _ = Self.runningApp()?.activate()
+            guard let running = Self.runningApp() else { return }
+            guard let url = running.bundleURL
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleIdentifier) else {
+                _ = running.activate()
                 return
             }
             let configuration = NSWorkspace.OpenConfiguration()
