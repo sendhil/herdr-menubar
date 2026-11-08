@@ -5,8 +5,7 @@ import XCTest
 
 final class MultiSessionIntegrationTests: XCTestCase {
     func testShortcutSignalWaitsTimeOutWhenExpectedSignalsNeverArrive() async {
-        let target = NotificationSelectionTarget(
-            sessionID: .named("missing"),
+        let target = SelectionTarget.herdr(.named("missing"),
             paneID: "missing"
         )
         let observedLatestTarget = IntegrationObservedLatestTargetStore(
@@ -52,8 +51,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
     }
 
     func testShortcutFixtureFinishReleasesPausedDeliveryAndPendingSignalWaits() async throws {
-        let target = NotificationSelectionTarget(
-            sessionID: .named("never-recorded"),
+        let target = SelectionTarget.herdr(.named("never-recorded"),
             paneID: "never-recorded"
         )
         let observedLatestTarget = IntegrationObservedLatestTargetStore(
@@ -114,7 +112,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
             latestTargetRecorder: latestTargetStore
         )
         let registrar = IntegrationShortcutRegistrar()
-        var routedTargets: [NotificationSelectionTarget] = []
+        var routedTargets: [SelectionTarget] = []
         var routedExpectation: XCTestExpectation?
         let shortcutController = GlobalShortcutController(
             registrar: registrar,
@@ -135,8 +133,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
             id: .named("work"),
             socketURL: URL(fileURLWithPath: "/tmp/integration-accepted-target.sock")
         )
-        let expectedTarget = NotificationSelectionTarget(
-            sessionID: session.id,
+        let expectedTarget = SelectionTarget.herdr(session.id,
             paneID: "duplicate"
         )
         let policy = NotificationDeliveryPolicy(
@@ -239,7 +236,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         let registrar = IntegrationShortcutRegistrar()
         let statusDriver = IntegrationStatusItemDriver()
         let statusController = StatusItemController(driver: statusDriver) { _ in }
-        var routedTargets: [NotificationSelectionTarget] = []
+        var routedTargets: [SelectionTarget] = []
         var routeExpectations: [XCTestExpectation] = []
         let shortcutController = GlobalShortcutController(
             registrar: registrar,
@@ -274,8 +271,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await defaultServer.setPanes([integrationPane("duplicate", .blocked)])
         await defaultServer.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
         await eventually { await notifications.deliveries.count == 1 }
-        let defaultTarget = NotificationSelectionTarget(
-            sessionID: .default,
+        let defaultTarget = SelectionTarget.herdr(.default,
             paneID: "duplicate"
         )
         try await observedLatestTarget.waitForLatest(defaultTarget, timeout: .seconds(1))
@@ -284,8 +280,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await namedServer?.setPanes([integrationPane("duplicate", .blocked)])
         await namedServer?.pushAgentStatusEvent(paneID: "duplicate", status: .blocked)
         await eventually { await notifications.deliveries.count == 2 }
-        let namedTarget = NotificationSelectionTarget(
-            sessionID: .named("work"),
+        let namedTarget = SelectionTarget.herdr(.named("work"),
             paneID: "duplicate"
         )
         try await observedLatestTarget.waitForLatest(namedTarget, timeout: .seconds(1))
@@ -391,10 +386,10 @@ final class MultiSessionIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(defaultFocusAfterReconnect, defaultFocusBeforeGraceShortcut)
         XCTAssertEqual(routedTargets, [
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
-            NotificationSelectionTarget(sessionID: .default, paneID: "duplicate"),
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate")
+            SelectionTarget.herdr(.named("work"), paneID: "duplicate"),
+            SelectionTarget.herdr(.named("work"), paneID: "duplicate"),
+            SelectionTarget.herdr(.default, paneID: "duplicate"),
+            SelectionTarget.herdr(.named("work"), paneID: "duplicate")
         ])
         registrar.send(.keyUp, for: .toggleMenu)
         await eventually { await MainActor.run { statusDriver.performClickCount == 1 } }
@@ -561,7 +556,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await eventually { await notifications.deliveries.count == 1 }
         deliveries = await notifications.deliveries
         XCTAssertEqual(deliveries[0].event, AttentionNotificationEvent(
-            target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
+            target: SelectionTarget.herdr(.named("work"), paneID: "duplicate"),
             sessionName: "work",
             visibleLabel: "pane-duplicate · Claude",
             status: .blocked
@@ -574,7 +569,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         deliveries = await notifications.deliveries
         XCTAssertEqual(deliveries.map(\.event.target.sessionID), [.named("work"), .default])
         XCTAssertEqual(deliveries[1].event, AttentionNotificationEvent(
-            target: NotificationSelectionTarget(sessionID: .default, paneID: "duplicate"),
+            target: SelectionTarget.herdr(.default, paneID: "duplicate"),
             sessionName: "Default",
             visibleLabel: "pane-duplicate · Claude",
             status: .done
@@ -586,15 +581,14 @@ final class MultiSessionIntegrationTests: XCTestCase {
         await eventually { await notifications.deliveries.count == 3 }
         deliveries = await notifications.deliveries
         XCTAssertEqual(deliveries[2].event, AttentionNotificationEvent(
-            target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "duplicate"),
+            target: SelectionTarget.herdr(.named("work"), paneID: "duplicate"),
             sessionName: "work",
             visibleLabel: "pane-duplicate · Claude",
             status: .done
         ))
         XCTAssertEqual(deliveries.map(\.sound), [false, false, false])
 
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"),
+        await notifications.send(SelectionTarget.herdr(.named("work"),
             paneID: "duplicate"
         ))
         await eventually { await initialNamedServer.focusedPaneIDs == ["duplicate"] }
@@ -1063,7 +1057,7 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
 
     private struct TargetWaiter {
         let id: UUID
-        let target: NotificationSelectionTarget
+        let target: SelectionTarget
         let continuation: CheckedContinuation<Void, any Error>
     }
 
@@ -1075,7 +1069,7 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
     }
 
     private let wrapped: any LatestNotificationTargetRecording
-    private var observedLatestTarget: NotificationSelectionTarget?
+    private var observedLatestTarget: SelectionTarget?
     private var lookupCount = 0
     private var lookupWaiters: [LookupWaiter] = []
     private var targetWaiters: [TargetWaiter] = []
@@ -1086,7 +1080,7 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
         self.wrapped = wrapped
     }
 
-    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) async {
+    func record(_ target: SelectionTarget, ordinal: UInt64) async {
         await wrapped.record(target, ordinal: ordinal)
         observedLatestTarget = await wrapped.latest()
         let ready = targetWaiters.filter { $0.target == observedLatestTarget }
@@ -1094,7 +1088,7 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
         for waiter in ready { waiter.continuation.resume() }
     }
 
-    func latest() async -> NotificationSelectionTarget? {
+    func latest() async -> SelectionTarget? {
         let target = await wrapped.latest()
         lookupCount += 1
         let ready = lookupWaiters.filter { $0.count <= lookupCount }
@@ -1125,7 +1119,7 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
     }
 
     func waitForLatest(
-        _ target: NotificationSelectionTarget,
+        _ target: SelectionTarget,
         timeout: Duration
     ) async throws {
         let store = self
@@ -1185,7 +1179,7 @@ private actor IntegrationObservedLatestTargetStore: LatestNotificationTargetReco
         }
     }
 
-    private func awaitLatest(_ target: NotificationSelectionTarget) async throws {
+    private func awaitLatest(_ target: SelectionTarget) async throws {
         let waiterID = UUID()
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -1337,7 +1331,7 @@ private final class IntegrationStatusItemDriver: StatusItemDriving {
 
 private actor IntegrationNotificationService: NativeNotificationServing {
     private(set) var deliveries: [IntegrationNotificationDelivery] = []
-    private var responseContinuation: AsyncStream<NotificationSelectionTarget>.Continuation?
+    private var responseContinuation: AsyncStream<SelectionTarget>.Continuation?
     private let deliveryResult: NotificationDeliveryResult
     private let deliveryReturnGate: IntegrationNotificationDeliveryGate?
 
@@ -1350,7 +1344,7 @@ private actor IntegrationNotificationService: NativeNotificationServing {
     }
 
     func responses() async -> NotificationResponseSubscription {
-        let (stream, continuation) = AsyncStream<NotificationSelectionTarget>.makeStream()
+        let (stream, continuation) = AsyncStream<SelectionTarget>.makeStream()
         responseContinuation?.finish()
         responseContinuation = continuation
         return NotificationResponseSubscription(
@@ -1361,7 +1355,7 @@ private actor IntegrationNotificationService: NativeNotificationServing {
         )
     }
 
-    func send(_ target: NotificationSelectionTarget) {
+    func send(_ target: SelectionTarget) {
         responseContinuation?.yield(target)
     }
 

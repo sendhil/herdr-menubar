@@ -32,7 +32,7 @@ struct ApplicationRuntimeDependencies {
     let startStore: () async -> Void
     let stopStore: () async -> Void
     let retryStore: () async -> Void
-    let selectTarget: (NotificationSelectionTarget) -> Void
+    let selectTarget: (SelectionTarget) -> Void
     let selectTerminal: (String) -> Void
     let sealAndResetLatestTarget: () async -> Void
     let makePresentation: () -> StatusItemPresentation
@@ -294,7 +294,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         dependencies.toggleStatusItem()
     }
 
-    func receiveFocusLatestShortcut(_ target: NotificationSelectionTarget) {
+    func receiveFocusLatestShortcut(_ target: SelectionTarget) {
         guard let token = readyGeneration, isReady(token) else { return }
         dependencies.selectTarget(target)
     }
@@ -421,7 +421,7 @@ private final class ApplicationRuntimeCallbackRelay {
         runtime?.receiveToggleMenuShortcut()
     }
 
-    func select(_ target: NotificationSelectionTarget) {
+    func select(_ target: SelectionTarget) {
         runtime?.receiveFocusLatestShortcut(target)
     }
 }

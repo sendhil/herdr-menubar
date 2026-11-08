@@ -160,7 +160,7 @@ final class StatusItemControllerTests: XCTestCase {
         let driver = FakeStatusItemDriver()
         var received: [StatusMenuAction] = []
         let controller = StatusItemController(driver: driver) { received.append($0) }
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "pane-2")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "pane-2")
         controller.start()
         controller.apply(presentation(1, node: .agent(
             title: "Renamable", subtitle: "blocked", symbol: "triangle", quieter: false,
@@ -209,7 +209,7 @@ final class StatusItemControllerTests: XCTestCase {
     }
 
     func testNativeRendererMapsEveryNodeAndDispatchesRepresentedActionTokens() throws {
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "p2")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "p2")
         let nodes: [StatusMenuNode] = [
             .heading("HEADING"),
             .agent(

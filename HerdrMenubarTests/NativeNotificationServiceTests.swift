@@ -104,7 +104,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let backend = FakeNotificationCenterBackend(settings: .authorized)
         let service = NativeNotificationService(backend: backend)
         let event = AttentionNotificationEvent(
-            target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "pane-1"),
+            target: SelectionTarget.herdr(.named("work"), paneID: "pane-1"),
             sessionName: "work",
             visibleLabel: "Herdr Menubar · server",
             status: .done
@@ -120,10 +120,13 @@ final class NativeNotificationServiceTests: XCTestCase {
         XCTAssertEqual(requests[0].content.body, "Herdr Menubar · server — work")
         XCTAssertNil(requests[0].content.sound)
         XCTAssertNil(requests[0].trigger)
-        XCTAssertEqual(requests[0].content.userInfo["version"] as? Int, 1)
+        XCTAssertEqual(requests[0].content.userInfo["version"] as? Int, 2)
+        XCTAssertEqual(requests[0].content.userInfo["backend"] as? String, "herdr")
+        XCTAssertEqual(requests[0].content.userInfo["session_display_name"] as? String, "work")
         XCTAssertEqual(requests[0].content.userInfo["session_kind"] as? String, "named")
         XCTAssertEqual(requests[0].content.userInfo["session_name"] as? String, "work")
         XCTAssertEqual(requests[0].content.userInfo["pane_id"] as? String, "pane-1")
+        XCTAssertNil(requests[0].content.userInfo["rex_session_id"])
     }
 
     func testBlockedDeliveryUsesBlockedContent() async throws {
@@ -184,21 +187,69 @@ final class NativeNotificationServiceTests: XCTestCase {
         }
     }
 
-    func testDefaultAndNamedPayloadsRoundTripExactly() {
+    func testDefaultNamedAndNamedDefaultPayloadsRoundTripAsVersionTwo() {
         let targets = [
-            NotificationSelectionTarget(sessionID: .default, paneID: "default-pane"),
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "named-pane")
+            SelectionTarget.herdr(.default, paneID: "default-pane"),
+            SelectionTarget.herdr(.named("work"), paneID: "named-pane"),
+            SelectionTarget.herdr(.named("default"), paneID: "named-default-pane")
         ]
 
         for target in targets {
             let payload = NativeNotificationService.payload(for: target)
-            XCTAssertEqual(payload["version"] as? Int, 1)
-            XCTAssertEqual(NativeNotificationService.decodeTarget(payload), target)
+            XCTAssertEqual(payload["version"] as? Int, 2)
+            let decoded = NativeNotificationService.decodeTarget(payload)
+            XCTAssertEqual(decoded, target)
+            XCTAssertEqual(decoded?.target, target.target)
+            XCTAssertEqual(decoded?.sessionDisplayName, target.sessionDisplayName)
         }
 
         let defaultPayload = NativeNotificationService.payload(for: targets[0])
         XCTAssertEqual(defaultPayload["session_kind"] as? String, "default")
         XCTAssertNil(defaultPayload["session_name"])
+        let namedDefault = NativeNotificationService.decodeTarget(
+            NativeNotificationService.payload(for: targets[2])
+        )
+        XCTAssertNotEqual(namedDefault, SelectionTarget.herdr(.default, paneID: "named-default-pane"))
+    }
+
+    func testVersionOnePayloadDecodesThroughHerdrPath() {
+        let named: [AnyHashable: Any] = [
+            "version": 1, "session_kind": "named", "session_name": "work", "pane_id": "p1"
+        ]
+        let decoded = NativeNotificationService.decodeTarget(named)
+        XCTAssertEqual(decoded, SelectionTarget.herdr(.named("work"), paneID: "p1"))
+        XCTAssertEqual(decoded?.sessionDisplayName, "work")
+        XCTAssertEqual(NativeNotificationService.decodeTarget(validPayload(paneID: "p2"))?.sessionDisplayName, "Default")
+    }
+
+    func testVersionTwoRexPayloadDecodesToRexTarget() {
+        let payload: [AnyHashable: Any] = [
+            "version": 2, "backend": "rex", "session_display_name": "fix-playback",
+            "pane_id": "block-7", "rex_session_id": "sess-1"
+        ]
+        let decoded = NativeNotificationService.decodeTarget(payload)
+        XCTAssertEqual(decoded?.target, AgentTarget(
+            session: AgentSessionKey(backend: .rex, rawID: "sess-1"), paneID: "block-7"
+        ))
+        XCTAssertEqual(decoded?.sessionDisplayName, "fix-playback")
+        XCTAssertEqual(
+            NativeNotificationService.payload(for: decoded!)["rex_session_id"] as? String, "sess-1"
+        )
+    }
+
+    func testVersionTwoPayloadsWithUnknownBackendOrMissingIDsAreRejected() {
+        XCTAssertNil(NativeNotificationService.decodeTarget([
+            "version": 2, "backend": "wezterm", "pane_id": "p", "session_kind": "default"
+        ]))
+        XCTAssertNil(NativeNotificationService.decodeTarget([
+            "version": 2, "backend": "rex", "pane_id": "p"
+        ]))
+        XCTAssertNil(NativeNotificationService.decodeTarget([
+            "version": 2, "backend": "herdr", "pane_id": "p"
+        ]))
+        XCTAssertNil(NativeNotificationService.decodeTarget([
+            "version": 2, "session_kind": "default", "pane_id": "p"
+        ]))
     }
 
     func testResponseProducedBeforeSubscriptionIsBuffered() async {
@@ -216,7 +267,7 @@ final class NativeNotificationServiceTests: XCTestCase {
 
         XCTAssertEqual(
             target,
-            NotificationSelectionTarget(sessionID: .default, paneID: "early")
+            SelectionTarget.herdr(.default, paneID: "early")
         )
     }
 
@@ -344,7 +395,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let subscription = await service.responses()
         let demandFinished = expectation(description: "waiting demand finished exactly once")
         demandFinished.assertForOverFulfill = true
-        let demand = Task { () -> NotificationSelectionTarget? in
+        let demand = Task { () -> SelectionTarget? in
             var iterator = subscription.makeAsyncIterator()
             let target = await iterator.next()
             demandFinished.fulfill()
@@ -371,7 +422,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         XCTAssertEqual(service.responseSubscriberCount, 0)
 
         let demandFinished = expectation(description: "cancelled subscription is finished")
-        let demand = Task { () -> NotificationSelectionTarget? in
+        let demand = Task { () -> SelectionTarget? in
             var iterator = subscription.makeAsyncIterator()
             let target = await iterator.next()
             demandFinished.fulfill()
@@ -386,7 +437,7 @@ final class NativeNotificationServiceTests: XCTestCase {
     func testConsumerDeferCancelsSubscriptionAfterReturningBetweenElements() async {
         let backend = FakeNotificationCenterBackend(settings: .authorized)
         let service = NativeNotificationService(backend: backend)
-        let consumer = Task { () -> NotificationSelectionTarget? in
+        let consumer = Task { () -> SelectionTarget? in
             let subscription = await service.responses()
             defer { subscription.cancel() }
             var iterator = subscription.makeAsyncIterator()
@@ -410,7 +461,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let subscription = await service.responses()
         let demandFinished = expectation(description: "racing demand finished exactly once")
         demandFinished.assertForOverFulfill = true
-        let demand = Task { () -> NotificationSelectionTarget? in
+        let demand = Task { () -> SelectionTarget? in
             var iterator = subscription.makeAsyncIterator()
             let target = await iterator.next()
             demandFinished.fulfill()
@@ -439,7 +490,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let subscription = await service!.responses()
         let demandFinished = expectation(description: "finish race demand finished exactly once")
         demandFinished.assertForOverFulfill = true
-        let demand = Task { () -> NotificationSelectionTarget? in
+        let demand = Task { () -> SelectionTarget? in
             var iterator = subscription.makeAsyncIterator()
             let target = await iterator.next()
             demandFinished.fulfill()
@@ -470,7 +521,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         demandsFinished.expectedFulfillmentCount = 2
         demandsFinished.assertForOverFulfill = true
 
-        let firstDemand = Task { () -> NotificationSelectionTarget? in
+        let firstDemand = Task { () -> SelectionTarget? in
             var iterator = subscription.makeAsyncIterator()
             firstStarted.fulfill()
             let target = await iterator.next()
@@ -480,7 +531,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         await fulfillment(of: [firstStarted], timeout: 1)
         await assertSubscriberCount(1, service: service)
 
-        let secondDemand = Task { () -> NotificationSelectionTarget? in
+        let secondDemand = Task { () -> SelectionTarget? in
             var iterator = subscription.makeAsyncIterator()
             secondStarted.fulfill()
             let target = await iterator.next()
@@ -520,7 +571,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let oldSubscription = await service.responses()
         defer { oldSubscription.cancel() }
         let oldSubscriberStarted = expectation(description: "old subscriber started")
-        let oldSubscriber = Task { () -> NotificationSelectionTarget? in
+        let oldSubscriber = Task { () -> SelectionTarget? in
             var iterator = oldSubscription.makeAsyncIterator()
             oldSubscriberStarted.fulfill()
             return await iterator.next()
@@ -542,7 +593,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let newResult = await newIterator.next()
         XCTAssertEqual(
             newResult,
-            NotificationSelectionTarget(sessionID: .default, paneID: "after-resubscribe")
+            SelectionTarget.herdr(.default, paneID: "after-resubscribe")
         )
     }
 
@@ -557,14 +608,14 @@ final class NativeNotificationServiceTests: XCTestCase {
         subscribersStarted.expectedFulfillmentCount = 2
         let subscribersReceived = expectation(description: "subscribers received")
         subscribersReceived.expectedFulfillmentCount = 2
-        let firstSubscriber = Task { () -> NotificationSelectionTarget? in
+        let firstSubscriber = Task { () -> SelectionTarget? in
             var iterator = firstSubscription.makeAsyncIterator()
             subscribersStarted.fulfill()
             let target = await iterator.next()
             subscribersReceived.fulfill()
             return target
         }
-        let secondSubscriber = Task { () -> NotificationSelectionTarget? in
+        let secondSubscriber = Task { () -> SelectionTarget? in
             var iterator = secondSubscription.makeAsyncIterator()
             subscribersStarted.fulfill()
             let target = await iterator.next()
@@ -583,7 +634,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         secondSubscriber.cancel()
         let firstResult = await firstSubscriber.value
         let secondResult = await secondSubscriber.value
-        let expected = NotificationSelectionTarget(sessionID: .default, paneID: "broadcast")
+        let expected = SelectionTarget.herdr(.default, paneID: "broadcast")
         XCTAssertEqual(firstResult, expected)
         XCTAssertEqual(secondResult, expected)
     }
@@ -597,12 +648,12 @@ final class NativeNotificationServiceTests: XCTestCase {
         defer { retainedSubscription.cancel() }
         let subscribersStarted = expectation(description: "subscribers started")
         subscribersStarted.expectedFulfillmentCount = 2
-        let cancelledSubscriber = Task { () -> NotificationSelectionTarget? in
+        let cancelledSubscriber = Task { () -> SelectionTarget? in
             var iterator = cancelledSubscription.makeAsyncIterator()
             subscribersStarted.fulfill()
             return await iterator.next()
         }
-        let retainedSubscriber = Task { () -> NotificationSelectionTarget? in
+        let retainedSubscriber = Task { () -> SelectionTarget? in
             var iterator = retainedSubscription.makeAsyncIterator()
             subscribersStarted.fulfill()
             return await iterator.next()
@@ -621,7 +672,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let retainedResult = await retainedSubscriber.value
         XCTAssertEqual(
             retainedResult,
-            NotificationSelectionTarget(sessionID: .default, paneID: "retained")
+            SelectionTarget.herdr(.default, paneID: "retained")
         )
     }
 
@@ -641,11 +692,11 @@ final class NativeNotificationServiceTests: XCTestCase {
         let bufferedResult = await firstIterator.next()
         XCTAssertEqual(
             bufferedResult,
-            NotificationSelectionTarget(sessionID: .default, paneID: "buffered")
+            SelectionTarget.herdr(.default, paneID: "buffered")
         )
 
         let secondSubscriberStarted = expectation(description: "second subscriber started")
-        let secondSubscriber = Task { () -> NotificationSelectionTarget? in
+        let secondSubscriber = Task { () -> SelectionTarget? in
             var iterator = secondSubscription.makeAsyncIterator()
             secondSubscriberStarted.fulfill()
             return await iterator.next()
@@ -659,7 +710,7 @@ final class NativeNotificationServiceTests: XCTestCase {
         let secondResult = await secondSubscriber.value
         XCTAssertEqual(
             secondResult,
-            NotificationSelectionTarget(sessionID: .default, paneID: "live")
+            SelectionTarget.herdr(.default, paneID: "live")
         )
     }
 
@@ -672,12 +723,12 @@ final class NativeNotificationServiceTests: XCTestCase {
         defer { secondStream?.cancel() }
         let subscribersStarted = expectation(description: "subscribers started")
         subscribersStarted.expectedFulfillmentCount = 2
-        let firstSubscriber = Task { () -> NotificationSelectionTarget? in
+        let firstSubscriber = Task { () -> SelectionTarget? in
             var iterator = firstStream!.makeAsyncIterator()
             subscribersStarted.fulfill()
             return await iterator.next()
         }
-        let secondSubscriber = Task { () -> NotificationSelectionTarget? in
+        let secondSubscriber = Task { () -> SelectionTarget? in
             var iterator = secondStream!.makeAsyncIterator()
             subscribersStarted.fulfill()
             return await iterator.next()
@@ -734,25 +785,33 @@ final class NativeNotificationServiceTests: XCTestCase {
         let firstTarget = await iterator.next()
         XCTAssertEqual(
             firstTarget,
-            NotificationSelectionTarget(sessionID: .default, paneID: "accepted")
+            SelectionTarget.herdr(.default, paneID: "accepted")
         )
     }
 
-    func testPayloadVersionAcceptsOnlyIntegerOne() {
+    func testPayloadVersionAcceptsOnlyIntegerOneAndTwo() {
         let acceptedVersions: [Any] = [1, NSNumber(value: 1)]
         for version in acceptedVersions {
             var payload = validPayload(paneID: "accepted-integer")
             payload["version"] = version
             XCTAssertEqual(
                 NativeNotificationService.decodeTarget(payload),
-                NotificationSelectionTarget(sessionID: .default, paneID: "accepted-integer")
+                SelectionTarget.herdr(.default, paneID: "accepted-integer")
             )
         }
+        var versionTwo = validPayload(paneID: "accepted-two")
+        versionTwo["version"] = NSNumber(value: 2)
+        versionTwo["backend"] = "herdr"
+        XCTAssertEqual(
+            NativeNotificationService.decodeTarget(versionTwo),
+            SelectionTarget.herdr(.default, paneID: "accepted-two")
+        )
 
-        let rejectedVersions: [Any] = [NSNumber(value: true), NSNumber(value: 1.0)]
+        let rejectedVersions: [Any] = [NSNumber(value: true), NSNumber(value: 1.0), NSNumber(value: 2.0), 3, 0]
         for version in rejectedVersions {
             var payload = validPayload(paneID: "rejected-number")
             payload["version"] = version
+            payload["backend"] = "herdr"
             XCTAssertNil(NativeNotificationService.decodeTarget(payload))
         }
     }
@@ -846,7 +905,7 @@ private final class LockedNotificationServiceOwner: @unchecked Sendable {
 
 private func blockedEvent() -> AttentionNotificationEvent {
     AttentionNotificationEvent(
-        target: NotificationSelectionTarget(sessionID: .default, paneID: "pane-blocked"),
+        target: SelectionTarget.herdr(.default, paneID: "pane-blocked"),
         sessionName: "Default",
         visibleLabel: "Herdr Menubar · worker",
         status: .blocked

@@ -92,18 +92,18 @@ final class StatusMenuPresentationTests: XCTestCase {
             .agent(
                 title: "Alpha Blocked · Claude", subtitle: "blocked · Claude",
                 symbol: "exclamationmark.triangle.fill", quieter: false,
-                target: NotificationSelectionTarget(sessionID: .default, paneID: "same")
+                target: SelectionTarget.herdr(.default, paneID: "same")
             ),
             .agent(
                 title: "Zulu Done · Claude", subtitle: "done · Claude",
                 symbol: "checkmark.circle.fill", quieter: false,
-                target: NotificationSelectionTarget(sessionID: .default, paneID: "default-done")
+                target: SelectionTarget.herdr(.default, paneID: "default-done")
             ),
             .heading("WORK"),
             .agent(
                 title: "Work Done · Claude", subtitle: "done · Claude",
                 symbol: "checkmark.circle.fill", quieter: false,
-                target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "same")
+                target: SelectionTarget.herdr(.named("work"), paneID: "same")
             ),
             .separator,
             .heading("WORKING"),
@@ -111,16 +111,14 @@ final class StatusMenuPresentationTests: XCTestCase {
             .agent(
                 title: "Default Active · Claude", subtitle: "working · Claude",
                 symbol: "ellipsis.circle", quieter: true,
-                target: NotificationSelectionTarget(
-                    sessionID: .default, paneID: "default-active"
+                target: SelectionTarget.herdr(.default, paneID: "default-active"
                 )
             ),
             .heading("WORK"),
             .agent(
                 title: "Work Active · Claude", subtitle: "working · Claude",
                 symbol: "ellipsis.circle", quieter: true,
-                target: NotificationSelectionTarget(
-                    sessionID: .named("work"), paneID: "work-active"
+                target: SelectionTarget.herdr(.named("work"), paneID: "work-active"
                 )
             ),
             .separator
@@ -363,7 +361,7 @@ final class StatusMenuPresentationTests: XCTestCase {
 }
 
 private extension StatusMenuNode {
-    var agentValue: (title: String, symbol: String, target: NotificationSelectionTarget)? {
+    var agentValue: (title: String, symbol: String, target: SelectionTarget)? {
         guard case .agent(let title, _, let symbol, _, let target) = self else { return nil }
         return (title, symbol, target)
     }
@@ -434,7 +432,7 @@ private final class PresentationFixture {
         }
     }
 
-    func agentNodes() -> [(title: String, symbol: String, target: NotificationSelectionTarget)] {
+    func agentNodes() -> [(title: String, symbol: String, target: SelectionTarget)] {
         presentation().menu.compactMap(\.agentValue)
     }
 

@@ -121,7 +121,7 @@ final class ApplicationRuntimeTests: XCTestCase {
         let harness = RuntimeHarness()
         harness.blockNotificationRefresh = true
         let runtime = ApplicationRuntime(dependencies: harness.dependencies())
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "pane-2")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "pane-2")
         let activationFinished = RuntimeCancellableSignal()
         let prematureRefresh = RuntimeCancellableSignal()
         harness.onNotificationRefresh = { count in
@@ -175,7 +175,7 @@ final class ApplicationRuntimeTests: XCTestCase {
         let runtime = ApplicationRuntime(dependencies: harness.dependencies())
         await runtime.start()
         harness.events.removeAll()
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "pane-2")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "pane-2")
 
         runtime.perform(.select(target))
         runtime.perform(.selectTerminal("com.github.wez.wezterm"))
@@ -327,7 +327,7 @@ extension ApplicationRuntimeTests {
         harness.presentation.count = 9
         runtime.receiveToggleMenuShortcut()
         runtime.receiveFocusLatestShortcut(
-            NotificationSelectionTarget(sessionID: .default, paneID: "late")
+            SelectionTarget.herdr(.default, paneID: "late")
         )
         runtime.perform(.retryUnavailable)
 
@@ -497,7 +497,7 @@ private final class RuntimeHarness {
     let presentation = RuntimePresentationState()
     var events: [String] = []
     var appliedCounts: [Int] = []
-    var selectedTargets: [NotificationSelectionTarget] = []
+    var selectedTargets: [SelectionTarget] = []
     var statusStartCount = 0
     var shortcutStartCount = 0
     var shortcutStopCount = 0

@@ -106,7 +106,7 @@ final class AgentStore {
     private var eventTask: Task<Void, Never>?
     private var notificationResponseTask: Task<Void, Never>?
     private var notificationResponseSubscription: NotificationResponseSubscription?
-    private var pendingNotificationTarget: NotificationSelectionTarget?
+    private var pendingNotificationTarget: SelectionTarget?
     private var eventGeneration = UUID()
     private var startTask: Task<Void, Never>?
     private var startToken: UUID?
@@ -278,7 +278,7 @@ final class AgentStore {
         ))?.value
     }
 
-    func select(_ target: NotificationSelectionTarget) {
+    func select(_ target: SelectionTarget) {
         guard isRunning else { return }
         receiveNotificationTarget(target, generation: eventGeneration)
     }
@@ -404,7 +404,7 @@ private extension AgentStore {
                 policy: notificationPolicy
             )
             if let pendingNotificationTarget,
-               pendingNotificationTarget.sessionID == descriptor.id {
+               pendingNotificationTarget.target.session == AgentSessionKey(herdr: descriptor.id) {
                 receiveNotificationTarget(pendingNotificationTarget, generation: generation)
             }
         case .snapshot(let id, let snapshot):
@@ -427,7 +427,7 @@ private extension AgentStore {
             await attentionCoordinator.unavailable(sessionID: id)
         case .removed(let id):
             let removedState = sessions.removeValue(forKey: id)
-            if pendingNotificationTarget?.sessionID == id {
+            if pendingNotificationTarget?.target.session == AgentSessionKey(herdr: id) {
                 pendingNotificationTarget = nil
                 transientError = "\(id.displayName) is unavailable"
             }
@@ -446,15 +446,19 @@ private extension AgentStore {
     }
 
     func receiveNotificationTarget(
-        _ target: NotificationSelectionTarget,
+        _ target: SelectionTarget,
         generation: UUID
     ) {
         guard isRunning, eventGeneration == generation else { return }
         supersedeSelection()
-        guard let state = sessions[target.sessionID] else {
+        guard let sessionID = target.target.session.herdrSessionID else {
+            pendingNotificationTarget = nil
+            return
+        }
+        guard let state = sessions[sessionID] else {
             if hasCompletedDiscovery {
                 pendingNotificationTarget = nil
-                transientError = "\(target.sessionID.displayName) is unavailable"
+                transientError = "\(target.sessionDisplayName) is unavailable"
             } else {
                 pendingNotificationTarget = target
             }
@@ -466,8 +470,8 @@ private extension AgentStore {
         }
         pendingNotificationTarget = nil
         startSelection(AgentSelectionTarget(
-            sessionID: target.sessionID,
-            paneID: target.paneID,
+            sessionID: sessionID,
+            paneID: target.target.paneID,
             sessionName: state.descriptor.displayName
         ))
     }
@@ -480,12 +484,13 @@ private extension AgentStore {
 
     func discardAbsentPendingTarget(discovered: [SessionDescriptor]) {
         guard let pendingNotificationTarget,
-              sessions[pendingNotificationTarget.sessionID] == nil,
-              !discovered.contains(where: { $0.id == pendingNotificationTarget.sessionID }) else {
+              let pendingSessionID = pendingNotificationTarget.target.session.herdrSessionID,
+              sessions[pendingSessionID] == nil,
+              !discovered.contains(where: { $0.id == pendingSessionID }) else {
             return
         }
         self.pendingNotificationTarget = nil
-        transientError = "\(pendingNotificationTarget.sessionID.displayName) is unavailable"
+        transientError = "\(pendingNotificationTarget.sessionDisplayName) is unavailable"
     }
 
     func deriveConnectionState() {

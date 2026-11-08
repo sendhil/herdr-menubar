@@ -65,7 +65,8 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
     UNUserNotificationCenterDelegate, @unchecked Sendable {
     static let foregroundPresentationOptions: UNNotificationPresentationOptions = [.list]
 
-    private static let payloadVersion = 1
+    private static let payloadVersion = 2
+    private static let supportedPayloadVersions: Set<Int> = [1, 2]
 
     private let backend: any UserNotificationCenterBacking
     private let responseBroker: NotificationResponseBroker
@@ -147,27 +148,60 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         responseBroker.yield(target)
     }
 
-    static func payload(for target: NotificationSelectionTarget) -> [AnyHashable: Any] {
+    static func payload(for target: SelectionTarget) -> [AnyHashable: Any] {
+        let session = target.target.session
         var payload: [AnyHashable: Any] = [
             "version": payloadVersion,
-            "pane_id": target.paneID
+            "backend": session.backend.rawValue,
+            "session_display_name": target.sessionDisplayName,
+            "pane_id": target.target.paneID
         ]
-        switch target.sessionID {
-        case .default:
-            payload["session_kind"] = "default"
-        case .named(let name):
-            payload["session_kind"] = "named"
-            payload["session_name"] = name
+        switch session.backend {
+        case .herdr:
+            switch session.herdrSessionID {
+            case .default?:
+                payload["session_kind"] = "default"
+            case .named(let name)?:
+                payload["session_kind"] = "named"
+                payload["session_name"] = name
+            case nil:
+                break
+            }
+        case .rex:
+            payload["rex_session_id"] = session.rawID
         }
         return payload
     }
 
-    static func decodeTarget(_ userInfo: [AnyHashable: Any]) -> NotificationSelectionTarget? {
-        guard isSupportedPayloadVersion(userInfo["version"]),
-              let sessionKind = userInfo["session_kind"] as? String,
+    static func decodeTarget(_ userInfo: [AnyHashable: Any]) -> SelectionTarget? {
+        guard let version = supportedPayloadVersion(userInfo["version"]),
               let paneID = userInfo["pane_id"] as? String,
               !paneID.isEmpty else { return nil }
+        guard version >= 2 else {
+            return decodeHerdrTarget(userInfo, paneID: paneID, displayName: nil)
+        }
+        guard let backend = (userInfo["backend"] as? String).flatMap(BackendKind.init(rawValue:)) else {
+            return nil
+        }
+        let displayName = (userInfo["session_display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        switch backend {
+        case .herdr:
+            return decodeHerdrTarget(userInfo, paneID: paneID, displayName: displayName)
+        case .rex:
+            guard let sessionID = userInfo["rex_session_id"] as? String, !sessionID.isEmpty else { return nil }
+            return SelectionTarget(
+                target: AgentTarget(session: AgentSessionKey(backend: .rex, rawID: sessionID), paneID: paneID),
+                sessionDisplayName: displayName ?? sessionID
+            )
+        }
+    }
 
+    private static func decodeHerdrTarget(
+        _ userInfo: [AnyHashable: Any],
+        paneID: String,
+        displayName: String?
+    ) -> SelectionTarget? {
+        guard let sessionKind = userInfo["session_kind"] as? String else { return nil }
         let sessionID: SessionID
         switch sessionKind {
         case "default":
@@ -179,19 +213,23 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         default:
             return nil
         }
-        return NotificationSelectionTarget(sessionID: sessionID, paneID: paneID)
+        let target = SelectionTarget.herdr(sessionID, paneID: paneID)
+        guard let displayName else { return target }
+        return SelectionTarget(target: target.target, sessionDisplayName: displayName)
     }
 
-    private static func isSupportedPayloadVersion(_ value: Any?) -> Bool {
+    /// The payload version when it is an integer (not Bool or floating point) in `supportedPayloadVersions`.
+    private static func supportedPayloadVersion(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber,
               CFGetTypeID(number) != CFBooleanGetTypeID(),
-              !CFNumberIsFloatType(number) else { return false }
-        return number.intValue == payloadVersion
+              !CFNumberIsFloatType(number),
+              supportedPayloadVersions.contains(number.intValue) else { return nil }
+        return number.intValue
     }
 }
 
 private final class NotificationResponseBroker: @unchecked Sendable {
-    typealias Target = NotificationSelectionTarget
+    typealias Target = SelectionTarget
     typealias Waiter = CheckedContinuation<Target?, Never>
 
     private struct Subscriber {

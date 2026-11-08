@@ -6,10 +6,10 @@ final class GlobalShortcutControllerTests: XCTestCase {
     func testKeyDownIsIgnoredAndEachKeyUpRoutesItsActionExactlyOnce() async {
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(
-            target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "p1")
+            target: SelectionTarget.herdr(.named("work"), paneID: "p1")
         )
         var toggleCount = 0
-        var selectedTargets: [NotificationSelectionTarget] = []
+        var selectedTargets: [SelectionTarget] = []
         let toggled = expectation(description: "menu toggled")
         let selected = expectation(description: "target selected")
         let controller = GlobalShortcutController(
@@ -35,7 +35,7 @@ final class GlobalShortcutControllerTests: XCTestCase {
         XCTAssertEqual(toggleCount, 1)
         XCTAssertEqual(
             selectedTargets,
-            [NotificationSelectionTarget(sessionID: .named("work"), paneID: "p1")]
+            [SelectionTarget.herdr(.named("work"), paneID: "p1")]
         )
         let lookupCount = await latestTarget.lookupCount
         XCTAssertEqual(lookupCount, 1)
@@ -46,7 +46,7 @@ final class GlobalShortcutControllerTests: XCTestCase {
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: nil)
         var toggleCount = 0
-        var selectedTargets: [NotificationSelectionTarget] = []
+        var selectedTargets: [SelectionTarget] = []
         let barrier = expectation(description: "later toggle event consumed")
         let controller = GlobalShortcutController(
             registrar: registrar,
@@ -70,11 +70,11 @@ final class GlobalShortcutControllerTests: XCTestCase {
     }
 
     func testRepeatedPressesReuseTargetAndNewerTargetWins() async {
-        let old = NotificationSelectionTarget(sessionID: .default, paneID: "old")
-        let newest = NotificationSelectionTarget(sessionID: .named("work"), paneID: "new")
+        let old = SelectionTarget.herdr(.default, paneID: "old")
+        let newest = SelectionTarget.herdr(.named("work"), paneID: "new")
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: old)
-        var selectedTargets: [NotificationSelectionTarget] = []
+        var selectedTargets: [SelectionTarget] = []
         let firstTwo = expectation(description: "same target selected twice")
         firstTwo.expectedFulfillmentCount = 2
         let third = expectation(description: "new target selected")
@@ -167,10 +167,10 @@ final class GlobalShortcutControllerTests: XCTestCase {
     }
 
     func testBlockedLatestLookupCompletingAfterStopCannotSelect() async {
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "blocked")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "blocked")
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: target, blocksNextLookup: true)
-        var selectedTargets: [NotificationSelectionTarget] = []
+        var selectedTargets: [SelectionTarget] = []
         let toggleConsumed = expectation(description: "toggle consumer entered stream")
         let controller = GlobalShortcutController(
             registrar: registrar,
@@ -202,11 +202,11 @@ final class GlobalShortcutControllerTests: XCTestCase {
     }
 
     func testJoiningStopIsCompleteBarrierBeforeRestartWithTripleCallers() async {
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "gated")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "gated")
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: target, blocksNextLookup: true)
         var toggleCount = 0
-        var selectedTargets: [NotificationSelectionTarget] = []
+        var selectedTargets: [SelectionTarget] = []
         let initialToggle = expectation(description: "initial toggle consumer entered stream")
         let restartedToggle = expectation(description: "restarted toggle consumer handled event")
         let restartedSelection = expectation(description: "restarted focus consumer handled event")
@@ -288,11 +288,11 @@ final class GlobalShortcutControllerTests: XCTestCase {
     }
 
     func testRestartAcceptsOnlyEventsFromNewGeneration() async {
-        let target = NotificationSelectionTarget(sessionID: .default, paneID: "new-generation")
+        let target = SelectionTarget.herdr(.default, paneID: "new-generation")
         let registrar = GlobalShortcutRegistrarFake()
         let latestTarget = GlobalShortcutTargetFake(target: target)
         var toggleCount = 0
-        var selectedTargets: [NotificationSelectionTarget] = []
+        var selectedTargets: [SelectionTarget] = []
         let toggled = expectation(description: "new toggle event")
         let selected = expectation(description: "new focus event")
         let controller = GlobalShortcutController(
@@ -383,22 +383,22 @@ private final class GlobalShortcutRegistrarFake: ShortcutRegistering {
 }
 
 private actor GlobalShortcutTargetFake: LatestNotificationTargetRecording {
-    private var target: NotificationSelectionTarget?
+    private var target: SelectionTarget?
     private var shouldBlockNextLookup: Bool
     private let lookupSignal = GlobalShortcutCountSignal()
     private var lookupGate: CheckedContinuation<Void, Never>?
     private(set) var lookupCount = 0
 
-    init(target: NotificationSelectionTarget?, blocksNextLookup: Bool = false) {
+    init(target: SelectionTarget?, blocksNextLookup: Bool = false) {
         self.target = target
         shouldBlockNextLookup = blocksNextLookup
     }
 
-    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) {
+    func record(_ target: SelectionTarget, ordinal: UInt64) {
         self.target = target
     }
 
-    func latest() async -> NotificationSelectionTarget? {
+    func latest() async -> SelectionTarget? {
         lookupCount += 1
         await lookupSignal.signal()
         if shouldBlockNextLookup {
@@ -416,7 +416,7 @@ private actor GlobalShortcutTargetFake: LatestNotificationTargetRecording {
         target = nil
     }
 
-    func setTarget(_ target: NotificationSelectionTarget?) {
+    func setTarget(_ target: SelectionTarget?) {
         self.target = target
     }
 

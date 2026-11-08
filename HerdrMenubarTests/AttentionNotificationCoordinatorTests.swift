@@ -207,7 +207,7 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
         let deliveries = await service.deliveries
         XCTAssertEqual(deliveries.map(\.event), [
             AttentionNotificationEvent(
-                target: NotificationSelectionTarget(sessionID: .named("work"), paneID: "b"),
+                target: SelectionTarget.herdr(.named("work"), paneID: "b"),
                 sessionName: "work",
                 visibleLabel: "Build tests · Pi",
                 status: .done
@@ -427,8 +427,8 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
         let deliveries = await service.deliveries
         XCTAssertEqual(deliveries.map(\.event.target), [
-            NotificationSelectionTarget(sessionID: .default, paneID: "same"),
-            NotificationSelectionTarget(sessionID: .named("work"), paneID: "same")
+            SelectionTarget.herdr(.default, paneID: "same"),
+            SelectionTarget.herdr(.named("work"), paneID: "same")
         ])
         XCTAssertEqual(deliveries.map(\.event.status), [.done, .blocked])
     }
@@ -606,21 +606,21 @@ private actor OverlappingNotificationService: NativeNotificationServing {
 
 private actor RecordingLatestNotificationTargetRecorder: LatestNotificationTargetRecording {
     struct Call: Equatable, Sendable {
-        let target: NotificationSelectionTarget
+        let target: SelectionTarget
         let ordinal: UInt64
     }
 
     private(set) var calls: [Call] = []
     private var latestEntry: Call?
 
-    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) {
+    func record(_ target: SelectionTarget, ordinal: UInt64) {
         let call = Call(target: target, ordinal: ordinal)
         calls.append(call)
         guard latestEntry == nil || ordinal > latestEntry!.ordinal else { return }
         latestEntry = call
     }
 
-    func latest() -> NotificationSelectionTarget? {
+    func latest() -> SelectionTarget? {
         latestEntry?.target
     }
 
@@ -773,8 +773,8 @@ private func item(
 private func target(
     _ session: SessionDescriptor,
     _ paneID: String
-) -> NotificationSelectionTarget {
-    NotificationSelectionTarget(sessionID: session.id, paneID: paneID)
+) -> SelectionTarget {
+    SelectionTarget.herdr(session.id, paneID: paneID)
 }
 
 private func enabledPolicy(soundEnabled: Bool = false) -> NotificationDeliveryPolicy {

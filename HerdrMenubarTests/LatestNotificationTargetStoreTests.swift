@@ -4,8 +4,8 @@ import XCTest
 final class LatestNotificationTargetStoreTests: XCTestCase {
     func testStoreRejectsOlderAcceptedOrdinalAndResetClearsMemory() async {
         let store = LatestNotificationTargetStore()
-        let old = NotificationSelectionTarget(sessionID: .default, paneID: "old")
-        let newest = NotificationSelectionTarget(sessionID: .named("work"), paneID: "new")
+        let old = SelectionTarget.herdr(.default, paneID: "old")
+        let newest = SelectionTarget.herdr(.named("work"), paneID: "new")
 
         await store.record(old, ordinal: 1)
         await store.record(newest, ordinal: 3)
@@ -20,9 +20,8 @@ final class LatestNotificationTargetStoreTests: XCTestCase {
 
     func testSealAndResetPermanentlyRejectsLaterRecordsAndIsIdempotent() async {
         let store = LatestNotificationTargetStore()
-        let beforeSeal = NotificationSelectionTarget(sessionID: .default, paneID: "before")
-        let acceptedLate = NotificationSelectionTarget(
-            sessionID: .named("work"),
+        let beforeSeal = SelectionTarget.herdr(.default, paneID: "before")
+        let acceptedLate = SelectionTarget.herdr(.named("work"),
             paneID: "accepted-late"
         )
         await store.record(beforeSeal, ordinal: 1)

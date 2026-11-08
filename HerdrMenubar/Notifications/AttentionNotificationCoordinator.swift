@@ -44,10 +44,7 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
             guard item.status == .blocked || item.status == .done else { return nil }
             guard previous[item.paneID] != item.status else { return nil }
             return AttentionNotificationEvent(
-                target: NotificationSelectionTarget(
-                    sessionID: session.id,
-                    paneID: item.paneID
-                ),
+                target: SelectionTarget.herdr(session.id, paneID: item.paneID),
                 sessionName: session.displayName,
                 visibleLabel: item.visibleLabel,
                 status: item.status

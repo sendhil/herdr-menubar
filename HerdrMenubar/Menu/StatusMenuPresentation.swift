@@ -18,7 +18,7 @@ indirect enum StatusMenuNode: Equatable, Sendable {
         subtitle: String,
         symbol: String,
         quieter: Bool,
-        target: NotificationSelectionTarget
+        target: SelectionTarget
     )
     case info(String, tone: MenuTextTone)
     case toggle(
@@ -44,7 +44,7 @@ enum MenuItemState: Equatable, Sendable {
 }
 
 enum StatusMenuAction: Equatable, Sendable {
-    case select(NotificationSelectionTarget)
+    case select(SelectionTarget)
     case selectTerminal(String)
     case setLaunchAtLogin(Bool)
     case setNotifications(Bool)
@@ -200,10 +200,7 @@ private extension StatusMenuPresentationBuilder {
                     subtitle: item.secondaryLabel,
                     symbol: statusSymbol(item.status),
                     quieter: quieter,
-                    target: NotificationSelectionTarget(
-                        sessionID: item.sessionID,
-                        paneID: item.paneID
-                    )
+                    target: SelectionTarget.herdr(item.sessionID, paneID: item.paneID)
                 )
             })
         }

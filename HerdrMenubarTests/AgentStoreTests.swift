@@ -339,8 +339,7 @@ final class AgentStoreTests: XCTestCase {
             ghosttyFocuser: RecordingGhosttyFocuser(sequence: sequence),
             notificationService: notifications
         )
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
         ))
         await store.start()
         await supervisor.send(.discoverySnapshot([workDescriptor]))
@@ -375,7 +374,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.connected(workDescriptor, snapshot([pane("other", .done)])))
         await coordinator.waitForReconciliations(1)
 
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "p2")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "p2")
         store.select(target)
         await supervisor.waitForFocusRequests(1)
         await supervisor.waitForRefreshRequests(1)
@@ -401,7 +400,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
         await coordinator.waitForUnavailableCalls(1)
 
-        let target = NotificationSelectionTarget(sessionID: .named("work"), paneID: "exact")
+        let target = SelectionTarget.herdr(.named("work"), paneID: "exact")
         store.select(target)
         await supervisor.send(.discoverySnapshot([]))
         await supervisor.send(.discoverySnapshot([]))
@@ -428,7 +427,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
         await coordinator.waitForUnavailableCalls(1)
 
-        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "p"))
+        store.select(SelectionTarget.herdr(.named("work"), paneID: "p"))
         await supervisor.send(.removed(.named("work")))
         await coordinator.waitForRemovalCalls(1)
 
@@ -447,7 +446,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("fallback", .done)])))
         await coordinator.waitForReconciliations(1)
 
-        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "missing"))
+        store.select(SelectionTarget.herdr(.named("work"), paneID: "missing"))
 
         XCTAssertEqual(store.transientError, "work is unavailable")
         let focusRequests = await supervisor.focusRequests
@@ -476,7 +475,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("new", .done)])))
         await coordinator.waitForReconciliations(2)
 
-        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "old"))
+        store.select(SelectionTarget.herdr(.named("work"), paneID: "old"))
         await focuser.waitForCalls(1)
         let rowSelection = Task {
             await store.select(AgentMenuItem(
@@ -506,7 +505,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await store.stop()
 
-        store.select(NotificationSelectionTarget(sessionID: .named("work"), paneID: "stale"))
+        store.select(SelectionTarget.herdr(.named("work"), paneID: "stale"))
 
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("stale", .done)])))
@@ -530,8 +529,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await supervisor.send(.discoverySnapshot([workDescriptor]))
         await supervisor.send(.unavailable(.named("work"), "temporarily unavailable"))
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "stale-pane"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "stale-pane"
         ))
         for _ in 0..<20 { await Task.yield() }
         var focusRequests = await supervisor.focusRequests
@@ -576,8 +574,7 @@ final class AgentStoreTests: XCTestCase {
             ))
         }
         await focuser.waitForCalls(1)
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
         ))
         await focuser.waitForCancellations(1)
         await focuser.releaseBlockedCalls()
@@ -616,8 +613,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.discoverySnapshot([]))
         await eventually { store.connectionState == .noSessions }
 
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
         ))
         await eventually { store.transientError == "work is unavailable" }
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("other", .working)])))
@@ -626,8 +622,7 @@ final class AgentStoreTests: XCTestCase {
 
         await store.retry()
         XCTAssertNil(store.transientError)
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p2"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p2"
         ))
         await eventually { store.transientError == "work is unavailable" }
 
@@ -662,8 +657,7 @@ final class AgentStoreTests: XCTestCase {
             ))
         }
         await focuser.waitForCalls(1)
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
         ))
         await focuser.waitForCancellations(1)
         await focuser.releaseBlockedCalls()
@@ -709,8 +703,7 @@ final class AgentStoreTests: XCTestCase {
             ))
         }
         await focuser.waitForCalls(1)
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
         ))
         await focuser.waitForCancellations(1)
         await focuser.releaseBlockedCalls()
@@ -736,8 +729,7 @@ final class AgentStoreTests: XCTestCase {
         let notifications = RecordingNotificationService()
         let store = makeStore(supervisor: supervisor, notificationService: notifications)
         await store.start()
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "old"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "old"
         ))
         await waitUntil { await notifications.deliveredResponseCount == 1 }
         await store.select(AgentMenuItem(
@@ -774,7 +766,7 @@ final class AgentStoreTests: XCTestCase {
         }
         await eventually { focuser.focusedSessionIDs.count == 1 }
 
-        await notifications.send(NotificationSelectionTarget(sessionID: .default, paneID: "new"))
+        await notifications.send(SelectionTarget.herdr(.default, paneID: "new"))
         await waitUntil { await notifications.deliveredResponseCount == 1 }
         await focuser.releaseBlockedCalls()
         await oldSelection.value
@@ -800,8 +792,7 @@ final class AgentStoreTests: XCTestCase {
         )
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("current", .done)])))
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "stale"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "stale"
         ))
         await waitUntil { await supervisor.focusRequests.count == 1 }
 
@@ -838,8 +829,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("p2", .done)])))
         await coordinator.waitForReconciliations(2)
 
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p1"
+        await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p1"
         ))
         await focuser.waitForCalls(1)
 
@@ -883,8 +873,7 @@ final class AgentStoreTests: XCTestCase {
             ))
         }
         await fixture.focuser.waitForCalls(1)
-        await fixture.notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p1"
+        await fixture.notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p1"
         ))
         await fixture.focuser.waitForCancellations(1)
         await fixture.focuser.releaseBlockedCalls()
@@ -912,8 +901,7 @@ final class AgentStoreTests: XCTestCase {
         ])
         XCTAssertTrue(fixture.activator.activatedBundleIdentifiers.isEmpty)
 
-        await fixture.notifications.send(NotificationSelectionTarget(
-            sessionID: .named("work"), paneID: "p2"
+        await fixture.notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p2"
         ))
         await fixture.supervisor.waitForRefreshRequests(2)
 
@@ -1308,8 +1296,7 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(responsesCallCount, 2)
         XCTAssertEqual(cancellationCount, 1)
 
-        await notifications.send(NotificationSelectionTarget(
-            sessionID: .named("old"), paneID: "late"
+        await notifications.send(SelectionTarget.herdr(.named("old"), paneID: "late"
         ), toSubscriptionAt: 0)
         await supervisor.send(.connected(workDescriptor, snapshot([pane("p", .done)])))
         for _ in 0..<30 { await Task.yield() }
@@ -1804,12 +1791,12 @@ private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
 private actor RecordingNotificationService: NativeNotificationServing {
     private struct Subscriber {
         let id: UUID
-        let continuation: AsyncStream<NotificationSelectionTarget>.Continuation
+        let continuation: AsyncStream<SelectionTarget>.Continuation
     }
 
     private var subscribers: [Subscriber] = []
-    private var historicalContinuations: [AsyncStream<NotificationSelectionTarget>.Continuation] = []
-    private var bufferedTargets: [NotificationSelectionTarget] = []
+    private var historicalContinuations: [AsyncStream<SelectionTarget>.Continuation] = []
+    private var bufferedTargets: [SelectionTarget] = []
     private let responsesGate: AsyncGate?
     private let deliveryResult: NotificationDeliveryResult
     private(set) var responsesCallCount = 0
@@ -1833,7 +1820,7 @@ private actor RecordingNotificationService: NativeNotificationServing {
         await responsesSignal.record()
         await responsesGate?.wait()
         let id = UUID()
-        let (stream, continuation) = AsyncStream<NotificationSelectionTarget>.makeStream()
+        let (stream, continuation) = AsyncStream<SelectionTarget>.makeStream()
         subscribers.append(Subscriber(id: id, continuation: continuation))
         historicalContinuations.append(continuation)
         for target in bufferedTargets {
@@ -1859,7 +1846,7 @@ private actor RecordingNotificationService: NativeNotificationServing {
     }
 
     func send(
-        _ target: NotificationSelectionTarget,
+        _ target: SelectionTarget,
         toSubscriptionAt historicalIndex: Int? = nil
     ) {
         if let historicalIndex {

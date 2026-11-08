@@ -5,7 +5,7 @@ final class GlobalShortcutController {
     private let registrar: any ShortcutRegistering
     private let latestTarget: any LatestNotificationTargetRecording
     private let toggleMenu: @MainActor () -> Void
-    private let selectTarget: @MainActor (NotificationSelectionTarget) -> Void
+    private let selectTarget: @MainActor (SelectionTarget) -> Void
     private var generation: UUID?
     private var tasks: [Task<Void, Never>] = []
     private var stopTask: Task<Void, Never>?
@@ -15,7 +15,7 @@ final class GlobalShortcutController {
         registrar: any ShortcutRegistering,
         latestTarget: any LatestNotificationTargetRecording,
         toggleMenu: @escaping @MainActor () -> Void,
-        selectTarget: @escaping @MainActor (NotificationSelectionTarget) -> Void
+        selectTarget: @escaping @MainActor (SelectionTarget) -> Void
     ) {
         self.registrar = registrar
         self.latestTarget = latestTarget

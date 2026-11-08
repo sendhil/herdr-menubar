@@ -1,16 +1,11 @@
 import Foundation
 
-struct NotificationSelectionTarget: Equatable, Sendable {
-    let sessionID: SessionID
-    let paneID: String
-}
-
 /// Owns one notification-response registration.
 ///
 /// Every consumer must call `cancel()` from `defer`. A consumer whose startup
 /// aborts after acquiring a subscription must cancel it before dropping it.
 struct NotificationResponseSubscription: AsyncSequence, Sendable {
-    typealias Element = NotificationSelectionTarget
+    typealias Element = SelectionTarget
     typealias AsyncIterator = AsyncStream<Element>.Iterator
 
     private let stream: AsyncStream<Element>
@@ -65,7 +60,7 @@ final class NotificationResponseCancellation: @unchecked Sendable {
 }
 
 struct AttentionNotificationEvent: Equatable, Sendable {
-    let target: NotificationSelectionTarget
+    let target: SelectionTarget
     let sessionName: String
     let visibleLabel: String
     let status: AgentStatus
@@ -77,8 +72,8 @@ enum NotificationDeliveryResult: Equatable, Sendable {
 }
 
 protocol LatestNotificationTargetRecording: Sendable {
-    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) async
-    func latest() async -> NotificationSelectionTarget?
+    func record(_ target: SelectionTarget, ordinal: UInt64) async
+    func latest() async -> SelectionTarget?
     func reset() async
     func sealAndReset() async
 }

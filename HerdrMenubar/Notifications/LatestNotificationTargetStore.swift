@@ -1,14 +1,14 @@
 actor LatestNotificationTargetStore: LatestNotificationTargetRecording {
-    private var entry: (ordinal: UInt64, target: NotificationSelectionTarget)?
+    private var entry: (ordinal: UInt64, target: SelectionTarget)?
     private var isSealed = false
 
-    func record(_ target: NotificationSelectionTarget, ordinal: UInt64) {
+    func record(_ target: SelectionTarget, ordinal: UInt64) {
         guard !isSealed else { return }
         guard entry == nil || ordinal > entry!.ordinal else { return }
         entry = (ordinal, target)
     }
 
-    func latest() -> NotificationSelectionTarget? {
+    func latest() -> SelectionTarget? {
         entry?.target
     }
 
