@@ -567,7 +567,7 @@ Server focus runs before the client switch, matching the user's `jump_attention`
 
 ### Herdr backend
 
-`HerdrBackend` wraps `SessionSupervisor` and is `@MainActor`, like `AgentStore`, so Ghostty calls need no extra hop. It keeps its own map of session descriptors (from supervisor events), which supplies the session display names for its focus and Ghostty messages. If the session isn't in the map yet, it falls back to the Herdr session's own name (`SessionID.displayName`, decoded from `rawID`), which is exactly today's text. `RexBackend` does the same from its reducer, falling back to "Rex session".
+`HerdrBackend` wraps `SessionSupervisor` and is `@MainActor`, like `AgentStore`, so Ghostty calls need no extra hop. Its focus and Ghostty messages take the session name from the raw ID (`SessionID.displayName` decoded from `rawID`), which is exactly today's text, since Herdr descriptors carry no other name. `RexBackend` does the same from its reducer, falling back to "Rex session".
 - `focusServer` is `supervisor.focus`.
 - `activate` runs the Ghostty exact-surface focus or terminal activation, with today's partial-focus wording.
 - `refreshAfterSelection` is `supervisor.refresh`.
