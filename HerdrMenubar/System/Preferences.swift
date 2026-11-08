@@ -11,6 +11,7 @@ final class Preferences {
     static let notificationSoundEnabledKey = "notificationSoundEnabled"
     static let enabledBackendsKey = "enabledBackends"
     static let defaultEnabledBackends: Set<BackendKind> = [.herdr]
+    static let rexCLIPathKey = "rexCLIPath"
 
     static func notifyStatesKey(for kind: BackendKind) -> String {
         "notifyStates.\(kind.rawValue)"
@@ -55,6 +56,10 @@ final class Preferences {
     /// Read once at launch. Changed only with `defaults write`; there is no UI.
     let enabledBackends: Set<BackendKind>
 
+    /// Read once at launch. Changed only with `defaults write`; nil (absent or blank) means
+    /// resolve the Rex CLI automatically.
+    let rexCLIPath: String?
+
     /// One entry per backend. Absent keys use `BackendKind.defaultNotifyStates` and are not written.
     private(set) var notifyStates: [BackendKind: Set<AttentionState>]
 
@@ -79,6 +84,8 @@ final class Preferences {
         enabledBackends = defaults.stringArray(forKey: Self.enabledBackendsKey)
             .map { Set($0.compactMap(BackendKind.init(rawValue:))) }
             ?? Self.defaultEnabledBackends
+        rexCLIPath = defaults.string(forKey: Self.rexCLIPathKey)
+            .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         notifyStates = Dictionary(uniqueKeysWithValues: BackendKind.allCases.map { kind in
             let stored = defaults.stringArray(forKey: Self.notifyStatesKey(for: kind))
                 .map { Set($0.compactMap(AttentionState.init(rawValue:))) }

@@ -180,6 +180,19 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
+    func testRexCLIPathIsReadFromDefaultsWriteAndBlankMeansAutomatic() {
+        withDefaults { defaults in
+            XCTAssertNil(Preferences(defaults: defaults).rexCLIPath)
+            XCTAssertNil(defaults.object(forKey: "rexCLIPath"))
+
+            defaults.set("/opt/rex/bin/rex", forKey: "rexCLIPath")
+            XCTAssertEqual(Preferences(defaults: defaults).rexCLIPath, "/opt/rex/bin/rex")
+
+            defaults.set("  ", forKey: "rexCLIPath")
+            XCTAssertNil(Preferences(defaults: defaults).rexCLIPath)
+        }
+    }
+
     private func withDefaults(_ body: @MainActor (UserDefaults) -> Void) {
         let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
