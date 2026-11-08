@@ -306,6 +306,23 @@ final class RexBackendTests: XCTestCase {
         XCTAssertEqual(resolver.failedPaths, [cli.path])
     }
 
+    func testOutageReasonIgnoresTheBannerAndInterruptedStderrLines() async {
+        await start()
+        await waitForProcess(1)
+        watchers.last!.stderrLine = "listening: session=all"
+        watchers.last!.exit(1)
+        await waitForEvent { $0 == .backendUnavailable("The Rex watcher exited with status 1") }
+
+        await waitForSleep(.seconds(1))
+        clock.advance(.seconds(1))
+        await waitForProcess(2)
+        watchers.last!.stderrLine = "Error: interrupted"
+        watchers.last!.exit(130)
+        await waitForEvent { $0 == .backendUnavailable("The Rex watcher exited with status 130") }
+        XCTAssertFalse(unavailableReasons().contains { $0.contains("listening") || $0.contains("interrupted") },
+                       "\(unavailableReasons())")
+    }
+
     func testSnapshotErrorMarksTheCandidateFailedAndTerminates() async {
         await start()
         await waitForProcess(1)

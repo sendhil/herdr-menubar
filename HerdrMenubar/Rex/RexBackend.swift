@@ -455,7 +455,7 @@ actor RexBackend: AgentBackend {
         if termination.exitCode == Self.serverUnreachableExitCode {
             return GenerationOutcome(reason: "Rex is not running", serverUnreachable: true)
         }
-        let detail = generation.process.lastStderrLine
+        let detail = generation.process.lastStderrLine.flatMap(Self.quotableStderrLine)
         let status: String = switch termination.reason {
         case .exited: "status \(termination.status)"
         case .signaled: "signal \(termination.status)"
@@ -464,6 +464,15 @@ actor RexBackend: AgentBackend {
         // Exiting on its own before `snapshot_done` (not exit 4, not our termination) marks
         // the binary failed for this run.
         return GenerationOutcome(reason: reason, marksCandidateFailed: !generation.snapshotDone)
+    }
+
+    /// A stderr line worth showing as the outage reason: an `Error: …` line, except the
+    /// `Error: interrupted` that a SIGTERM produces. The `listening:` banner, `rex.log` output,
+    /// and anything else fall back to the exit status.
+    static func quotableStderrLine(_ line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("Error:"), trimmed != "Error: interrupted" else { return nil }
+        return trimmed
     }
 
     // MARK: Timers (supervision deadline and settle deadlines share one timer)
