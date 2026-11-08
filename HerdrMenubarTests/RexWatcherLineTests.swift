@@ -123,6 +123,7 @@ final class RexWatcherLineTests: XCTestCase {
         XCTAssertEqual(try decode(#"{"t":"heartbeat"}"#), .heartbeat)
         XCTAssertEqual(try decode(#"{"b":"b","err":"boom","s":"s","t":"status_error"}"#), .statusError(sessionID: "s", blockID: "b", message: "boom"))
         XCTAssertEqual(try decode(#"{"err":"boom","s":"s","t":"view_error"}"#), .viewError(sessionID: "s", message: "boom"))
+        XCTAssertEqual(try decode(#"{"err":"boom","s":"s","t":"list_blocks_error"}"#), .listBlocksError(sessionID: "s", message: "boom"))
         XCTAssertEqual(try decode(#"{"err":"session.list: x","t":"snapshot_error"}"#), .snapshotError(message: "session.list: x"))
         XCTAssertEqual(try decode(#"{"err":"NaN","t":"encode_error"}"#), .encodeError(message: "NaN"))
         XCTAssertEqual(try decode(#"{"t":"something_new","x":1}"#), .unknown(type: "something_new"))

@@ -81,7 +81,7 @@ final class RexWatcherIntegrationTests: XCTestCase {
                 XCTAssertTrue(announced.contains(read.sessionID))
                 XCTAssertNil(read.via, "snapshot reads carry no via")
                 XCTAssertTrue(read.records.allSatisfy { $0.updatedAt != nil }, "\(read)")
-            case .unknown, .statusError, .viewError, .snapshotError, .encodeError:
+            case .unknown, .statusError, .viewError, .listBlocksError, .snapshotError, .encodeError:
                 XCTFail("unexpected line during snapshot: \(line)")
             default: break
             }

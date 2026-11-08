@@ -78,17 +78,22 @@ enum RexWatcherLine: Equatable, Sendable {
     case sessionCreated(sessionID: String, label: String?)
     case snapshotDone
     case heartbeat
-    /// `program_status` failed with something other than not-found.
+    /// `program_status` failed with something other than not-found. Logged; the block is
+    /// skipped until a later read of it succeeds.
     case statusError(sessionID: String, blockID: String, message: String)
-    /// `session.view` failed with something other than not-found.
+    /// `session.view` failed with something other than not-found. Logged; the session has no
+    /// rows until a later view of it succeeds.
     case viewError(sessionID: String, message: String)
+    /// Snapshot only: `session.list_blocks` failed with something other than not-found. Logged;
+    /// the script reads the session's blocks through its view instead.
+    case listBlocksError(sessionID: String, message: String)
     case snapshotError(message: String)
     case encodeError(message: String)
     /// A well-formed line with a `t` this build does not know. Ignore (log) it.
     case unknown(type: String)
 
-    /// Lines that are a watcher failure regardless of snapshot progress. (`status_error` and
-    /// `view_error` are failures only before `snapshot_done`; oversized lines are framing errors.)
+    /// Lines that are a watcher failure. Per-block and per-session errors (`status_error`,
+    /// `view_error`, `list_blocks_error`) never are; oversized lines are framing errors.
     var isAlwaysFatal: Bool {
         switch self {
         case .snapshotError, .encodeError: true
@@ -152,6 +157,9 @@ extension RexWatcherLine: Decodable {
         case "view_error":
             self = .viewError(sessionID: try c.decode(String.self, forKey: .s),
                               message: try c.decode(String.self, forKey: .err))
+        case "list_blocks_error":
+            self = .listBlocksError(sessionID: try c.decode(String.self, forKey: .s),
+                                    message: try c.decode(String.self, forKey: .err))
         case "snapshot_error":
             self = .snapshotError(message: try c.decodeIfPresent(String.self, forKey: .err) ?? "")
         case "encode_error":

@@ -386,12 +386,22 @@ local function gone(err)
   return e:find("code=not_found", 1, true) or e:find("code=session_not_found", 1, true)
 end
 
+-- A session with a read that failed is stale: it is viewed again in 30 s, and its next
+-- successful view re-reads every terminal block. Failures are reported, never fatal.
+local stale, retrying = {}, {}
+local view
+local function mark_stale(s)
+  stale[s] = true
+  if retrying[s] then return end
+  retrying[s] = rex.after(30, function() retrying[s] = nil; view(s) end)
+end
+
 -- Authoritative re-read of one block. `via` carries what the triggering event said.
 local function block_status(s, b, via)
   local st, err = rex.block.call(TERMINAL, "program_status", { session_id = s, block_id = b })
   if not st then
     if gone(err) then out{ t = "block", s = s, b = b, records = {}, gone = true, via = via }
-    else out{ t = "status_error", s = s, b = b, err = tostring(err) } end
+    else out{ t = "status_error", s = s, b = b, err = tostring(err) }; mark_stale(s) end
     return
   end
   local recs = {}
@@ -402,10 +412,11 @@ local function block_status(s, b, via)
   out{ t = "block", s = s, b = b, records = recs, via = via }
 end
 
-local function view(s)
+function view(s)
   local v, err = rex.session.view{ session_id = s }
   if not v then
-    if not gone(err) then out{ t = "view_error", s = s, err = tostring(err) } end
+    if gone(err) then stale[s] = nil
+    else out{ t = "view_error", s = s, err = tostring(err) }; mark_stale(s) end
     return
   end
   local blocks = {}
@@ -418,6 +429,12 @@ local function view(s)
     end
   end
   out{ t = "view", s = s, session_label = v.label, blocks = blocks }
+  if stale[s] then
+    stale[s] = nil
+    for _, bl in ipairs(blocks) do
+      if bl.creator == TERMINAL then block_status(s, bl.b, nil) end
+    end
+  end
 end
 
 rex.on("terminal.program_status_changed", function(ctx, ev)
@@ -428,7 +445,7 @@ rex.on("terminal.program_status_removed", function(ctx, ev)
   block_status(ctx.session_id, ctx.block_id, { removed = ev.ids })
 end)
 rex.on("block_closed",      function(ctx, ev) out{ t = "block_closed", s = ctx.session_id, b = ev.block_id } end)
-rex.on("session_destroyed", function(ctx, ev) out{ t = "session_destroyed", s = ev.session_id } end)
+rex.on("session_destroyed", function(ctx, ev) stale[ev.session_id] = nil; out{ t = "session_destroyed", s = ev.session_id } end)
 rex.on("session_created",   function(ctx, ev)
   local s = ev.session and ev.session.session_id
   if not s then return end
@@ -458,7 +475,10 @@ local function snapshot()
         if b.creator_name == TERMINAL then block_status(id, b.block_id, nil) end
       end
     elseif not gone(e2) then
-      error("list_blocks " .. id .. ": " .. tostring(e2))
+      out{ t = "session", s = id, label = s.label }
+      out{ t = "list_blocks_error", s = id, err = tostring(e2) }
+      mark_stale(id)
+      view(id)  -- reads the blocks through the view instead
     end
   end
   out{ t = "snapshot_done" }

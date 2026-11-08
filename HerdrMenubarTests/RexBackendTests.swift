@@ -382,6 +382,27 @@ final class RexBackendTests: XCTestCase {
                        "\(unavailableReasons())")
     }
 
+    func testPerBlockAndPerSessionErrorsDuringTheSnapshotNeitherFailNorMarkTheCandidate() async {
+        await start()
+        await waitForProcess(1)
+        watchers.last!.send([
+            RexJSON.session("s1", label: "work"),
+            RexJSON.view("s1", label: "work", blocks: [("b1", "One"), ("b2", "Two")]),
+            ["t": "status_error", "s": "s1", "b": "b1", "err": "code=internal"],
+            RexJSON.block("s1", "b2", state: "working", at: 1),
+            RexJSON.session("s2", label: "other"),
+            ["t": "list_blocks_error", "s": "s2", "err": "code=internal"],
+            ["t": "view_error", "s": "s2", "err": "code=internal"],
+            RexJSON.snapshotDone,
+        ])
+        await waitForEvent(isConnected)
+        await settleTasks()
+        XCTAssertTrue(unavailableReasons().isEmpty, "\(unavailableReasons())")
+        XCTAssertEqual(resolver.failedPaths, [])
+        XCTAssertEqual(watchers.processes[0].terminateCount, 0)
+        XCTAssertTrue(recorder.events.contains(.connected(AgentSessionDescriptor(key: rexKey("s2"), displayName: "other"), .empty)))
+    }
+
     func testSnapshotErrorMarksTheCandidateFailedAndTerminates() async {
         await start()
         await waitForProcess(1)

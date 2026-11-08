@@ -322,14 +322,72 @@ final class RexReducerTests: XCTestCase {
 
     // MARK: Errors
 
-    func testStatusAndViewErrorsFailBeforeSnapshotDone() {
+    func testStatusErrorBeforeSnapshotDoneSkipsOnlyThatBlockUntilALaterRead() {
         var h = RexReducerHarness()
-        h.apply([L.session("s1")])
-        let status = h.apply(L.line(["t": "status_error", "s": "s1", "b": "b1", "err": "boom"]))
-        XCTAssertEqual(status.failure, .statusError(sessionID: "s1", blockID: "b1", message: "boom"))
-        XCTAssertEqual(status.failure?.marksCandidateFailed, false)
-        let view = h.apply(L.line(["t": "view_error", "s": "s1", "err": "boom"]))
-        XCTAssertEqual(view.failure, .viewError(sessionID: "s1", message: "boom"))
+        h.apply([
+            L.session("s1", label: "fix-playback"),
+            L.view("s1", label: "fix-playback", [L.ViewBlock(b: "b1", windowLabel: "Playback"), L.ViewBlock(b: "b2")]),
+        ])
+        let error = h.apply(L.line(["t": "status_error", "s": "s1", "b": "b1", "err": "boom"]))
+        XCTAssertNil(error.failure)
+        XCTAssertEqual(error.logMessages.count, 1)
+        let events = h.apply([L.block("s1", "b2", [L.Rec(state: "done", at: 2)]), L.line(["t": "snapshot_done"])])
+        guard case .connected(_, let snapshot) = events.last else { return XCTFail("\(events)") }
+        XCTAssertEqual(snapshot.rows.map(\.target.paneID), ["b2"])
+
+        let recovered = h.apply(L.block("s1", "b1", [L.Rec(state: "blocked", at: 3)]))
+        XCTAssertNil(recovered.failure)
+        XCTAssertEqual(recovered.events.first?.snapshotPayload?.1.rows.map(\.target.paneID).sorted(), ["b1", "b2"])
+    }
+
+    func testViewErrorBeforeSnapshotDoneConnectsTheSessionWithoutRowsUntilALaterView() {
+        var h = RexReducerHarness()
+        h.apply([L.session("s1", label: "work")])
+        let error = h.apply(L.line(["t": "view_error", "s": "s1", "err": "boom"]))
+        XCTAssertNil(error.failure)
+        XCTAssertEqual(error.logMessages.count, 1)
+        let events = h.apply([L.block("s1", "b1", [L.Rec(state: "blocked", at: 1)]), L.line(["t": "snapshot_done"])])
+        XCTAssertEqual(events, [.discovery([rexDescriptor("s1", "work")]), .connected(rexDescriptor("s1", "work"), .empty)])
+
+        let recovered = h.apply(L.view("s1", label: "work", [L.ViewBlock(b: "b1")]))
+        XCTAssertEqual(recovered.events.first?.snapshotPayload?.1.rows.map(\.target.paneID), ["b1"])
+    }
+
+    func testListBlocksErrorIsLoggedAndTheSessionIsReadThroughItsView() {
+        var h = RexReducerHarness()
+        h.apply([L.session("s1", label: "work")])
+        let error = h.apply(L.line(["t": "list_blocks_error", "s": "s1", "err": "timeout"]))
+        XCTAssertNil(error.failure)
+        XCTAssertEqual(error.logMessages.count, 1)
+        let events = h.apply([L.view("s1", label: "work", [L.ViewBlock(b: "b1")]),
+                              L.block("s1", "b1", [L.Rec(state: "blocked", at: 1)]),
+                              L.line(["t": "snapshot_done"])])
+        XCTAssertEqual(events.last?.snapshotPayload?.1.rows.map(\.target.paneID), ["b1"])
+    }
+
+    func testBlocksTheSnapshotCouldNotReadKeepTheirEpochsAcrossARestart() {
+        var h = RexReducerHarness()
+        h.apply([L.session("s1"), L.session("s2"),
+                 L.view("s1", [L.ViewBlock(b: "b1")]), L.view("s2", [L.ViewBlock(b: "c1")]),
+                 L.block("s1", "b1", [L.Rec(state: "blocked", at: 1)]),
+                 L.block("s2", "c1", [L.Rec(state: "error", at: 1)]),
+                 L.line(["t": "snapshot_done"])])
+        let b1 = try! XCTUnwrap(h.reducer.epoch(of: rk("s1", "b1")))
+        let c1 = try! XCTUnwrap(h.reducer.epoch(of: rk("s2", "c1")))
+
+        h.restart()
+        h.apply([L.session("s1"), L.session("s2"), L.view("s1", [L.ViewBlock(b: "b1")]),
+                 L.line(["t": "status_error", "s": "s1", "b": "b1", "err": "boom"]),
+                 L.line(["t": "list_blocks_error", "s": "s2", "err": "boom"]),
+                 L.line(["t": "view_error", "s": "s2", "err": "boom"]),
+                 L.line(["t": "snapshot_done"])])
+        XCTAssertEqual(h.reducer.epoch(of: rk("s1", "b1")), b1)
+        XCTAssertEqual(h.reducer.epoch(of: rk("s2", "c1")), c1)
+
+        // The later read of an unchanged record is history, not a new attention epoch.
+        let recovered = h.apply(L.block("s1", "b1", [L.Rec(state: "blocked", at: 1)]))
+        XCTAssertEqual(h.reducer.epoch(of: rk("s1", "b1")), b1)
+        XCTAssertEqual(recovered.events.first?.snapshotPayload?.1.attention.map(\.epoch), [b1])
     }
 
     func testStatusAndViewErrorsAfterSnapshotDoneAreLoggedAndKeepState() {

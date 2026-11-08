@@ -13,21 +13,16 @@ struct RexRecordKey: Hashable, Sendable {
 }
 
 /// Why the watcher must be treated as failed. RexBackend terminates the process, emits
-/// `.backendUnavailable(reason)`, and restarts with backoff.
+/// `.backendUnavailable(reason)`, and restarts with backoff. Only whole-watcher failures count:
+/// a block or session that could not be read is logged and skipped, never a failure.
 enum RexWatcherFailure: Equatable, Sendable {
     case snapshotError(String)
     case encodeError(String)
-    /// `status_error` before `snapshot_done`.
-    case statusError(sessionID: String, blockID: String, message: String)
-    /// `view_error` before `snapshot_done`.
-    case viewError(sessionID: String, message: String)
 
     var reason: String {
         switch self {
         case .snapshotError(let message): "Rex watcher snapshot failed: \(message)"
         case .encodeError(let message): "Rex watcher could not encode a line: \(message)"
-        case .statusError(_, _, let message): "Rex watcher could not read program status: \(message)"
-        case .viewError(_, let message): "Rex watcher could not read a session view: \(message)"
         }
     }
 
@@ -96,6 +91,10 @@ struct RexReducer: Sendable {
     private var blockRecords: [BlockKey: [RexRecord]] = [:]
     /// What the store last received per session in this generation, to emit only real changes.
     private var lastEmitted: [String: BackendSnapshot] = [:]
+    /// Blocks and sessions whose reads failed before `snapshot_done`. Their last-known records
+    /// survive the snapshot's pruning, so a later successful read compares against history.
+    private var unreadBlocks: Set<BlockKey> = []
+    private var unreadSessions: Set<String> = []
 
     init() {}
 
@@ -109,6 +108,8 @@ struct RexReducer: Sendable {
         sessions = [:]
         blockRecords = [:]
         lastEmitted = [:]
+        unreadBlocks = []
+        unreadSessions = []
     }
 
     /// The watcher generation failed or exited: ignore its remaining lines and emit nothing (from
@@ -193,18 +194,15 @@ struct RexReducer: Sendable {
             break
 
         case .statusError(let sessionID, let blockID, let message):
-            if isSnapshotDone {
-                output.logMessages.append("Rex status read failed for \(blockID) in \(sessionID): \(message)")
-            } else {
-                output.failure = .statusError(sessionID: sessionID, blockID: blockID, message: message)
-            }
+            output.logMessages.append("Rex status read failed for \(blockID) in \(sessionID): \(message)")
+            if !isSnapshotDone { unreadBlocks.insert(BlockKey(sessionID: sessionID, blockID: blockID)) }
 
         case .viewError(let sessionID, let message):
-            if isSnapshotDone {
-                output.logMessages.append("Rex view read failed for \(sessionID): \(message)")
-            } else {
-                output.failure = .viewError(sessionID: sessionID, message: message)
-            }
+            output.logMessages.append("Rex view read failed for \(sessionID): \(message)")
+
+        case .listBlocksError(let sessionID, let message):
+            output.logMessages.append("Rex block list failed for \(sessionID): \(message)")
+            if !isSnapshotDone { unreadSessions.insert(sessionID) }
 
         case .snapshotError(let message):
             output.failure = .snapshotError(message)
@@ -427,9 +425,17 @@ struct RexReducer: Sendable {
     private mutating func completeSnapshot(into output: inout RexReducerOutput) {
         isSnapshotDone = true
 
-        // 1. Prune what this generation's snapshot no longer contains.
+        // 1. Prune what this generation's snapshot no longer contains, keeping the history of
+        //    blocks it could not read (a failed status read, or a session whose block list failed).
         let readBlocks = Set(blockRecords.keys)
-        dropLastKnown { !readBlocks.contains(BlockKey(sessionID: $0.sessionID, blockID: $0.blockID)) }
+        let unreadBlocks = unreadBlocks, unreadSessions = unreadSessions
+        let liveSessions = Set(sessions.keys)
+        dropLastKnown {
+            let block = BlockKey(sessionID: $0.sessionID, blockID: $0.blockID)
+            if readBlocks.contains(block) { return false }
+            let unread = unreadBlocks.contains(block) || unreadSessions.contains($0.sessionID)
+            return !(unread && liveSessions.contains($0.sessionID))
+        }
 
         // Silent baselines: the first successful snapshot settles everything; later ones settle
         // sessions the store has not been told about (created during an outage).
