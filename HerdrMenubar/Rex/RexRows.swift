@@ -59,6 +59,18 @@ enum RexRows {
         RexText.sanitizedNonEmpty(label) ?? fallbackSessionName
     }
 
+    /// Case-folded text for ordering, matching `AgentRow.labelOrder`.
+    static func foldedLabel(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    /// Rex session order: case-folded display name, then session id.
+    static func compareSessions(_ lhs: AgentSessionDescriptor, _ rhs: AgentSessionDescriptor) -> Bool {
+        let l = foldedLabel(lhs.displayName), r = foldedLabel(rhs.displayName)
+        if l != r { return l < r }
+        return lhs.key.rawID < rhs.key.rawID
+    }
+
     /// An unnamed window is labeled `Window ` + the last 8 hex digits of its window id (F10).
     static func isDefaultWindowLabel(_ label: String, windowID: String?) -> Bool {
         guard let windowID else { return false }
