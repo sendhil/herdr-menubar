@@ -18,6 +18,7 @@
 		CC00000000000000000000D2 /* RexBackendTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000E2 /* RexBackendTestSupport.swift */; };
 		CC00000000000000000000B5 /* RexReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000C5 /* RexReducerTests.swift */; };
 		CC00000000000000000000D3 /* RexBackendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000E3 /* RexBackendTests.swift */; };
+		CC0000000000000000000101 /* AgentStoreRexPendingTargetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000111 /* AgentStoreRexPendingTargetTests.swift */; };
 		CC00000000000000000000D5 /* RexFocusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000E5 /* RexFocusTests.swift */; };
 		CC00000000000000000000B6 /* RexSeenStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000C6 /* RexSeenStateTests.swift */; };
 		CC00000000000000000000B7 /* RexFlapProtectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000C7 /* RexFlapProtectionTests.swift */; };
@@ -134,6 +135,7 @@
 		CC00000000000000000000E2 /* RexBackendTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexBackendTestSupport.swift; sourceTree = "<group>"; };
 		CC00000000000000000000C5 /* RexReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexReducerTests.swift; sourceTree = "<group>"; };
 		CC00000000000000000000E3 /* RexBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexBackendTests.swift; sourceTree = "<group>"; };
+		CC0000000000000000000111 /* AgentStoreRexPendingTargetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStoreRexPendingTargetTests.swift; sourceTree = "<group>"; };
 		CC00000000000000000000E5 /* RexFocusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexFocusTests.swift; sourceTree = "<group>"; };
 		CC00000000000000000000C6 /* RexSeenStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexSeenStateTests.swift; sourceTree = "<group>"; };
 		CC00000000000000000000C7 /* RexFlapProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexFlapProtectionTests.swift; sourceTree = "<group>"; };
@@ -315,6 +317,7 @@
 				CC00000000000000000000C5 /* RexReducerTests.swift */,
 				CC00000000000000000000E3 /* RexBackendTests.swift */,
 				CC00000000000000000000E5 /* RexFocusTests.swift */,
+				CC0000000000000000000111 /* AgentStoreRexPendingTargetTests.swift */,
 				CC00000000000000000000C4 /* RexReducerTestSupport.swift */,
 				CC00000000000000000000E2 /* RexBackendTestSupport.swift */,
 				CC0000000000000000000019 /* Fixtures */,
@@ -652,6 +655,7 @@
 				CC00000000000000000000B5 /* RexReducerTests.swift in Sources */,
 				CC00000000000000000000D3 /* RexBackendTests.swift in Sources */,
 				CC00000000000000000000D5 /* RexFocusTests.swift in Sources */,
+				CC0000000000000000000101 /* AgentStoreRexPendingTargetTests.swift in Sources */,
 				CC00000000000000000000B4 /* RexReducerTestSupport.swift in Sources */,
 				CC00000000000000000000D2 /* RexBackendTestSupport.swift in Sources */,
 				BB0000000000000000000005 /* BackendTestSupport.swift in Sources */,

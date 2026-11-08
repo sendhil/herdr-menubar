@@ -355,10 +355,11 @@ private func row(_ key: AgentSessionKey, _ paneID: String, _ state: RowState) ->
 }
 
 @MainActor
-private func makeBackendStore(
+func makeBackendStore(
     _ backends: [any AgentBackend],
     coordinator: BackendStoreCoordinator = BackendStoreCoordinator(),
-    enabledBackends: [String] = ["herdr", "rex"]
+    enabledBackends: [String] = ["herdr", "rex"],
+    clock: any AgentStoreClock = LiveRexBackendClock()
 ) -> AgentStore {
     let defaults = UserDefaults(suiteName: "dev.herdr.menubar.backend-store-tests.\(UUID().uuidString)")!
     defaults.set(enabledBackends, forKey: Preferences.enabledBackendsKey)
@@ -366,7 +367,8 @@ private func makeBackendStore(
         backends: backends,
         attentionCoordinator: coordinator,
         notificationService: BackendStoreNotifications(),
-        preferences: Preferences(defaults: defaults)
+        preferences: Preferences(defaults: defaults),
+        clock: clock
     )
 }
 
@@ -382,7 +384,7 @@ private func eventually(
 }
 
 @MainActor
-private final class FakeAgentBackend: AgentBackend {
+final class FakeAgentBackend: AgentBackend {
     nonisolated let kind: BackendKind
     private(set) var calls: [String] = []
     private(set) var markedTokens: [SeenToken] = []
@@ -446,7 +448,7 @@ private final class FakeAgentBackend: AgentBackend {
     }
 }
 
-private actor BackendStoreCoordinator: AttentionNotificationCoordinating {
+actor BackendStoreCoordinator: AttentionNotificationCoordinating {
     private(set) var reconciledSessions: [AgentSessionKey] = []
     private(set) var unavailableSessions: [AgentSessionKey] = []
     private(set) var removedSessions: [AgentSessionKey] = []
@@ -459,7 +461,7 @@ private actor BackendStoreCoordinator: AttentionNotificationCoordinating {
     func reset() {}
 }
 
-private actor BackendStoreNotifications: NativeNotificationServing {
+actor BackendStoreNotifications: NativeNotificationServing {
     func responses() async -> NotificationResponseSubscription { .finished() }
     func requestAuthorization() async throws -> Bool { true }
     func settings() async -> NotificationSystemSettings { .authorized }

@@ -50,16 +50,25 @@ private extension AgentRow {
     }
 }
 
+/// The store's deadline clock (pending Rex notification targets); same shape as RexBackend's.
+typealias AgentStoreClock = RexBackendClock
+
 @Observable @MainActor
 final class AgentStore {
     private let backends: [any AgentBackend]
     private let attentionCoordinator: any AttentionNotificationCoordinating
     private let notificationService: any NativeNotificationServing
     private let preferences: Preferences
+    private let clock: any AgentStoreClock
     private var eventTasks: [Task<Void, Never>] = []
     private var notificationResponseTask: Task<Void, Never>?
     private var notificationResponseSubscription: NotificationResponseSubscription?
     private var pendingNotificationTarget: SelectionTarget?
+    /// Rex (non-Herdr) pending targets only: the store-owned deadline and its identity.
+    private var pendingDeadlineTask: Task<Void, Never>?
+    private var pendingDeadlineToken: UUID?
+    /// Backends whose latest event is `.backendHidden`; cleared by any later event from them.
+    private var hiddenBackends: Set<BackendKind> = []
     private var eventGeneration = UUID()
     private var startTask: Task<Void, Never>?
     private var startToken: UUID?
@@ -71,6 +80,8 @@ final class AgentStore {
     private var isRunning = false
     private var discoveredBackends: Set<BackendKind> = []
     private var sessions: [AgentSessionKey: SessionPresentationState] = [:]
+
+    static let pendingTargetDeadline: Duration = .seconds(30)
 
     private(set) var connectionState: ConnectionState = .searching
     private(set) var transientError: String?
@@ -105,12 +116,14 @@ final class AgentStore {
         backends: [any AgentBackend],
         attentionCoordinator: any AttentionNotificationCoordinating,
         notificationService: any NativeNotificationServing,
-        preferences: Preferences = Preferences()
+        preferences: Preferences = Preferences(),
+        clock: any AgentStoreClock = LiveRexBackendClock()
     ) {
         self.backends = backends
         self.attentionCoordinator = attentionCoordinator
         self.notificationService = notificationService
         self.preferences = preferences
+        self.clock = clock
     }
 
     func start() async {
@@ -199,7 +212,8 @@ final class AgentStore {
         notificationResponseTask = nil
         let responseSubscription = notificationResponseSubscription
         notificationResponseSubscription = nil
-        pendingNotificationTarget = nil
+        clearPendingTarget()
+        hiddenBackends.removeAll()
         responseSubscription?.cancel()
         responseConsumer?.cancel()
         discoveredBackends.removeAll()
@@ -245,7 +259,7 @@ final class AgentStore {
 
     /// A menu row was chosen.
     func selectRow(_ target: SelectionTarget) async {
-        pendingNotificationTarget = nil
+        clearPendingTarget()
         await startSelection(target)?.value
     }
 
@@ -335,6 +349,9 @@ private extension AgentStore {
 
     func consume(_ event: BackendEvent, from kind: BackendKind, generation: UUID) async {
         guard isRunning, eventGeneration == generation else { return }
+        if event != .backendHidden {
+            hiddenBackends.remove(kind)
+        }
         switch event {
         case .discovery(let descriptors):
             discoveredBackends.insert(kind)
@@ -380,9 +397,9 @@ private extension AgentStore {
         case .removed(let key):
             let removedState = sessions.removeValue(forKey: key)
             if let pendingNotificationTarget, pendingNotificationTarget.target.session == key {
-                self.pendingNotificationTarget = nil
+                clearPendingTarget()
                 let name = removedState?.descriptor.displayName ?? sessionName(for: key, hint: pendingNotificationTarget)
-                transientError = "\(name) is unavailable"
+                transientError = goneMessage(name: name, kind: kind)
             }
             guard removedState != nil else { return }
             await attentionCoordinator.remove(session: key)
@@ -406,6 +423,7 @@ private extension AgentStore {
                 await attentionCoordinator.unavailable(session: key)
             }
         case .backendHidden:
+            hiddenBackends.insert(kind)
             unavailableBackends[kind] = nil
             activeBackends.remove(kind)
             discoveredBackends.remove(kind)
@@ -414,7 +432,7 @@ private extension AgentStore {
                 sessions.removeValue(forKey: key)
             }
             if let pendingNotificationTarget, pendingNotificationTarget.target.session.backend == kind {
-                self.pendingNotificationTarget = nil
+                clearPendingTarget()
                 transientError = "\(kind.displayName) is not available"
             }
             deriveConnectionState()
@@ -447,20 +465,27 @@ private extension AgentStore {
             return
         }
         supersedeSelection()
+        // Rex condition (c): the backend is currently hidden.
+        if kind != .herdr, hiddenBackends.contains(kind) {
+            clearPendingTarget()
+            transientError = "\(kind.displayName) is not available"
+            return
+        }
         guard let state = sessions[target.target.session] else {
             if discoveredBackends.contains(kind) {
-                pendingNotificationTarget = nil
-                transientError = "\(sessionName(for: target.target.session, hint: target)) is unavailable"
+                // Rex condition (a); Herdr's absent-session rule.
+                clearPendingTarget()
+                transientError = goneMessage(name: sessionName(for: target.target.session, hint: target), kind: kind)
             } else {
-                pendingNotificationTarget = target
+                holdPendingTarget(target)
             }
             return
         }
         guard state.isConnected else {
-            pendingNotificationTarget = target
+            holdPendingTarget(target)
             return
         }
-        pendingNotificationTarget = nil
+        clearPendingTarget()
         startSelection(SelectionTarget(target: target.target, sessionDisplayName: state.descriptor.displayName))
     }
 
@@ -477,8 +502,51 @@ private extension AgentStore {
               !discovered.contains(where: { $0.key == pendingNotificationTarget.target.session }) else {
             return
         }
-        self.pendingNotificationTarget = nil
-        transientError = "\(sessionName(for: pendingNotificationTarget.target.session, hint: pendingNotificationTarget)) is unavailable"
+        clearPendingTarget()
+        transientError = goneMessage(
+            name: sessionName(for: pendingNotificationTarget.target.session, hint: pendingNotificationTarget),
+            kind: kind
+        )
+    }
+
+    /// Herdr keeps today's wording; other backends say the session is no longer running.
+    func goneMessage(name: String, kind: BackendKind) -> String {
+        kind == .herdr ? "\(name) is unavailable" : "\(name) is no longer running in \(kind.displayName)"
+    }
+
+    /// Holds `target` as the one pending target. Herdr targets have no deadline (today's rules);
+    /// other backends' targets get a fresh store-owned deadline from their receipt (condition d).
+    func holdPendingTarget(_ target: SelectionTarget) {
+        cancelPendingDeadline()
+        pendingNotificationTarget = target
+        let kind = target.target.session.backend
+        guard kind != .herdr else { return }
+        let token = UUID()
+        let generation = eventGeneration
+        let deadline = clock.now + Self.pendingTargetDeadline
+        let clock = self.clock
+        pendingDeadlineToken = token
+        pendingDeadlineTask = Task { [weak self] in
+            do { try await clock.sleep(until: deadline) } catch { return }
+            guard let self, !Task.isCancelled, self.isRunning, self.eventGeneration == generation,
+                  self.pendingDeadlineToken == token else { return }
+            self.pendingDeadlineTask = nil
+            self.pendingDeadlineToken = nil
+            self.pendingNotificationTarget = nil
+            self.transientError = "\(kind.displayName) did not respond in time"
+        }
+    }
+
+    /// Superseded, resolved, discarded, or stopped: the pending target and its deadline go together.
+    func clearPendingTarget() {
+        pendingNotificationTarget = nil
+        cancelPendingDeadline()
+    }
+
+    func cancelPendingDeadline() {
+        pendingDeadlineTask?.cancel()
+        pendingDeadlineTask = nil
+        pendingDeadlineToken = nil
     }
 
     /// User-facing session name: the store's descriptor, else the raw Herdr session ID.
