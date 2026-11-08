@@ -9,6 +9,12 @@ final class Preferences {
     static let launchAtLoginIntentKey = "launchAtLoginIntent"
     static let notificationsEnabledKey = "notificationsEnabled"
     static let notificationSoundEnabledKey = "notificationSoundEnabled"
+    static let enabledBackendsKey = "enabledBackends"
+    static let defaultEnabledBackends: Set<BackendKind> = [.herdr]
+
+    static func notifyStatesKey(for kind: BackendKind) -> String {
+        "notifyStates.\(kind.rawValue)"
+    }
 
     private let defaults: UserDefaults
     private static let hostedTestDefaults: UserDefaults = {
@@ -46,6 +52,17 @@ final class Preferences {
         didSet { defaults.set(notificationSoundEnabled, forKey: Self.notificationSoundEnabledKey) }
     }
 
+    /// Read once at launch. Changed only with `defaults write`; there is no UI.
+    let enabledBackends: Set<BackendKind>
+
+    /// One entry per backend. Absent keys use `BackendKind.defaultNotifyStates` and are not written.
+    private(set) var notifyStates: [BackendKind: Set<AttentionState>]
+
+    func setNotifyStates(_ states: Set<AttentionState>, for kind: BackendKind) {
+        notifyStates[kind] = states
+        defaults.set(states.map(\.rawValue).sorted(), forKey: Self.notifyStatesKey(for: kind))
+    }
+
     init(defaults: UserDefaults = Preferences.applicationDefaults()) {
         self.defaults = defaults
         if !defaults.bool(forKey: Self.ghosttyDefaultMigrationKey) {
@@ -59,5 +76,13 @@ final class Preferences {
         launchAtLoginIntent = defaults.bool(forKey: Self.launchAtLoginIntentKey)
         notificationsEnabled = defaults.bool(forKey: Self.notificationsEnabledKey)
         notificationSoundEnabled = defaults.bool(forKey: Self.notificationSoundEnabledKey)
+        enabledBackends = defaults.stringArray(forKey: Self.enabledBackendsKey)
+            .map { Set($0.compactMap(BackendKind.init(rawValue:))) }
+            ?? Self.defaultEnabledBackends
+        notifyStates = Dictionary(uniqueKeysWithValues: BackendKind.allCases.map { kind in
+            let stored = defaults.stringArray(forKey: Self.notifyStatesKey(for: kind))
+                .map { Set($0.compactMap(AttentionState.init(rawValue:))) }
+            return (kind, stored ?? kind.defaultNotifyStates)
+        })
     }
 }

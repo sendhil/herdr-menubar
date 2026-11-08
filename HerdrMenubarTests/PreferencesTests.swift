@@ -129,6 +129,57 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
+    func testBackendPreferencesDefaultToSpecValuesWithoutWriting() {
+        withDefaults { defaults in
+            let preferences = Preferences(defaults: defaults)
+
+            XCTAssertEqual(preferences.enabledBackends, [.herdr])
+            XCTAssertEqual(preferences.notifyStates, [.herdr: [.blocked, .done], .rex: [.blocked, .error]])
+            XCTAssertNil(defaults.object(forKey: "enabledBackends"))
+            XCTAssertNil(defaults.object(forKey: "notifyStates.herdr"))
+            XCTAssertNil(defaults.object(forKey: "notifyStates.rex"))
+        }
+    }
+
+    func testEnabledBackendsReadsDefaultsWriteValueAndIgnoresUnknownNames() {
+        withDefaults { defaults in
+            defaults.set(["rex", "wezterm", "herdr"], forKey: "enabledBackends")
+            XCTAssertEqual(Preferences(defaults: defaults).enabledBackends, [.herdr, .rex])
+
+            defaults.set([String](), forKey: "enabledBackends")
+            XCTAssertEqual(Preferences(defaults: defaults).enabledBackends, [])
+        }
+    }
+
+    func testNotifyStatesPersistPerBackendOnlyWhenChanged() {
+        withDefaults { defaults in
+            let preferences = Preferences(defaults: defaults)
+
+            preferences.setNotifyStates([.blocked], for: .herdr)
+            XCTAssertEqual(preferences.notifyStates[.herdr], [.blocked])
+            XCTAssertEqual(defaults.stringArray(forKey: "notifyStates.herdr"), ["blocked"])
+            XCTAssertNil(defaults.object(forKey: "notifyStates.rex"))
+
+            preferences.setNotifyStates([.error, .done, .blocked], for: .rex)
+            XCTAssertEqual(defaults.stringArray(forKey: "notifyStates.rex"), ["blocked", "done", "error"])
+
+            let reloaded = Preferences(defaults: defaults)
+            XCTAssertEqual(reloaded.notifyStates[.herdr], [.blocked])
+            XCTAssertEqual(reloaded.notifyStates[.rex], [.blocked, .done, .error])
+        }
+    }
+
+    func testStoredNotifyStatesIgnoreUnknownValuesAndMayBeEmpty() {
+        withDefaults { defaults in
+            defaults.set(["blocked", "exploded"], forKey: "notifyStates.rex")
+            defaults.set([String](), forKey: "notifyStates.herdr")
+            let preferences = Preferences(defaults: defaults)
+
+            XCTAssertEqual(preferences.notifyStates[.rex], [.blocked])
+            XCTAssertEqual(preferences.notifyStates[.herdr], [])
+        }
+    }
+
     private func withDefaults(_ body: @MainActor (UserDefaults) -> Void) {
         let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
