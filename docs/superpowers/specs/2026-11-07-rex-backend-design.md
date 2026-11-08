@@ -518,7 +518,7 @@ The reducer's per-generation state is reset at the start of each watcher generat
   - Unknown session: create it and emit `.connected(descriptor, empty)`.
   - Known session: treat as a label update only.
 - `snapshot_done`:
-  1. Prune last-known records, seen marks, and settled status for blocks and sessions absent from this generation's snapshot. Blocks this snapshot could not read (a `status_error`, or a live session with a `list_blocks_error`) keep theirs, so a later successful read compares against history: unchanged records keep their epochs and do not notify again.
+  1. Prune last-known records, seen marks, and settled status for blocks and sessions absent from this generation's snapshot. Blocks this snapshot could not read (a `status_error`, or a live session with a `list_blocks_error`) keep theirs, so a later successful read compares against history: unchanged records keep their epochs and do not notify again. A block with no history (its read failed in the first snapshot) enters `attention` through normal settling when it is read later, and can notify once for a status that predates the read; that is accepted, like late-placed blocks.
   2. Emit `.discovery`.
   3. Emit `.connected` per session with its current rows and attention.
   4. Emit `.removed` for sessions known to the store and absent now.
