@@ -144,6 +144,42 @@ final class ManagedProcessTests: XCTestCase {
         guard case .exited = events.last else { return XCTFail("\(events)") }
     }
 
+    func testLinesBeforeAnOversizedLineInTheSameChunkAreDeliveredFirst() async throws {
+        let process = ManagedProcess(executable: "/bin/sh", arguments: ["-c", "printf 'a\\nb\\n0123456789\\nafter\\n'"],
+                                     generation: 2, stdout: .lines(maxLineLength: 5))
+        let events = await collect(try process.start())
+        XCTAssertEqual(Array(events.prefix(3)), [
+            .line(generation: 2, Data("a".utf8)),
+            .line(generation: 2, Data("b".utf8)),
+            .framingError(generation: 2, .lineTooLong(limit: 5)),
+        ])
+        XCTAssertEqual(events.count, 4)
+        guard case .exited = events.last else { return XCTFail("\(events)") }
+    }
+
+    func testDroppedProcessStillClosesItsPipesWhenTheChildFinishes() async throws {
+        func openFDs() -> Set<Int32> {
+            Set((0..<Int32(1024)).filter { fcntl($0, F_GETFD) != -1 })
+        }
+        let before = openFDs()
+        var process: ManagedProcess? = ManagedProcess(executable: "/bin/sh", arguments: ["-c", "sleep 0.3; echo x; echo y >&2"])
+        weak let weakProcess = process
+        // Keep the stream alive: dropping it would (correctly) terminate the child through a
+        // task that retains the process.
+        let stream = try XCTUnwrap(try process?.start())
+        let pipeFDs = openFDs().subtracting(before)
+        XCTAssertFalse(pipeFDs.isEmpty)
+        process = nil
+        XCTAssertNil(weakProcess)
+        var closed = false
+        for _ in 0..<60 {
+            if pipeFDs.allSatisfy({ fcntl($0, F_GETFD) == -1 }) { closed = true; break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(closed, "pipe fds \(pipeFDs) still open after the owner was dropped")
+        withExtendedLifetime(stream) {}
+    }
+
     func testIncompleteFinalLineIsAFramingError() async throws {
         let process = ManagedProcess(executable: "/bin/sh", arguments: ["-c", "printf '{\"a\"'"], stdout: .lines(maxLineLength: nil))
         let events = await collect(try process.start())

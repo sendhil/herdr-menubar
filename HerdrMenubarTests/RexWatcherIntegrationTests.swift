@@ -69,8 +69,12 @@ final class RexWatcherIntegrationTests: XCTestCase {
         guard case .exited(_, let termination) = other.last else { return XCTFail("\(other)") }
         XCTAssertTrue(termination.terminatedByUs)
 
-        let announced = Set(lines.compactMap { if case .session(let id, _) = $0 { id } else { nil } })
-        for line in lines {
+        // Only the snapshot is checked: events queued during it may legitimately arrive after
+        // `snapshot_done` (with `via`, or as a status_error) while the user's agents are busy.
+        let doneIndex = try XCTUnwrap(lines.firstIndex(of: .snapshotDone))
+        let snapshot = lines[...doneIndex]
+        let announced = Set(snapshot.compactMap { if case .session(let id, _) = $0 { id } else { nil } })
+        for line in snapshot {
             switch line {
             case .view(let view): XCTAssertTrue(announced.contains(view.sessionID))
             case .block(let read):

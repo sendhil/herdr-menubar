@@ -21,20 +21,20 @@ struct JSONLineFramer: Sendable {
     /// Unlimited framing, unchanged from before `maxLineLength` existed. Never enforces a cap.
     mutating func append(_ data: Data) -> [Data] {
         pending.append(data)
-        return drainCompleteLines(limit: nil) ?? []
+        return drainCompleteLines(limit: nil).lines
     }
 
-    /// Framing that enforces `maxLineLength` when one is set. Overflow is a framing error and is
-    /// sticky: the buffered data is discarded and every later call throws the same error.
-    mutating func appendLines(_ data: Data) throws(FramingError) -> [Data] {
-        if overflowed, let maxLineLength { throw .lineTooLong(limit: maxLineLength) }
+    /// Framing that enforces `maxLineLength` when one is set. Complete lines that precede an
+    /// over-cap line are returned first, together with the error. Overflow is sticky: the
+    /// buffered data is discarded and every later call returns no lines and the same error.
+    mutating func appendLines(_ data: Data) -> (lines: [Data], error: FramingError?) {
+        if overflowed, let maxLineLength { return ([], .lineTooLong(limit: maxLineLength)) }
         pending.append(data)
-        guard let lines = drainCompleteLines(limit: maxLineLength) else {
-            overflowed = true
-            pending.removeAll(keepingCapacity: false)
-            throw .lineTooLong(limit: maxLineLength ?? 0)
-        }
-        return lines
+        let (lines, exceeded) = drainCompleteLines(limit: maxLineLength)
+        guard exceeded, let maxLineLength else { return (lines, nil) }
+        overflowed = true
+        pending.removeAll(keepingCapacity: false)
+        return (lines, .lineTooLong(limit: maxLineLength))
     }
 
     mutating func finish() throws(FramingError) {
@@ -47,8 +47,9 @@ struct JSONLineFramer: Sendable {
         pending.removeAll(keepingCapacity: false)
     }
 
-    /// Returns nil when `limit` is exceeded by a complete line or by the unterminated remainder.
-    private mutating func drainCompleteLines(limit: Int?) -> [Data]? {
+    /// Lines completed before `limit` was exceeded (by a complete line or by the unterminated
+    /// remainder), and whether it was.
+    private mutating func drainCompleteLines(limit: Int?) -> (lines: [Data], exceeded: Bool) {
         var lines: [Data] = []
 
         while let newlineIndex = pending.firstIndex(of: 0x0A) {
@@ -57,7 +58,7 @@ struct JSONLineFramer: Sendable {
             if line.last == 0x0D {
                 line.removeLast()
             }
-            if let limit, line.count > limit { return nil }
+            if let limit, line.count > limit { return (lines, true) }
             if !line.isEmpty {
                 lines.append(line)
             }
@@ -66,8 +67,8 @@ struct JSONLineFramer: Sendable {
         if let limit {
             // A trailing `\r` may still turn out to be part of a CRLF terminator.
             let remainder = pending.last == 0x0D ? pending.count - 1 : pending.count
-            if remainder > limit { return nil }
+            if remainder > limit { return (lines, true) }
         }
-        return lines
+        return (lines, false)
     }
 }

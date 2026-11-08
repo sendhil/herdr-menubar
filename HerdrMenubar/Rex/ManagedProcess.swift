@@ -122,6 +122,14 @@ final class ManagedProcess: Sendable {
         state = Mutex(initial)
     }
 
+    deinit {
+        // Dropped while the pipes are still open: cancel the sources so their cancel handlers
+        // close the fds (a released source would otherwise leak its fd). The reaper thread
+        // still reaps the child.
+        let sources = state.withLock { $0.sources }
+        for source in sources where !source.isCancelled { source.cancel() }
+    }
+
     var pid: pid_t? { state.withLock { $0.pid } }
     var termination: ProcessTermination? { state.withLock { $0.termination } }
     /// Stdout collected in `.collect` mode (complete once `.exited` has been delivered).
@@ -265,7 +273,12 @@ final class ManagedProcess: Sendable {
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self, weak source] in
-            guard let self, let source else { return }
+            guard let source else { return }
+            guard let self else {
+                // The owner is gone: stop watching; the cancel handler closes the fd.
+                source.cancel()
+                return
+            }
             var buffer = [UInt8](repeating: 0, count: 65_536)
             while true {
                 let count = read(fd, &buffer, buffer.count)
@@ -298,11 +311,11 @@ final class ManagedProcess: Sendable {
                 let room = max(0, limit - state.collected.count)
                 state.collected.append(data.prefix(room))
             case .lines:
-                do throws(FramingError) {
-                    events = try state.framer.appendLines(data).map { .line(generation: generation, $0) }
-                } catch {
+                let output = state.framer.appendLines(data)
+                events = output.lines.map { .line(generation: generation, $0) }
+                if let error = output.error {
                     state.framingFailed = true
-                    events = [.framingError(generation: generation, error)]
+                    events.append(.framingError(generation: generation, error))
                 }
             }
             return state.continuation
