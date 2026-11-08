@@ -73,6 +73,24 @@ struct LiveRexAppControl: RexAppControlling {
     }
 }
 
+/// Subscribes a handler to "the Mac woke from sleep"; returns the unsubscribe action.
+typealias RexWakeSubscription = @Sendable (@escaping @Sendable () -> Void) -> @Sendable () -> Void
+
+enum RexSystemWake {
+    private final class Token: @unchecked Sendable {
+        let observer: NSObjectProtocol
+        init(_ observer: NSObjectProtocol) { self.observer = observer }
+    }
+
+    /// NSWorkspace's did-wake notification.
+    static let live: RexWakeSubscription = { handler in
+        let token = Token(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
+        ) { _ in handler() })
+        return { NSWorkspace.shared.notificationCenter.removeObserver(token.observer) }
+    }
+}
+
 // MARK: Backend
 
 actor RexBackend: AgentBackend {
@@ -80,6 +98,10 @@ actor RexBackend: AgentBackend {
     static let backoffSchedule: [Duration] = [.seconds(1), .seconds(2), .seconds(5), .seconds(15), .seconds(60)]
     static let snapshotTimeout: Duration = .seconds(20)
     static let heartbeatTimeout: Duration = .seconds(15)
+    /// A supervision timer that fires this much later than its deadline means the process (or
+    /// the Mac) was suspended: `ContinuousClock` keeps counting during sleep. Such a deadline
+    /// re-arms a fresh grace window instead of failing the watcher.
+    static let suspensionTolerance: Duration = .seconds(5)
     static let hiddenRecheckInterval: Duration = .seconds(300)
     static let serverUnreachableInterval: Duration = .seconds(60)
     /// Watcher exit status meaning "no Rex server is running" (F15).
@@ -95,6 +117,8 @@ actor RexBackend: AgentBackend {
     let clock: any RexBackendClock
     let hostName: @Sendable () -> String?
     private let isEnabled: @Sendable () -> Bool
+    private let observeWake: RexWakeSubscription
+    private var cancelWakeObservation: (@Sendable () -> Void)?
 
     private var continuation: AsyncStream<BackendEvent>.Continuation?
     private var reducer = RexReducer()
@@ -153,8 +177,10 @@ actor RexBackend: AgentBackend {
         app: any RexAppControlling = LiveRexAppControl(),
         clock: any RexBackendClock = LiveRexBackendClock(),
         hostName: @escaping @Sendable () -> String? = { Host.current().localizedName },
+        observeWake: @escaping RexWakeSubscription = RexSystemWake.live,
         isEnabled: @escaping @Sendable () -> Bool
     ) {
+        self.observeWake = observeWake
         self.resolver = resolver
         self.scriptURL = scriptURL
         self.makeWatcher = makeWatcher
@@ -188,12 +214,17 @@ actor RexBackend: AgentBackend {
             return
         }
         let owner = lifecycle
+        cancelWakeObservation = observeWake { [weak self] in
+            Task { await self?.systemDidWake() }
+        }
         loopTask = Task { [weak self] in await self?.runLoop(lifecycle: owner) }
     }
 
     func stop() async {
         lifecycle += 1
         isRunning = false
+        cancelWakeObservation?()
+        cancelWakeObservation = nil
         let loop = loopTask
         loopTask = nil
         loop?.cancel()
@@ -508,12 +539,31 @@ actor RexBackend: AgentBackend {
         if !pendingProcessEvents.isEmpty { drainProcessEvents() }
         let now = clock.now
         if let generation = current, now >= generation.supervisionDeadline {
-            let reason = generation.snapshotDone
-                ? "The Rex watcher stopped responding"
-                : "Rex did not finish its snapshot in time"
-            finishGeneration(GenerationOutcome(reason: reason))
+            if now - deadline > Self.suspensionTolerance {
+                // Fired long after its deadline: we were asleep, and so was the watcher.
+                AppLog.synchronization.info("Rex supervision deadline fired late; allowing a fresh grace window")
+                current?.supervisionDeadline = now + Self.graceWindow(snapshotDone: generation.snapshotDone)
+            } else {
+                let reason = generation.snapshotDone
+                    ? "The Rex watcher stopped responding"
+                    : "Rex did not finish its snapshot in time"
+                finishGeneration(GenerationOutcome(reason: reason))
+            }
         }
         emit(reducer.tick(now: now))
+        rearmTimer()
+    }
+
+    private static func graceWindow(snapshotDone: Bool) -> Duration {
+        snapshotDone ? heartbeatTimeout : snapshotTimeout
+    }
+
+    /// The Mac woke from sleep: give the watcher a full window to speak again before the
+    /// supervision deadline can fail it.
+    func systemDidWake() {
+        guard let generation = current else { return }
+        let fresh = clock.now + Self.graceWindow(snapshotDone: generation.snapshotDone)
+        current?.supervisionDeadline = max(generation.supervisionDeadline, fresh)
         rearmTimer()
     }
 

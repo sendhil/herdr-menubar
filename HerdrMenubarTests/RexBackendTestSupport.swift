@@ -157,6 +157,26 @@ final class FakeWatcherProcess: RexWatcherProcess, @unchecked Sendable {
     }
 }
 
+/// Stands in for NSWorkspace's did-wake notification.
+final class FakeRexWakeSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handlers: [UUID: @Sendable () -> Void] = [:]
+
+    var subscriberCount: Int { lock.withLock { handlers.count } }
+
+    var subscribe: RexWakeSubscription {
+        { [self] handler in
+            let id = UUID()
+            lock.withLock { handlers[id] = handler }
+            return { [self] in _ = lock.withLock { handlers.removeValue(forKey: id) } }
+        }
+    }
+
+    func fire() {
+        for handler in lock.withLock({ Array(handlers.values) }) { handler() }
+    }
+}
+
 final class FakeWatcherFactory: @unchecked Sendable {
     private let lock = NSLock()
     private var _processes: [FakeWatcherProcess] = []

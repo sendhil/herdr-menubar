@@ -242,6 +242,65 @@ final class RexBackendTests: XCTestCase {
         XCTAssertGreaterThan(watchers.processes[0].terminateCount, 0)
     }
 
+    func testHeartbeatDeadlineFiringLateAfterSleepReArmsAFreshGraceWindow() async {
+        await startHealthy()
+        await waitForSleep(.seconds(15))
+        clock.advance(.seconds(600))   // the Mac slept; the deadline fires ~585 s late on wake
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(615)) }
+        XCTAssertTrue(unavailableReasons().isEmpty, "\(unavailableReasons())")
+        XCTAssertEqual(watchers.processes[0].terminateCount, 0)
+
+        clock.advance(.seconds(14))
+        watchers.last!.send(RexJSON.heartbeat)   // the watcher resumes: healthy again
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(629)) }
+        clock.advance(.seconds(15))               // and no heartbeat within the next window fails
+        await waitForEvent { $0 == .backendUnavailable("The Rex watcher stopped responding") }
+    }
+
+    func testSnapshotDeadlineFiringLateAfterSleepReArmsAFreshGraceWindow() async {
+        await start()
+        await waitForProcess(1)
+        await waitForSleep(.seconds(20))
+        clock.advance(.seconds(300))
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(320)) }
+        XCTAssertTrue(unavailableReasons().isEmpty, "\(unavailableReasons())")
+        clock.advance(.seconds(20))
+        await waitForEvent { $0 == .backendUnavailable("Rex did not finish its snapshot in time") }
+    }
+
+    func testSlightlyLateDeadlineStillFails() async {
+        await startHealthy()
+        await waitForSleep(.seconds(15))
+        clock.advance(.seconds(17))   // within the lateness tolerance: a real stall
+        await waitForEvent { $0 == .backendUnavailable("The Rex watcher stopped responding") }
+    }
+
+    func testSystemWakeExtendsTheSupervisionDeadline() async {
+        let wake = FakeRexWakeSignal()
+        backend = RexBackend(resolver: resolver, scriptURL: URL(fileURLWithPath: "/x.lua"), makeWatcher: watchers.factory,
+                             runner: ScriptedProcessRunner(), app: FakeRexApp(), clock: clock, hostName: { nil },
+                             observeWake: wake.subscribe, isEnabled: { true })
+        recorder = BackendEventRecorder(await backend.events())
+        await backend.start()
+        await waitForProcess(1)
+        watchers.last!.send(RexJSON.snapshot())
+        await waitForEvent(isConnected)
+        await waitForSleep(.seconds(15))
+        XCTAssertEqual(wake.subscriberCount, 1)
+
+        clock.advance(.seconds(14))
+        wake.fire()
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(29)) }
+        clock.advance(.seconds(1))
+        await settleTasks()
+        XCTAssertTrue(unavailableReasons().isEmpty, "\(unavailableReasons())")
+        clock.advance(.seconds(14))
+        await waitForEvent { $0 == .backendUnavailable("The Rex watcher stopped responding") }
+
+        await backend.stop()
+        XCTAssertEqual(wake.subscriberCount, 0, "stop() unsubscribes")
+    }
+
     func testBackoffIsOneTwoFiveFifteenThenSixtySeconds() async {
         await start()
         var expected = 1
