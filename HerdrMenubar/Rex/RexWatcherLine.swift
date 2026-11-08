@@ -344,3 +344,30 @@ enum RexTimestamp {
         return era * 146_097 + doe - 719_468
     }
 }
+
+// MARK: Watcher script
+
+/// The bundled `RexWatcher.lua` and how to run it.
+enum RexWatcherScript {
+    static let resourceName = "RexWatcher"
+    static let resourceExtension = "lua"
+
+    static func bundledURL(in bundle: Bundle = .main) -> URL? {
+        bundle.url(forResource: resourceName, withExtension: resourceExtension)
+    }
+
+    /// `rex --autostart=false do <path> --all`
+    static func arguments(scriptPath: String) -> [String] {
+        ["--autostart=false", "do", scriptPath, "--all"]
+    }
+
+    /// An unstarted watcher process: scrubbed environment, 4 MiB line cap, tagged `generation`.
+    static func makeProcess(cli: RexCLI, scriptURL: URL, generation: Int) -> ManagedProcess {
+        ManagedProcess(
+            executable: cli.path,
+            arguments: arguments(scriptPath: scriptURL.path),
+            generation: generation,
+            stdout: .lines(maxLineLength: ManagedProcess.watcherMaxLineLength)
+        )
+    }
+}
