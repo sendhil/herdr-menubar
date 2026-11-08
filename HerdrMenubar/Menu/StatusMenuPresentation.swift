@@ -63,21 +63,25 @@ struct StatusMenuPresentationBuilder {
         loginItem: any LoginItemManaging,
         notifications: NotificationSettingsController
     ) -> StatusItemPresentation {
-        StatusItemPresentation(
+        let wording = AgentWording.herdr
+        return StatusItemPresentation(
             icon: MenuBarIconPresentation(
                 connectionState: store.connectionState,
-                attentionCount: store.attentionCount
+                attentionCount: store.attentionCount,
+                wording: wording
             ),
             accessibilityValue: MenuBarIcon.accessibilityValue(
                 connectionState: store.connectionState,
-                attentionCount: store.attentionCount
+                attentionCount: store.attentionCount,
+                wording: wording
             ),
             menu: makeMenu(
                 store: store,
                 preferences: preferences,
                 terminals: terminals,
                 loginItem: loginItem,
-                notifications: notifications
+                notifications: notifications,
+                wording: wording
             )
         )
     }
@@ -90,7 +94,8 @@ private extension StatusMenuPresentationBuilder {
         preferences: Preferences,
         terminals: [TerminalApp],
         loginItem: any LoginItemManaging,
-        notifications: NotificationSettingsController
+        notifications: NotificationSettingsController,
+        wording: AgentWording
     ) -> [StatusMenuNode] {
         var nodes: [StatusMenuNode] = []
 
@@ -109,7 +114,8 @@ private extension StatusMenuPresentationBuilder {
 
         if let connectionNode = connectionNode(
             state: store.connectionState,
-            hasPresentedAgents: !store.attentionSections.isEmpty || !store.workingSections.isEmpty
+            hasPresentedAgents: !store.attentionSections.isEmpty || !store.workingSections.isEmpty,
+            wording: wording
         ) {
             nodes.append(connectionNode)
         }
@@ -206,15 +212,16 @@ private extension StatusMenuPresentationBuilder {
 
     func connectionNode(
         state: ConnectionState,
-        hasPresentedAgents: Bool
+        hasPresentedAgents: Bool,
+        wording: AgentWording
     ) -> StatusMenuNode? {
         switch state {
         case .searching:
-            return .info("Searching for Herdr sessions…", tone: .secondary)
+            return .info("Searching for \(wording.sessionsNoun)…", tone: .secondary)
         case .noSessions:
-            return .info("No Herdr sessions running", tone: .secondary)
+            return .info("No \(wording.sessionsNoun) running", tone: .secondary)
         case .connecting:
-            return .info("Connecting to Herdr sessions…", tone: .secondary)
+            return .info("Connecting to \(wording.sessionsNoun)…", tone: .secondary)
         case .connected where !hasPresentedAgents:
             return .info("No active agents", tone: .secondary)
         case .connected:

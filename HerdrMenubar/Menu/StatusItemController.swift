@@ -335,7 +335,7 @@ enum NativeStatusItemIconRenderer {
         to button: NSButton
     ) {
         let content = content(for: presentation)
-        button.image = makeImage()
+        button.image = makeImage(description: presentation.wording.symbolDescription)
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
         button.title = content.title
@@ -343,15 +343,15 @@ enum NativeStatusItemIconRenderer {
             ? .systemFont(ofSize: NSFont.systemFontSize)
             : .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
         button.alphaValue = content.opacity
-        button.setAccessibilityLabel("Herdr")
+        button.setAccessibilityLabel(presentation.wording.accessibilityLabel)
         button.setAccessibilityValue(accessibilityValue)
-        button.toolTip = "Herdr — \(accessibilityValue)"
+        button.toolTip = presentation.wording.tooltipPrefix + accessibilityValue
     }
 
-    private static func makeImage() -> NSImage? {
+    private static func makeImage(description: String) -> NSImage? {
         guard let terminal = NSImage(
             systemSymbolName: "terminal",
-            accessibilityDescription: "Herdr terminal status"
+            accessibilityDescription: description
         )?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) else {
             return nil
         }

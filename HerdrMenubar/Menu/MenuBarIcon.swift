@@ -1,5 +1,34 @@
 import SwiftUI
 
+/// User-visible product wording. `.agents` is used only while Rex is active.
+enum AgentWording: Equatable, Sendable {
+    case herdr
+    case agents
+
+    var accessibilityLabel: String {
+        switch self {
+        case .herdr: "Herdr"
+        case .agents: "Agents"
+        }
+    }
+
+    var tooltipPrefix: String { "\(accessibilityLabel) — " }
+
+    var symbolDescription: String {
+        switch self {
+        case .herdr: "Herdr terminal status"
+        case .agents: "Agent status"
+        }
+    }
+
+    var sessionsNoun: String {
+        switch self {
+        case .herdr: "Herdr sessions"
+        case .agents: "agent sessions"
+        }
+    }
+}
+
 struct MenuBarIconPresentation: Equatable, Sendable {
     enum Mode: Equatable, Sendable {
         case disconnected
@@ -11,9 +40,11 @@ struct MenuBarIconPresentation: Equatable, Sendable {
     let opacity: Double
     let attentionCount: Int
     let showsAttentionCount: Bool
+    let wording: AgentWording
 
-    init(connectionState: ConnectionState, attentionCount: Int) {
+    init(connectionState: ConnectionState, attentionCount: Int, wording: AgentWording = .herdr) {
         self.attentionCount = attentionCount
+        self.wording = wording
         switch connectionState {
         case .searching, .noSessions, .connecting:
             mode = .disconnected
@@ -34,18 +65,20 @@ struct MenuBarIconPresentation: Equatable, Sendable {
 struct MenuBarIcon: View {
     let connectionState: ConnectionState
     let attentionCount: Int
+    var wording: AgentWording = .herdr
 
     static func accessibilityValue(
         connectionState: ConnectionState,
-        attentionCount: Int
+        attentionCount: Int,
+        wording: AgentWording = .herdr
     ) -> String {
         switch connectionState {
         case .searching:
-            return "Searching for Herdr sessions"
+            return "Searching for \(wording.sessionsNoun)"
         case .noSessions:
-            return "No Herdr sessions running"
+            return "No \(wording.sessionsNoun) running"
         case .connecting:
-            return "Connecting to Herdr sessions"
+            return "Connecting to \(wording.sessionsNoun)"
         case .connected where attentionCount == 0:
             return "Connected, no agents need attention"
         case .connected where attentionCount == 1:
@@ -58,7 +91,8 @@ struct MenuBarIcon: View {
     var body: some View {
         let presentation = MenuBarIconPresentation(
             connectionState: connectionState,
-            attentionCount: attentionCount
+            attentionCount: attentionCount,
+            wording: wording
         )
 
         HStack(spacing: 2) {
@@ -73,10 +107,11 @@ struct MenuBarIcon: View {
         }
         .opacity(presentation.opacity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Herdr")
+        .accessibilityLabel(wording.accessibilityLabel)
         .accessibilityValue(Self.accessibilityValue(
             connectionState: connectionState,
-            attentionCount: attentionCount
+            attentionCount: attentionCount,
+            wording: wording
         ))
     }
 }

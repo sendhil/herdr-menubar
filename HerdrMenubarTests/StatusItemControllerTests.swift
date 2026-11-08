@@ -318,6 +318,19 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(image.isTemplate)
         XCTAssertEqual(button.accessibilityLabel(), "Herdr")
         XCTAssertEqual(button.accessibilityValue() as? String, "snapshot 12")
+        XCTAssertEqual(button.toolTip, "Herdr — snapshot 12")
+    }
+
+    func testNativeIconUsesAgentsWordingForLabelAndTooltip() {
+        let button = NSButton()
+        NativeStatusItemIconRenderer.apply(
+            MenuBarIconPresentation(connectionState: .connected, attentionCount: 1, wording: .agents),
+            accessibilityValue: "Connected, 1 agent needs attention",
+            to: button
+        )
+
+        XCTAssertEqual(button.accessibilityLabel(), "Agents")
+        XCTAssertEqual(button.toolTip, "Agents — Connected, 1 agent needs attention")
     }
 
     func testNativeIconContentMapsEveryStateToOpacityAndCount() {

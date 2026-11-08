@@ -87,6 +87,35 @@ final class MenuBarIconTests: XCTestCase {
         XCTAssertEqual(pluralAccessibility, "Connected, 3 agents need attention")
     }
 
+    func testPresentationDefaultsToHerdrWording() {
+        XCTAssertEqual(MenuBarIconPresentation(connectionState: .searching, attentionCount: 0).wording, .herdr)
+    }
+
+    func testAgentsWordingSubstitutesSessionNounOnly() {
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .searching, attentionCount: 0, wording: .agents),
+            "Searching for agent sessions"
+        )
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .noSessions, attentionCount: 0, wording: .agents),
+            "No agent sessions running"
+        )
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .connecting, attentionCount: 0, wording: .agents),
+            "Connecting to agent sessions"
+        )
+        XCTAssertEqual(
+            MenuBarIcon.accessibilityValue(connectionState: .connected, attentionCount: 2, wording: .agents),
+            "Connected, 2 agents need attention"
+        )
+        XCTAssertEqual(AgentWording.agents.accessibilityLabel, "Agents")
+        XCTAssertEqual(AgentWording.agents.tooltipPrefix, "Agents — ")
+        XCTAssertEqual(AgentWording.agents.symbolDescription, "Agent status")
+        XCTAssertEqual(AgentWording.herdr.accessibilityLabel, "Herdr")
+        XCTAssertEqual(AgentWording.herdr.tooltipPrefix, "Herdr — ")
+        XCTAssertEqual(AgentWording.herdr.symbolDescription, "Herdr terminal status")
+    }
+
     private func assertDisconnected(_ state: ConnectionState, accessibility: String) {
         let presentation = MenuBarIconPresentation(connectionState: state, attentionCount: 4)
         XCTAssertEqual(presentation.mode, .disconnected)
