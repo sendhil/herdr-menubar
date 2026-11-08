@@ -7,6 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CC0000000000000000000001 /* ManagedProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000011 /* ManagedProcess.swift */; };
+		CC0000000000000000000002 /* RexCLIResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000012 /* RexCLIResolver.swift */; };
+		CC0000000000000000000003 /* RexWatcherLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000013 /* RexWatcherLine.swift */; };
+		CC0000000000000000000005 /* ManagedProcessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000015 /* ManagedProcessTests.swift */; };
+		CC0000000000000000000006 /* RexCLIResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000016 /* RexCLIResolverTests.swift */; };
+		CC0000000000000000000007 /* RexWatcherLineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000017 /* RexWatcherLineTests.swift */; };
+		CC0000000000000000000008 /* RexWatcherIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000018 /* RexWatcherIntegrationTests.swift */; };
+		CC000000000000000000000A /* JSONLineFramerLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC000000000000000000001A /* JSONLineFramerLimitTests.swift */; };
+		CC0000000000000000000004 /* RexWatcher.lua in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000014 /* RexWatcher.lua */; };
+		CC0000000000000000000009 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000019 /* Fixtures */; };
 		FA0000000000000000000005 /* GhosttyFocusAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000015 /* GhosttyFocusAdapter.swift */; };
 		FA0000000000000000000008 /* FocusTiming.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000018 /* FocusTiming.swift */; };
 		FA0000000000000000000006 /* GhosttyFocusAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000016 /* GhosttyFocusAdapterTests.swift */; };
@@ -101,6 +111,16 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		CC0000000000000000000011 /* ManagedProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedProcess.swift; sourceTree = "<group>"; };
+		CC0000000000000000000012 /* RexCLIResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexCLIResolver.swift; sourceTree = "<group>"; };
+		CC0000000000000000000013 /* RexWatcherLine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexWatcherLine.swift; sourceTree = "<group>"; };
+		CC0000000000000000000015 /* ManagedProcessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedProcessTests.swift; sourceTree = "<group>"; };
+		CC0000000000000000000016 /* RexCLIResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexCLIResolverTests.swift; sourceTree = "<group>"; };
+		CC0000000000000000000017 /* RexWatcherLineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexWatcherLineTests.swift; sourceTree = "<group>"; };
+		CC0000000000000000000018 /* RexWatcherIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexWatcherIntegrationTests.swift; sourceTree = "<group>"; };
+		CC000000000000000000001A /* JSONLineFramerLimitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLineFramerLimitTests.swift; sourceTree = "<group>"; };
+		CC0000000000000000000014 /* RexWatcher.lua */ = {isa = PBXFileReference; lastKnownFileType = text; path = RexWatcher.lua; sourceTree = "<group>"; };
+		CC0000000000000000000019 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fixtures; sourceTree = "<group>"; };
 		FA0000000000000000000015 /* GhosttyFocusAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyFocusAdapter.swift; sourceTree = "<group>"; };
 		FA0000000000000000000018 /* FocusTiming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusTiming.swift; sourceTree = "<group>"; };
 		FA0000000000000000000016 /* GhosttyFocusAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyFocusAdapterTests.swift; sourceTree = "<group>"; };
@@ -181,6 +201,17 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		CC0000000000000000000020 /* Rex */ = {
+			isa = PBXGroup;
+			children = (
+				CC0000000000000000000011 /* ManagedProcess.swift */,
+				CC0000000000000000000012 /* RexCLIResolver.swift */,
+				CC0000000000000000000013 /* RexWatcherLine.swift */,
+				CC0000000000000000000014 /* RexWatcher.lua */,
+			);
+			path = Rex;
+			sourceTree = "<group>";
+		};
 		70CC1189A6D60506EC82E1E0 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -245,6 +276,12 @@
 				BB0000000000000000000014 /* HerdrBackendTests.swift */,
 				BB0000000000000000000015 /* BackendTestSupport.swift */,
 				BB0000000000000000000016 /* AgentStoreBackendTests.swift */,
+				CC0000000000000000000015 /* ManagedProcessTests.swift */,
+				CC0000000000000000000016 /* RexCLIResolverTests.swift */,
+				CC0000000000000000000017 /* RexWatcherLineTests.swift */,
+				CC0000000000000000000018 /* RexWatcherIntegrationTests.swift */,
+				CC000000000000000000001A /* JSONLineFramerLimitTests.swift */,
+				CC0000000000000000000019 /* Fixtures */,
 				12A000000000000000000034 /* MenuBarIconTests.swift */,
 				F90000000000000000000001 /* SketchyBarIntegrationTests.swift */,
 				12A000000000000000000026 /* PreferencesTests.swift */,
@@ -321,6 +358,7 @@
 				7B7F2BADAF554B3A0A94F63D /* App */,
 				F90000000000000000000007 /* Assets.xcassets */,
 				C49263C8A1747A34F59C8057 /* Herdr */,
+				CC0000000000000000000020 /* Rex */,
 				D20000000000000000000001 /* Notifications */,
 				E30000000000000000000001 /* Shortcuts */,
 				12A000000000000000000030 /* Status */,
@@ -382,6 +420,7 @@
 			buildConfigurationList = B5E73B81163B479BAD837E30 /* Build configuration list for PBXNativeTarget "HerdrMenubarTests" */;
 			buildPhases = (
 				E757C085039C0A48930F6D5E /* Sources */,
+				CC0000000000000000000021 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -462,9 +501,17 @@
         F90000000000000000000009 /* Resources */ = {
             isa = PBXResourcesBuildPhase;
             buildActionMask = 2147483647;
-            files = (F90000000000000000000008 /* Assets.xcassets in Resources */,);
+            files = (F90000000000000000000008 /* Assets.xcassets in Resources */, CC0000000000000000000004 /* RexWatcher.lua in Resources */,);
             runOnlyForDeploymentPostprocessing = 0;
         };
+		CC0000000000000000000021 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC0000000000000000000009 /* Fixtures in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -500,6 +547,9 @@
 				B10000000000000000000008 /* SessionDiscovery.swift in Sources */,
 				B10000000000000000000002 /* SessionSupervisor.swift in Sources */,
 				BB0000000000000000000003 /* HerdrBackend.swift in Sources */,
+				CC0000000000000000000001 /* ManagedProcess.swift in Sources */,
+				CC0000000000000000000002 /* RexCLIResolver.swift in Sources */,
+				CC0000000000000000000003 /* RexWatcherLine.swift in Sources */,
 				12A000000000000000000005 /* HerdrConnection.swift in Sources */,
 				12A000000000000000000007 /* HerdrClient.swift in Sources */,
 				12A00000000000000000000A /* AgentStore.swift in Sources */,
@@ -551,6 +601,11 @@
 				12A000000000000000000009 /* AgentStoreTests.swift in Sources */,
 				BB0000000000000000000002 /* AgentBackendTypesTests.swift in Sources */,
 				BB0000000000000000000004 /* HerdrBackendTests.swift in Sources */,
+				CC0000000000000000000005 /* ManagedProcessTests.swift in Sources */,
+				CC0000000000000000000006 /* RexCLIResolverTests.swift in Sources */,
+				CC0000000000000000000007 /* RexWatcherLineTests.swift in Sources */,
+				CC0000000000000000000008 /* RexWatcherIntegrationTests.swift in Sources */,
+				CC000000000000000000000A /* JSONLineFramerLimitTests.swift in Sources */,
 				BB0000000000000000000005 /* BackendTestSupport.swift in Sources */,
 				BB0000000000000000000006 /* AgentStoreBackendTests.swift in Sources */,
 				12A000000000000000000033 /* MenuBarIconTests.swift in Sources */,
