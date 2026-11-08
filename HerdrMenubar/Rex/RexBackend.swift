@@ -386,8 +386,10 @@ actor RexBackend: AgentBackend {
     /// can hold a line in the queue while a deadline fires.
     private var automaticDrain = true
 
+    #if DEBUG
     func setAutomaticDrainForTesting(_ enabled: Bool) { automaticDrain = enabled }
     var pendingProcessEventCountForTesting: Int { pendingProcessEvents.count }
+    #endif
 
     private func enqueue(_ event: ManagedProcessEvent) {
         guard let current, event.generation == current.id else { return }
