@@ -11,6 +11,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
     func testFinishedSectionSitsBetweenAttentionAndWorkingAndEndsWithClearFinished() async {
         let fixture = RexPresentationFixture()
         await fixture.start()
+        fixture.herdr.send(.discovery([]))   // both backends active: headings carry the prefix
         fixture.rex.send(.discovery([rexFix]))
         fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked, rexDone, rexWorking], attention: [])))
         await fixture.waitUntil { fixture.store.workingSections.count == 1 }
@@ -122,6 +123,23 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         fixture.rex.send(.backendHidden)
         await fixture.waitUntil { !fixture.store.activeBackends.contains(.rex) }
         XCTAssertTrue(fixture.presentation().menu.contains(.heading("WORK")))
+        await fixture.stop()
+    }
+
+    func testNoPrefixWhileHerdrIsEnabledButHasNotDiscovered() async {
+        // "Active" means emitted `.discovery` this run; merely enabling Herdr does not count.
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.discovery([rexFix]))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexWorking], attention: [])))
+        await fixture.waitUntil { fixture.store.workingSections.count == 1 }
+
+        XCTAssertFalse(fixture.store.showsBackendPrefix)
+        XCTAssertTrue(fixture.presentation().menu.contains(.heading("FIX-PLAYBACK")))
+
+        fixture.herdr.send(.discovery([herdrWork]))
+        await fixture.waitUntil { fixture.store.activeBackends.contains(.herdr) }
+        XCTAssertTrue(fixture.presentation().menu.contains(.heading("REX · FIX-PLAYBACK")))
         await fixture.stop()
     }
 

@@ -123,14 +123,10 @@ final class AgentStore {
             .sorted { $0.kind.sortIndex < $1.kind.sortIndex }
     }
 
-    /// Group headings gain a `Backend · ` prefix while more than one backend is active
-    /// (Herdr counts as active whenever it is enabled).
+    /// Group headings gain a `Backend · ` prefix while more than one backend is active (has
+    /// emitted `.discovery` in this run). Merely being enabled does not count, not even for Herdr.
     var showsBackendPrefix: Bool {
-        var active = activeBackends
-        if preferences.enabledBackends.contains(.herdr), backend(for: .herdr) != nil {
-            active.insert(.herdr)
-        }
-        return active.count > 1
+        activeBackends.count > 1
     }
 
     var attentionCount: Int {
