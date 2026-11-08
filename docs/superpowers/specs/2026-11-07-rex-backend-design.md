@@ -1,6 +1,6 @@
 # Rex Backend and Per-Backend Notifications Design
 
-Revision 6 (2026-11-07). See [Revision log](#revision-log).
+Revision 6.2 (2026-11-08). See [Revision log](#revision-log).
 
 ## Summary
 
@@ -517,7 +517,7 @@ The reducer's per-generation state is reset at the start of each watcher generat
 
 #### Focus
 
-**Client selection.** Run `rex --autostart=false client ls --json` fresh for each focus. Keep clients with `info.kind == "app"`, `info.platform == "macos"`, and `connection_state == "connected"`. Prefer the one whose `info.label` equals `Host.current().localizedName`. Otherwise use the only remaining client if exactly one is left. Otherwise there is no client.
+**Client selection.** Run `rex --autostart=false client ls --json` fresh for each focus. Keep clients with `info.kind == "app"`, `info.platform == "macos"`, and a `connection_state` other than `"lost"` (a missing or unknown value counts as connected, per `rex api describe client.list`). Prefer the one whose `info.label` equals `Host.current().localizedName`. Otherwise use the only remaining client if exactly one is left. Otherwise there is no client.
 
 **`focusServer(target)`:**
 
@@ -712,6 +712,7 @@ The icon dims only when no session of any active backend is connected.
 
 ## Revision log
 
+- **r6.2 (2026-11-08).** Client selection keeps clients whose `connection_state` is not `"lost"`; a missing or unknown value counts as connected, as documented by `rex api describe client.list`.
 - **r6.1 (2026-11-07).** From the r6 confirmation review. The `connectionState` rows were reordered so the Rex rows can be reached. Clarifications:
   - settle snapshots
   - late-placed blocks
