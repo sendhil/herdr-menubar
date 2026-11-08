@@ -129,6 +129,19 @@ final class NativeNotificationServiceTests: XCTestCase {
         XCTAssertNil(requests[0].content.userInfo["rex_session_id"])
     }
 
+    func testErrorDeliveryUsesFailedTitle() async throws {
+        let backend = FakeNotificationCenterBackend(settings: .authorized)
+        let service = NativeNotificationService(backend: backend)
+        _ = try await service.deliver(AttentionNotificationEvent(
+            target: SelectionTarget.herdr(.default, paneID: "p"),
+            sessionName: "Default",
+            visibleLabel: "Label",
+            status: .error
+        ), sound: false)
+
+        XCTAssertEqual(backend.addedRequests.first?.content.title, "Agent failed")
+    }
+
     func testBlockedDeliveryUsesBlockedContent() async throws {
         let backend = FakeNotificationCenterBackend(settings: .authorized)
         let service = NativeNotificationService(backend: backend)

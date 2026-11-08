@@ -63,7 +63,7 @@ struct AttentionNotificationEvent: Equatable, Sendable {
     let target: SelectionTarget
     let sessionName: String
     let visibleLabel: String
-    let status: AgentStatus
+    let status: AttentionState
 }
 
 enum NotificationDeliveryResult: Equatable, Sendable {
@@ -79,8 +79,23 @@ protocol LatestNotificationTargetRecording: Sendable {
 }
 
 struct NotificationDeliveryPolicy: Equatable, Sendable {
+    static let defaultNotifyStates: [BackendKind: Set<AttentionState>] = Dictionary(
+        uniqueKeysWithValues: BackendKind.allCases.map { ($0, $0.defaultNotifyStates) }
+    )
+
     let notificationsEnabled: Bool
     let soundEnabled: Bool
+    let notifyStates: [BackendKind: Set<AttentionState>]
+
+    init(
+        notificationsEnabled: Bool,
+        soundEnabled: Bool,
+        notifyStates: [BackendKind: Set<AttentionState>] = NotificationDeliveryPolicy.defaultNotifyStates
+    ) {
+        self.notificationsEnabled = notificationsEnabled
+        self.soundEnabled = soundEnabled
+        self.notifyStates = notifyStates
+    }
 }
 
 enum NotificationAuthorization: Equatable, Sendable {
@@ -123,11 +138,11 @@ protocol NativeNotificationServing: Sendable {
 
 protocol AttentionNotificationCoordinating: Sendable {
     func reconcile(
-        session: SessionDescriptor,
-        items: [AgentMenuItem],
+        session: AgentSessionDescriptor,
+        records: [AttentionRecord],
         policy: NotificationDeliveryPolicy
     ) async
-    func unavailable(sessionID: SessionID) async
-    func remove(sessionID: SessionID) async
+    func unavailable(session: AgentSessionKey) async
+    func remove(session: AgentSessionKey) async
     func reset() async
 }

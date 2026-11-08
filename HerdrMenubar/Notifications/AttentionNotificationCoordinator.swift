@@ -1,10 +1,20 @@
 import OSLog
 
 actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
+    private struct RecordKey: Hashable {
+        let target: AgentTarget
+        let recordID: String
+    }
+
+    private struct RecordStamp: Equatable {
+        let state: AttentionState
+        let epoch: Int
+    }
+
     private let service: any NativeNotificationServing
     private let latestTargetRecorder: any LatestNotificationTargetRecording
-    private var baselinedSessions: Set<SessionID> = []
-    private var statuses: [SessionID: [String: AgentStatus]] = [:]
+    private var baselinedSessions: Set<AgentSessionKey> = []
+    private var history: [AgentSessionKey: [RecordKey: RecordStamp]] = [:]
     private var nextDeliveryOrdinal: UInt64 = 0
 
     init(
@@ -16,38 +26,45 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
     }
 
     func reconcile(
-        session: SessionDescriptor,
-        items: [AgentMenuItem],
+        session: AgentSessionDescriptor,
+        records: [AttentionRecord],
         policy: NotificationDeliveryPolicy
     ) async {
-        var canonicalByPaneID: [String: AgentMenuItem] = [:]
-        // The last occurrence in an authoritative snapshot wins for a duplicate pane ID.
-        for item in items {
-            canonicalByPaneID[item.paneID] = item
+        // The last occurrence of a record key wins; delivery keeps first-occurrence order.
+        var canonical: [RecordKey: AttentionRecord] = [:]
+        for record in records {
+            canonical[Self.key(record)] = record
         }
-        let canonicalItems = canonicalByPaneID.values.sorted(by: AgentMenuItem.labelOrder)
-        var current: [String: AgentStatus] = [:]
-        for item in canonicalItems {
-            current[item.paneID] = item.status
+        var ordered: [AttentionRecord] = []
+        var emitted: Set<RecordKey> = []
+        for record in records {
+            let key = Self.key(record)
+            guard emitted.insert(key).inserted, let winner = canonical[key] else { continue }
+            ordered.append(winner)
         }
-        guard baselinedSessions.contains(session.id) else {
-            baselinedSessions.insert(session.id)
-            statuses[session.id] = current
+        let current = canonical.mapValues { RecordStamp(state: $0.state, epoch: $0.epoch) }
+
+        guard baselinedSessions.contains(session.key) else {
+            baselinedSessions.insert(session.key)
+            history[session.key] = current
             return
         }
 
-        let previous = statuses[session.id] ?? [:]
-        statuses[session.id] = current
+        // Each reconcile replaces the session's history with exactly the given records.
+        let previous = history[session.key] ?? [:]
+        history[session.key] = current
         guard policy.notificationsEnabled else { return }
 
-        let candidates = canonicalItems.compactMap { item -> AttentionNotificationEvent? in
-            guard item.status == .blocked || item.status == .done else { return nil }
-            guard previous[item.paneID] != item.status else { return nil }
+        let deliverableStates = policy.notifyStates[session.key.backend] ?? []
+        let candidates = ordered.compactMap { record -> AttentionNotificationEvent? in
+            guard deliverableStates.contains(record.state) else { return nil }
+            let stamp = RecordStamp(state: record.state, epoch: record.epoch)
+            guard previous[Self.key(record)] != stamp else { return nil }
             return AttentionNotificationEvent(
-                target: SelectionTarget.herdr(session.id, paneID: item.paneID),
+                target: SelectionTarget(target: record.target, sessionDisplayName: session.displayName),
                 sessionName: session.displayName,
-                visibleLabel: item.visibleLabel,
-                status: item.status
+                visibleLabel: record.visibleLabel,
+                status: record.state
             )
         }
 
@@ -72,17 +89,21 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
         }
     }
 
-    func unavailable(sessionID: SessionID) {
-        // Preserve the last authoritative status through the supervisor's grace period.
+    func unavailable(session: AgentSessionKey) {
+        // Preserve the last authoritative history through the backend's grace period or outage.
     }
 
-    func remove(sessionID: SessionID) {
-        baselinedSessions.remove(sessionID)
-        statuses.removeValue(forKey: sessionID)
+    func remove(session: AgentSessionKey) {
+        baselinedSessions.remove(session)
+        history.removeValue(forKey: session)
     }
 
     func reset() {
         baselinedSessions.removeAll()
-        statuses.removeAll()
+        history.removeAll()
+    }
+
+    private static func key(_ record: AttentionRecord) -> RecordKey {
+        RecordKey(target: record.target, recordID: record.recordID)
     }
 }

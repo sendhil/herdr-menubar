@@ -571,12 +571,12 @@ private final class PresentationLoginItem: LoginItemManaging {
 
 private actor PresentationAttentionCoordinator: AttentionNotificationCoordinating {
     func reconcile(
-        session: SessionDescriptor,
-        items: [AgentMenuItem],
+        session: AgentSessionDescriptor,
+        records: [AttentionRecord],
         policy: NotificationDeliveryPolicy
     ) {}
-    func unavailable(sessionID: SessionID) {}
-    func remove(sessionID: SessionID) {}
+    func unavailable(session: AgentSessionKey) {}
+    func remove(session: AgentSessionKey) {}
     func reset() {}
 }
 

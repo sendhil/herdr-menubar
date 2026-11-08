@@ -142,10 +142,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         )
         await coordinator.reconcile(
             session: session,
-            items: [AgentMenuItem(
-                session: session,
-                pane: integrationPane("duplicate", .working)
-            )],
+            items: [integrationPane("duplicate", .working)],
             policy: policy
         )
         shortcutController.start()
@@ -153,10 +150,7 @@ final class MultiSessionIntegrationTests: XCTestCase {
         let acceptingDelivery = Task {
             await coordinator.reconcile(
                 session: session,
-                items: [AgentMenuItem(
-                    session: session,
-                    pane: integrationPane("duplicate", .blocked)
-                )],
+                items: [integrationPane("duplicate", .blocked)],
                 policy: policy
             )
         }
@@ -1375,12 +1369,12 @@ private actor IntegrationNotificationService: NativeNotificationServing {
 
 private actor IntegrationAttentionCoordinator: AttentionNotificationCoordinating {
     func reconcile(
-        session: SessionDescriptor,
-        items: [AgentMenuItem],
+        session: AgentSessionDescriptor,
+        records: [AttentionRecord],
         policy: NotificationDeliveryPolicy
     ) {}
-    func unavailable(sessionID: SessionID) {}
-    func remove(sessionID: SessionID) {}
+    func unavailable(session: AgentSessionKey) {}
+    func remove(session: AgentSessionKey) {}
     func reset() {}
 }
 
@@ -1448,28 +1442,29 @@ private actor IntegrationObservingAttentionCoordinator: AttentionNotificationCoo
     }
 
     func reconcile(
-        session: SessionDescriptor,
-        items: [AgentMenuItem],
+        session: AgentSessionDescriptor,
+        records: [AttentionRecord],
         policy: NotificationDeliveryPolicy
     ) async {
-        if reconcilePauses.remove(session.id) != nil {
+        let sessionID = session.key.herdrSessionID!
+        if reconcilePauses.remove(sessionID) != nil {
             do {
-                try await waitForPauseRelease(for: session.id)
+                try await waitForPauseRelease(for: sessionID)
             } catch {
                 return
             }
         }
-        await wrapped.reconcile(session: session, items: items, policy: policy)
-        recordCompletion(for: session.id, counts: &reconcileCompletions, waiters: &reconcileWaiters)
+        await wrapped.reconcile(session: session, records: records, policy: policy)
+        recordCompletion(for: sessionID, counts: &reconcileCompletions, waiters: &reconcileWaiters)
     }
 
-    func unavailable(sessionID: SessionID) async {
-        await wrapped.unavailable(sessionID: sessionID)
+    func unavailable(session: AgentSessionKey) async {
+        await wrapped.unavailable(session: session)
     }
 
-    func remove(sessionID: SessionID) async {
-        await wrapped.remove(sessionID: sessionID)
-        recordCompletion(for: sessionID, counts: &removeCompletions, waiters: &removeWaiters)
+    func remove(session: AgentSessionKey) async {
+        await wrapped.remove(session: session)
+        recordCompletion(for: session.herdrSessionID!, counts: &removeCompletions, waiters: &removeWaiters)
     }
 
     func reset() async {

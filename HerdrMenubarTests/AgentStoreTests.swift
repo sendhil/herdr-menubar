@@ -126,6 +126,24 @@ final class AgentStoreTests: XCTestCase {
         await store.stop()
     }
 
+    func testNotificationPolicyCarriesStoredNotifyStates() async {
+        let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
+        let preferences = testPreferences()
+        preferences.notificationsEnabled = true
+        preferences.setNotifyStates([.blocked], for: .herdr)
+        let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator, preferences: preferences)
+        await store.start()
+
+        await supervisor.send(.connected(workDescriptor, snapshot([pane("p", .blocked)])))
+        await coordinator.waitForReconciliations(1)
+
+        let policy = await coordinator.reconciliations.first?.policy
+        XCTAssertEqual(policy?.notifyStates[.herdr], [.blocked])
+        XCTAssertEqual(policy?.notifyStates[.rex], [.blocked, .error])
+        await store.stop()
+    }
+
     func testOnlyAcceptedFullSnapshotsReachNotificationCoordinatorInAuthoritativeOrder() async {
         let supervisor = FakeSessionSupervisor()
         let coordinator = RecordingAttentionCoordinator()
@@ -149,9 +167,8 @@ final class AgentStoreTests: XCTestCase {
         await waitUntil { await coordinator.reconciliations.count == 2 }
 
         let calls = await coordinator.reconciliations
-        XCTAssertEqual(calls.map { $0.items.map(\.paneID) }, [
-            ["idle", "unknown", "blocked"], ["working", "done"]
-        ])
+        XCTAssertEqual(calls.map { $0.records.map(\.target.paneID) }, [["blocked"], ["done"]])
+        XCTAssertEqual(calls.map(\.session.key), [.named("work"), .named("work")])
         XCTAssertEqual(calls.map(\.policy), [
             NotificationDeliveryPolicy(notificationsEnabled: true, soundEnabled: false),
             NotificationDeliveryPolicy(notificationsEnabled: true, soundEnabled: false)
@@ -1737,35 +1754,35 @@ private actor FakeSessionSupervisor: SessionSupervising {
 
 private actor RecordingAttentionCoordinator: AttentionNotificationCoordinating {
     struct Reconciliation: Sendable {
-        let session: SessionDescriptor
-        let items: [AgentMenuItem]
+        let session: AgentSessionDescriptor
+        let records: [AttentionRecord]
         let policy: NotificationDeliveryPolicy
     }
 
     private(set) var reconciliations: [Reconciliation] = []
-    private(set) var unavailableSessionIDs: [SessionID] = []
-    private(set) var removedSessionIDs: [SessionID] = []
+    private(set) var unavailableSessionIDs: [AgentSessionKey] = []
+    private(set) var removedSessionIDs: [AgentSessionKey] = []
     private(set) var resetCount = 0
     private let reconciliationSignal = AsyncCountSignal()
     private let unavailableSignal = AsyncCountSignal()
     private let removalSignal = AsyncCountSignal()
 
     func reconcile(
-        session: SessionDescriptor,
-        items: [AgentMenuItem],
+        session: AgentSessionDescriptor,
+        records: [AttentionRecord],
         policy: NotificationDeliveryPolicy
     ) async {
-        reconciliations.append(Reconciliation(session: session, items: items, policy: policy))
+        reconciliations.append(Reconciliation(session: session, records: records, policy: policy))
         await reconciliationSignal.record()
     }
 
-    func unavailable(sessionID: SessionID) async {
-        unavailableSessionIDs.append(sessionID)
+    func unavailable(session: AgentSessionKey) async {
+        unavailableSessionIDs.append(session)
         await unavailableSignal.record()
     }
 
-    func remove(sessionID: SessionID) async {
-        removedSessionIDs.append(sessionID)
+    func remove(session: AgentSessionKey) async {
+        removedSessionIDs.append(session)
         await removalSignal.record()
     }
 

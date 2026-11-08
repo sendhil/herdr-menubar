@@ -444,7 +444,7 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
         await coordinator.reconcile(session: session, items: [item(session, "p", .working)], policy: policy)
         await coordinator.reconcile(session: session, items: [item(session, "p", .blocked)], policy: policy)
-        await coordinator.unavailable(sessionID: session.id)
+        await coordinator.unavailable(session: AgentSessionKey(herdr: session.id))
         await coordinator.reconcile(session: session, items: [item(session, "p", .blocked)], policy: policy)
 
         let deliveries = await service.deliveries
@@ -462,7 +462,7 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
         await coordinator.reconcile(session: session, items: [item(session, "p", .working)], policy: policy)
         await coordinator.reconcile(session: session, items: [item(session, "p", .blocked)], policy: policy)
-        await coordinator.remove(sessionID: session.id)
+        await coordinator.remove(session: AgentSessionKey(herdr: session.id))
         await coordinator.reconcile(session: session, items: [item(session, "p", .done)], policy: policy)
 
         let deliveries = await service.deliveries
@@ -538,6 +538,166 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
         let deliveries = await service.deliveries
         XCTAssertEqual(deliveries.map(\.event.status), [.blocked, .done])
+    }
+
+    func testEpochChangeRenotifiesEvenWhenStateRepeats() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+        let policy = rexPolicy([.blocked, .error, .done])
+
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 1, state: .done)], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 1, state: .done)], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 3, state: .done)], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.status), [.done, .done])
+    }
+
+    func testStaleErrorThatStaysPresentNeverRenotifies() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+        let policy = rexPolicy([.blocked, .error])
+        let staleError = rexRecord(session, epoch: 1, state: .error)
+
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [staleError], policy: policy)
+        await coordinator.reconcile(
+            session: session,
+            records: [staleError, rexRecord(session, id: "child", epoch: 2, state: .blocked)],
+            policy: policy
+        )
+        await coordinator.reconcile(session: session, records: [staleError], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.status), [.error, .blocked])
+    }
+
+    func testDroppedAndRecreatedRecordRenotifies() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+        let policy = rexPolicy([.error])
+
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 1, state: .error)], policy: policy)
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 4, state: .error)], policy: policy)
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 4, state: .error)], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.status), [.error, .error, .error])
+    }
+
+    func testUncheckedStateUpdatesHistoryWithoutLaterReplay() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+
+        await coordinator.reconcile(session: session, records: [], policy: rexPolicy([.blocked]))
+        await coordinator.reconcile(
+            session: session, records: [rexRecord(session, epoch: 1, state: .error)], policy: rexPolicy([.blocked])
+        )
+        await coordinator.reconcile(
+            session: session, records: [rexRecord(session, epoch: 1, state: .error)], policy: rexPolicy([.blocked, .error])
+        )
+        await coordinator.reconcile(
+            session: session, records: [rexRecord(session, epoch: 2, state: .error)], policy: rexPolicy([.blocked, .error])
+        )
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.status), [.error])
+    }
+
+    func testCandidatesDeliverInGivenOrderNotLabelOrder() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+        let policy = rexPolicy([.blocked])
+
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [
+            rexRecord(session, block: "z", epoch: 1, state: .blocked, label: "Zulu"),
+            rexRecord(session, block: "a", epoch: 2, state: .blocked, label: "Alpha")
+        ], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.target.paneID), ["z", "a"])
+        XCTAssertEqual(deliveries.map(\.event.sessionName), ["fix-playback", "fix-playback"])
+        XCTAssertEqual(deliveries.map(\.event.target.sessionDisplayName), ["fix-playback", "fix-playback"])
+    }
+
+    func testFirstBlockedAfterEmptyConnectedBaselineNotifies() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+        let policy = rexPolicy([.blocked, .error])
+
+        await coordinator.reconcile(session: session, records: [], policy: policy)
+        await coordinator.reconcile(session: session, records: [rexRecord(session, epoch: 1, state: .blocked)], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.status), [.blocked])
+    }
+
+    func testRestartReconciliationNotifiesOnlyChangedRecords() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = rexSession()
+        let policy = rexPolicy([.blocked, .error])
+
+        await coordinator.reconcile(session: session, records: [
+            rexRecord(session, block: "b1", epoch: 1, state: .blocked),
+            rexRecord(session, block: "b2", epoch: 2, state: .error)
+        ], policy: policy)
+        await coordinator.unavailable(session: session.key)
+        await coordinator.reconcile(session: session, records: [
+            rexRecord(session, block: "b1", epoch: 1, state: .blocked),
+            rexRecord(session, block: "b2", epoch: 5, state: .error)
+        ], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.target.paneID), ["b2"])
+    }
+
+    func testHerdrNotifyStatesFilterHerdrDeliveries() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let session = descriptor("work")
+        let policy = NotificationDeliveryPolicy(
+            notificationsEnabled: true,
+            soundEnabled: false,
+            notifyStates: [.herdr: [.blocked], .rex: [.blocked, .error]]
+        )
+
+        await coordinator.reconcile(
+            session: session, items: [item(session, "a", .working), item(session, "b", .working)], policy: policy
+        )
+        await coordinator.reconcile(
+            session: session, items: [item(session, "a", .done), item(session, "b", .blocked)], policy: policy
+        )
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(deliveries.map(\.event.target.paneID), ["b"])
     }
 }
 
@@ -751,22 +911,19 @@ private func item(
     _ paneID: String,
     _ status: AgentStatus,
     title: String? = nil
-) -> AgentMenuItem {
-    AgentMenuItem(
-        session: session,
-        pane: PaneInfo(
-            paneID: paneID,
-            terminalID: "terminal-\(paneID)",
-            workspaceID: "workspace-\(paneID)",
-            tabID: "tab-\(paneID)",
-            focused: false,
-            label: "Pi",
-            agent: "pi",
-            title: title ?? paneID,
-            displayAgent: "Pi",
-            agentStatus: status,
-            revision: 1
-        )
+) -> PaneInfo {
+    PaneInfo(
+        paneID: paneID,
+        terminalID: "terminal-\(paneID)",
+        workspaceID: "workspace-\(paneID)",
+        tabID: "tab-\(paneID)",
+        focused: false,
+        label: "Pi",
+        agent: "pi",
+        title: title ?? paneID,
+        displayAgent: "Pi",
+        agentStatus: status,
+        revision: 1
     )
 }
 
@@ -779,4 +936,34 @@ private func target(
 
 private func enabledPolicy(soundEnabled: Bool = false) -> NotificationDeliveryPolicy {
     NotificationDeliveryPolicy(notificationsEnabled: true, soundEnabled: soundEnabled)
+}
+
+private func rexSession() -> AgentSessionDescriptor {
+    AgentSessionDescriptor(key: AgentSessionKey(backend: .rex, rawID: "s1"), displayName: "fix-playback")
+}
+
+private func rexRecord(
+    _ session: AgentSessionDescriptor,
+    block: String = "b1",
+    id: String = "",
+    epoch: Int,
+    state: AttentionState,
+    label: String = "Review · claude-code"
+) -> AttentionRecord {
+    AttentionRecord(
+        target: AgentTarget(session: session.key, paneID: block),
+        recordID: id,
+        epoch: epoch,
+        state: state,
+        visibleLabel: label,
+        message: nil
+    )
+}
+
+private func rexPolicy(_ states: Set<AttentionState>) -> NotificationDeliveryPolicy {
+    NotificationDeliveryPolicy(
+        notificationsEnabled: true,
+        soundEnabled: false,
+        notifyStates: [.herdr: [.blocked, .done], .rex: states]
+    )
 }

@@ -399,8 +399,8 @@ private extension AgentStore {
             (state.attentionItems, state.workingItems) = makePresentationItems(allItems)
             sessions[descriptor.id] = state
             await attentionCoordinator.reconcile(
-                session: descriptor,
-                items: allItems,
+                session: AgentSessionDescriptor(herdr: descriptor),
+                records: HerdrBackend.makeSnapshot(snapshot, sessionID: descriptor.id).attention,
                 policy: notificationPolicy
             )
             if let pendingNotificationTarget,
@@ -413,8 +413,8 @@ private extension AgentStore {
             (state.attentionItems, state.workingItems) = makePresentationItems(allItems)
             sessions[id] = state
             await attentionCoordinator.reconcile(
-                session: state.descriptor,
-                items: allItems,
+                session: AgentSessionDescriptor(herdr: state.descriptor),
+                records: HerdrBackend.makeSnapshot(snapshot, sessionID: id).attention,
                 policy: notificationPolicy
             )
         case .unavailable(let id, let message):
@@ -424,7 +424,7 @@ private extension AgentStore {
             state.attentionItems = []
             state.workingItems = []
             sessions[id] = state
-            await attentionCoordinator.unavailable(sessionID: id)
+            await attentionCoordinator.unavailable(session: AgentSessionKey(herdr: id))
         case .removed(let id):
             let removedState = sessions.removeValue(forKey: id)
             if pendingNotificationTarget?.target.session == AgentSessionKey(herdr: id) {
@@ -433,7 +433,7 @@ private extension AgentStore {
             }
             guard removedState != nil else { return }
             ghosttyFocuser.forget(sessionID: id)
-            await attentionCoordinator.remove(sessionID: id)
+            await attentionCoordinator.remove(session: AgentSessionKey(herdr: id))
         }
         deriveConnectionState()
     }
@@ -441,7 +441,8 @@ private extension AgentStore {
     var notificationPolicy: NotificationDeliveryPolicy {
         NotificationDeliveryPolicy(
             notificationsEnabled: preferences.notificationsEnabled,
-            soundEnabled: preferences.notificationSoundEnabled
+            soundEnabled: preferences.notificationSoundEnabled,
+            notifyStates: preferences.notifyStates
         )
     }
 

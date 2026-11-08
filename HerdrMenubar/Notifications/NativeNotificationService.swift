@@ -108,7 +108,11 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         }
 
         let content = UNMutableNotificationContent()
-        content.title = event.status == .blocked ? "Agent blocked" : "Agent finished"
+        content.title = switch event.status {
+        case .blocked: "Agent blocked"
+        case .error: "Agent failed"
+        case .done: "Agent finished"
+        }
         content.body = "\(event.visibleLabel) — \(event.sessionName)"
         if sound && settings.soundsEnabled {
             content.sound = .default
