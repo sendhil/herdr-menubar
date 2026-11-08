@@ -62,6 +62,9 @@ struct RexReducer: Sendable {
     /// `reset()`, so an epoch is never reused.
     private var epochCounter = 0
     private var lastKnown: [RexRecordKey: LastKnown] = [:]
+    /// Seen marks: the epoch of each record the user has seen. A `done`/`error` record is hidden
+    /// iff its mark equals its current epoch. Pruned when the record gets a new epoch or is dropped.
+    private var seenMarks: [RexRecordKey: Int] = [:]
     /// Sessions the store has been told about with `.connected` and not yet `.removed`.
     private(set) var sessionsKnownToStore: Set<String> = []
 
@@ -197,6 +200,53 @@ struct RexReducer: Sendable {
         return output
     }
 
+    // MARK: Seen-state
+
+    /// Marks every `(record key, epoch)` in the token whose epoch is still current. Returns
+    /// `.snapshot` events for sessions whose rows changed (none before `snapshot_done`).
+    mutating func markSeen(_ token: SeenToken) -> [BackendEvent] {
+        var affected: Set<String> = []
+        for (key, known) in lastKnown where Self.isTerminal(known.state) && seenMarks[key] != known.epoch {
+            guard token.marks.contains(Self.mark(key, epoch: known.epoch)) else { continue }
+            seenMarks[key] = known.epoch
+            affected.insert(key.sessionID)
+        }
+        var output = RexReducerOutput()
+        emitChangedSnapshots(for: affected, into: &output)
+        return output.events
+    }
+
+    /// Clear Finished: marks every unseen `done` record of every placed block.
+    mutating func clearFinished() -> [BackendEvent] {
+        var affected: Set<String> = []
+        for (sessionID, session) in sessions {
+            for block in session.view?.blocks ?? [] {
+                for record in blockRecords[BlockKey(sessionID: sessionID, blockID: block.blockID)] ?? []
+                where record.programState == .done {
+                    let key = recordKey(sessionID, block.blockID, record.id)
+                    guard let epoch = lastKnown[key]?.epoch, seenMarks[key] != epoch else { continue }
+                    seenMarks[key] = epoch
+                    affected.insert(sessionID)
+                }
+            }
+        }
+        var output = RexReducerOutput()
+        emitChangedSnapshots(for: affected, into: &output)
+        return output.events
+    }
+
+    /// Number of live seen marks. For tests and diagnostics.
+    var seenMarkCount: Int { seenMarks.count }
+
+    private static func isTerminal(_ state: String) -> Bool {
+        state == RexProgramState.done.rawValue || state == RexProgramState.error.rawValue
+    }
+
+    /// Opaque token element for `(record key, epoch)`.
+    private static func mark(_ key: RexRecordKey, epoch: Int) -> String {
+        "\(epoch)\u{1F}\(key.sessionID)\u{1F}\(key.blockID)\u{1F}\(key.recordID)"
+    }
+
     // MARK: Queries
 
     /// The rows and attention records a session would be reported with now.
@@ -215,8 +265,18 @@ struct RexReducer: Sendable {
                 return RexRankedRecord(record: record, epoch: known.epoch)
             }
             let primary = RexRows.primaryLabel(block: block, sessionLabel: session.label)
+            var marks: Set<String> = []
+            var visible: [RexRankedRecord] = []
+            for candidate in ranked {
+                let key = recordKey(sessionID, block.blockID, candidate.record.id)
+                if Self.isTerminal(candidate.record.state) {
+                    marks.insert(Self.mark(key, epoch: candidate.epoch))
+                    if seenMarks[key] == candidate.epoch { continue }
+                }
+                visible.append(candidate)
+            }
             if let row = RexRows.row(session: sessionKey, block: block, sessionLabel: session.label,
-                                     visibleRecords: ranked, seenToken: nil) {
+                                     visibleRecords: visible, seenToken: marks.isEmpty ? nil : SeenToken(marks: marks)) {
                 rows.append(row)
             }
             for candidate in ranked {
@@ -289,6 +349,7 @@ struct RexReducer: Sendable {
         if newEpoch || lastKnown[key] == nil {
             epochCounter += 1
             lastKnown[key] = LastKnown(state: state, updatedAt: updatedAt, epoch: epochCounter)
+            seenMarks[key] = nil
         } else {
             lastKnown[key]?.state = state
             lastKnown[key]?.updatedAt = updatedAt
@@ -298,6 +359,7 @@ struct RexReducer: Sendable {
     private mutating func dropLastKnown(where shouldDrop: (RexRecordKey) -> Bool) {
         for key in lastKnown.keys where shouldDrop(key) {
             lastKnown[key] = nil
+            seenMarks[key] = nil
         }
     }
 
