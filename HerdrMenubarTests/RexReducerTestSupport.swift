@@ -101,6 +101,11 @@ struct RexReducerHarness {
         lines.flatMap { apply($0).events }
     }
 
+    mutating func advance(_ duration: Duration) -> [BackendEvent] {
+        elapsed += duration
+        return reducer.tick(now: now)
+    }
+
     mutating func restart() {
         generation += 1
         reducer.beginGeneration(generation)

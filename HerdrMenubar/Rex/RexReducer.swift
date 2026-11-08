@@ -56,7 +56,12 @@ struct RexReducer: Sendable {
         var state: String
         var updatedAt: Int64?
         var epoch: Int
+        /// When the current epoch was assigned; it settles `settleDelay` later.
+        var epochStart: ContinuousClock.Instant
     }
+
+    /// How long an attention epoch must exist before it reaches the coordinator.
+    static let settleDelay: Duration = .milliseconds(1500)
 
     /// Last value handed out by the backend-wide epoch counter. Never decreases, not even on
     /// `reset()`, so an epoch is never reused.
@@ -65,6 +70,10 @@ struct RexReducer: Sendable {
     /// Seen marks: the epoch of each record the user has seen. A `done`/`error` record is hidden
     /// iff its mark equals its current epoch. Pruned when the record gets a new epoch or is dropped.
     private var seenMarks: [RexRecordKey: Int] = [:]
+    /// Settled epochs (flap protection). A record is in `attention` iff its current epoch is here.
+    private var settled: [RexRecordKey: Int] = [:]
+    /// Set at the first successful `snapshot_done` since start, whose records all settle at once.
+    private var hasCompletedFirstSnapshot = false
     /// Sessions the store has been told about with `.connected` and not yet `.removed`.
     private(set) var sessionsKnownToStore: Set<String> = []
 
@@ -117,7 +126,7 @@ struct RexReducer: Sendable {
         var output = RexReducerOutput()
         guard generation == self.generation else { return output }
 
-        var affected: Set<String> = []
+        var affected = settleDue(now: now)
         switch line {
         case .session(let id, let label):
             if sessions[id] == nil { sessions[id] = SessionState(label: label) }
@@ -200,6 +209,43 @@ struct RexReducer: Sendable {
         return output
     }
 
+    // MARK: Flap protection
+
+    /// When the earliest unsettled attention epoch settles; nil when nothing is pending.
+    /// RexBackend schedules one timer for this instant and calls `tick(now:)` when it fires.
+    var nextSettleDeadline: ContinuousClock.Instant? {
+        lastKnown.filter { isPendingSettle($0.key, $0.value) }.map { $0.value.epochStart + Self.settleDelay }.min()
+    }
+
+    /// Settles every attention epoch that has existed for `settleDelay`, and returns `.snapshot`
+    /// events for the sessions whose attention changed (none before `snapshot_done`).
+    mutating func tick(now: ContinuousClock.Instant) -> [BackendEvent] {
+        let affected = settleDue(now: now)
+        var output = RexReducerOutput()
+        emitChangedSnapshots(for: affected, into: &output)
+        return output.events
+    }
+
+    private func isPendingSettle(_ key: RexRecordKey, _ known: LastKnown) -> Bool {
+        settled[key] != known.epoch
+            && RexProgramState(rawValue: known.state).flatMap(RexRows.attentionState) != nil
+    }
+
+    private mutating func settleDue(now: ContinuousClock.Instant) -> Set<String> {
+        var affected: Set<String> = []
+        for (key, known) in lastKnown where isPendingSettle(key, known) && known.epochStart + Self.settleDelay <= now {
+            settled[key] = known.epoch
+            affected.insert(key.sessionID)
+        }
+        return affected
+    }
+
+    private mutating func settleImmediately(where shouldSettle: (RexRecordKey) -> Bool) {
+        for (key, known) in lastKnown where shouldSettle(key) {
+            settled[key] = known.epoch
+        }
+    }
+
     // MARK: Seen-state
 
     /// Marks every `(record key, epoch)` in the token whose epoch is still current. Returns
@@ -280,7 +326,9 @@ struct RexReducer: Sendable {
                 rows.append(row)
             }
             for candidate in ranked {
-                guard let state = candidate.record.programState.flatMap(RexRows.attentionState) else { continue }
+                guard let state = candidate.record.programState.flatMap(RexRows.attentionState),
+                      settled[recordKey(sessionID, block.blockID, candidate.record.id)] == candidate.epoch
+                else { continue }
                 attention.append((primary, AttentionRecord(
                     target: AgentTarget(session: sessionKey, paneID: block.blockID),
                     recordID: candidate.record.id,
@@ -348,8 +396,9 @@ struct RexReducer: Sendable {
                                        now: ContinuousClock.Instant) {
         if newEpoch || lastKnown[key] == nil {
             epochCounter += 1
-            lastKnown[key] = LastKnown(state: state, updatedAt: updatedAt, epoch: epochCounter)
+            lastKnown[key] = LastKnown(state: state, updatedAt: updatedAt, epoch: epochCounter, epochStart: now)
             seenMarks[key] = nil
+            settled[key] = nil
         } else {
             lastKnown[key]?.state = state
             lastKnown[key]?.updatedAt = updatedAt
@@ -360,6 +409,7 @@ struct RexReducer: Sendable {
         for key in lastKnown.keys where shouldDrop(key) {
             lastKnown[key] = nil
             seenMarks[key] = nil
+            settled[key] = nil
         }
     }
 
@@ -369,6 +419,16 @@ struct RexReducer: Sendable {
         // 1. Prune what this generation's snapshot no longer contains.
         let readBlocks = Set(blockRecords.keys)
         dropLastKnown { !readBlocks.contains(BlockKey(sessionID: $0.sessionID, blockID: $0.blockID)) }
+
+        // Silent baselines: the first successful snapshot settles everything; later ones settle
+        // sessions the store has not been told about (created during an outage).
+        if hasCompletedFirstSnapshot {
+            let known = sessionsKnownToStore
+            settleImmediately { !known.contains($0.sessionID) }
+        } else {
+            settleImmediately { _ in true }
+            hasCompletedFirstSnapshot = true
+        }
 
         // 2–4. Discovery, then `.connected` per session, then `.removed` for vanished sessions.
         let descriptors = sessions.keys.map(descriptor).sorted(by: RexRows.compareSessions)
