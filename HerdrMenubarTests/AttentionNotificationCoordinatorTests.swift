@@ -699,6 +699,33 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
         let deliveries = await service.deliveries
         XCTAssertEqual(deliveries.map(\.event.target.paneID), ["b"])
     }
+
+    func testBackendMissingFromNotifyStatesFallsBackToItsDefaultStates() async {
+        let service = RecordingNotificationService()
+        let coordinator = AttentionNotificationCoordinator(
+            service: service, latestTargetRecorder: RecordingLatestNotificationTargetRecorder()
+        )
+        let herdr = descriptor("work")
+        let rex = rexSession()
+        let policy = NotificationDeliveryPolicy(notificationsEnabled: true, soundEnabled: false, notifyStates: [:])
+
+        await coordinator.reconcile(
+            session: herdr, items: [item(herdr, "a", .working), item(herdr, "b", .working)], policy: policy
+        )
+        await coordinator.reconcile(
+            session: herdr, items: [item(herdr, "a", .done), item(herdr, "b", .blocked)], policy: policy
+        )
+        await coordinator.reconcile(session: rex, records: [], policy: policy)
+        await coordinator.reconcile(session: rex, records: [
+            rexRecord(rex, block: "r1", epoch: 1, state: .blocked, label: "A"),
+            rexRecord(rex, block: "r2", epoch: 1, state: .error, label: "B"),
+            rexRecord(rex, block: "r3", epoch: 1, state: .done, label: "C")
+        ], policy: policy)
+
+        let deliveries = await service.deliveries
+        XCTAssertEqual(Set(deliveries.prefix(2).map(\.event.target.paneID)), ["a", "b"])
+        XCTAssertEqual(deliveries.dropFirst(2).map(\.event.target.paneID), ["r1", "r2"])
+    }
 }
 
 private actor RecordingNotificationService: NativeNotificationServing {

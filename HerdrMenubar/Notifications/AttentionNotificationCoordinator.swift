@@ -55,7 +55,7 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
         history[session.key] = current
         guard policy.notificationsEnabled else { return }
 
-        let deliverableStates = policy.notifyStates[session.key.backend] ?? []
+        let deliverableStates = policy.notifyStates[session.key.backend] ?? session.key.backend.defaultNotifyStates
         let candidates = ordered.compactMap { record -> AttentionNotificationEvent? in
             guard deliverableStates.contains(record.state) else { return nil }
             let stamp = RecordStamp(state: record.state, epoch: record.epoch)
