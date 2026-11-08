@@ -64,7 +64,8 @@ actor AttentionNotificationCoordinator: AttentionNotificationCoordinating {
                 target: SelectionTarget(target: record.target, sessionDisplayName: session.displayName),
                 sessionName: session.displayName,
                 visibleLabel: record.visibleLabel,
-                status: record.state
+                status: record.state,
+                message: record.message
             )
         }
 

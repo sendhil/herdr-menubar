@@ -844,7 +844,7 @@ final class NativeNotificationServiceTests: XCTestCase {
     }
 }
 
-private final class FakeNotificationCenterBackend: UserNotificationCenterBacking, @unchecked Sendable {
+final class FakeNotificationCenterBackend: UserNotificationCenterBacking, @unchecked Sendable {
     private let lock = NSLock()
     private var authorizationResultValue: Bool
     private var requestedOptionsValue: UNAuthorizationOptions?

@@ -64,6 +64,8 @@ struct AttentionNotificationEvent: Equatable, Sendable {
     let sessionName: String
     let visibleLabel: String
     let status: AttentionState
+    /// The deciding record's sanitized message; Rex only.
+    var message: String? = nil
 }
 
 enum NotificationDeliveryResult: Equatable, Sendable {

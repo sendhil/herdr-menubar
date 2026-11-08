@@ -98,6 +98,22 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         await backend.settings()
     }
 
+    /// Herdr: `<visible label> — <session>` (unchanged). Other backends: the message's first
+    /// line when present, then `<primary label> — <Backend> · <session label>`, so the source
+    /// pane is always named.
+    static func body(for event: AttentionNotificationEvent) -> String {
+        let backend = event.target.target.session.backend
+        guard backend != .herdr else {
+            return "\(event.visibleLabel) — \(event.sessionName)"
+        }
+        let source = "\(event.visibleLabel) — \(backend.displayName) · \(event.sessionName)"
+        let firstLine = event.message?
+            .split(whereSeparator: \.isNewline).first
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let firstLine, !firstLine.isEmpty else { return source }
+        return "\(firstLine)\n\(source)"
+    }
+
     func deliver(
         _ event: AttentionNotificationEvent,
         sound: Bool
@@ -113,7 +129,7 @@ final class NativeNotificationService: NSObject, NativeNotificationServing,
         case .error: "Agent failed"
         case .done: "Agent finished"
         }
-        content.body = "\(event.visibleLabel) — \(event.sessionName)"
+        content.body = Self.body(for: event)
         if sound && settings.soundsEnabled {
             content.sound = .default
         }
