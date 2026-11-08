@@ -72,9 +72,9 @@ struct AgentTarget: Hashable, Sendable {
     let paneID: String
 }
 
-/// Replaces NotificationSelectionTarget everywhere.
+/// Replaced the Herdr-only notification selection target type everywhere in step 1.
 /// Equality and hashing use `target` only; the display name is a message hint, refreshed from
-/// the store's current descriptor when one exists.
+/// the store's current descriptor or the raw Herdr session ID when either exists.
 struct SelectionTarget: Hashable, Sendable {
     let target: AgentTarget
     let sessionDisplayName: String

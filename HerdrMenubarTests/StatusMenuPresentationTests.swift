@@ -111,15 +111,13 @@ final class StatusMenuPresentationTests: XCTestCase {
             .agent(
                 title: "Default Active · Claude", subtitle: "working · Claude",
                 symbol: "ellipsis.circle", quieter: true,
-                target: SelectionTarget.herdr(.default, paneID: "default-active"
-                )
+                target: SelectionTarget.herdr(.default, paneID: "default-active")
             ),
             .heading("WORK"),
             .agent(
                 title: "Work Active · Claude", subtitle: "working · Claude",
                 symbol: "ellipsis.circle", quieter: true,
-                target: SelectionTarget.herdr(.named("work"), paneID: "work-active"
-                )
+                target: SelectionTarget.herdr(.named("work"), paneID: "work-active")
             ),
             .separator
         ])
