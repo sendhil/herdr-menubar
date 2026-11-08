@@ -187,10 +187,7 @@ final class StatusMenuPresentationTests: XCTestCase {
 
     func testTransientErrorUsesErrorTone() async {
         let fixture = PresentationFixture(focusError: PresentationTestError.focusFailed)
-        await fixture.store.select(AgentMenuItem(
-            session: fixture.workDescriptor,
-            pane: fixture.pane("p", .blocked)
-        ))
+        await fixture.store.selectRow(.herdr(fixture.workDescriptor.id, paneID: "p"))
 
         XCTAssertTrue(fixture.presentation().menu.contains(.info(
             "Could not focus pane in work: focusFailed", tone: .error

@@ -45,6 +45,7 @@
 		BB0000000000000000000003 /* HerdrBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000013 /* HerdrBackend.swift */; };
 		BB0000000000000000000004 /* HerdrBackendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000014 /* HerdrBackendTests.swift */; };
 		BB0000000000000000000005 /* BackendTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000015 /* BackendTestSupport.swift */; };
+		BB0000000000000000000006 /* AgentStoreBackendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000016 /* AgentStoreBackendTests.swift */; };
 		B10000000000000000000004 /* SessionSupervisorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* SessionSupervisorTests.swift */; };
 		B10000000000000000000006 /* MultiSessionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* MultiSessionIntegrationTests.swift */; };
 		D20000000000000000000003 /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* NotificationModels.swift */; };
@@ -140,6 +141,7 @@
 		BB0000000000000000000013 /* HerdrBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrBackend.swift; sourceTree = "<group>"; };
 		BB0000000000000000000014 /* HerdrBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrBackendTests.swift; sourceTree = "<group>"; };
 		BB0000000000000000000015 /* BackendTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendTestSupport.swift; sourceTree = "<group>"; };
+		BB0000000000000000000016 /* AgentStoreBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStoreBackendTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* SessionSupervisorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSupervisorTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* MultiSessionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiSessionIntegrationTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000002 /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModels.swift; sourceTree = "<group>"; };
@@ -242,6 +244,7 @@
 				BB0000000000000000000012 /* AgentBackendTypesTests.swift */,
 				BB0000000000000000000014 /* HerdrBackendTests.swift */,
 				BB0000000000000000000015 /* BackendTestSupport.swift */,
+				BB0000000000000000000016 /* AgentStoreBackendTests.swift */,
 				12A000000000000000000034 /* MenuBarIconTests.swift */,
 				F90000000000000000000001 /* SketchyBarIntegrationTests.swift */,
 				12A000000000000000000026 /* PreferencesTests.swift */,
@@ -549,6 +552,7 @@
 				BB0000000000000000000002 /* AgentBackendTypesTests.swift in Sources */,
 				BB0000000000000000000004 /* HerdrBackendTests.swift in Sources */,
 				BB0000000000000000000005 /* BackendTestSupport.swift in Sources */,
+				BB0000000000000000000006 /* AgentStoreBackendTests.swift in Sources */,
 				12A000000000000000000033 /* MenuBarIconTests.swift in Sources */,
 				F90000000000000000000002 /* SketchyBarIntegrationTests.swift in Sources */,
 				12A000000000000000000010 /* PreferencesTests.swift in Sources */,

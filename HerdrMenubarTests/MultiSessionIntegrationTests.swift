@@ -716,8 +716,8 @@ final class MultiSessionIntegrationTests: XCTestCase {
                 .map(\.id)
         }
         XCTAssertEqual(Set(initialIDs), [
-            AgentMenuItemID(sessionID: .default, paneID: "duplicate"),
-            AgentMenuItemID(sessionID: .named("work"), paneID: "duplicate")
+            AgentTarget(session: .default, paneID: "duplicate"),
+            AgentTarget(session: .named("work"), paneID: "duplicate")
         ])
 
         await namedServer.setPanes([integrationPane("duplicate", .blocked)])

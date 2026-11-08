@@ -9,149 +9,94 @@ enum ConnectionState: Equatable, Sendable {
     case connected
 }
 
-struct AgentMenuItemID: Hashable, Sendable {
-    let sessionID: SessionID
-    let paneID: String
-}
-
-struct AgentMenuItem: Identifiable, Equatable, Sendable {
-    let sessionID: SessionID
-    let sessionName: String
-    let paneID: String
-    let displayLabel: String
-    let agentLabel: String
-    let status: AgentStatus
-
-    var id: AgentMenuItemID { AgentMenuItemID(sessionID: sessionID, paneID: paneID) }
-
-    init(
-        session: SessionDescriptor,
-        pane: PaneInfo,
-        workspace: WorkspaceInfo? = nil,
-        tab: TabInfo? = nil,
-        workspaceIsMultiTab: Bool = false
-    ) {
-        sessionID = session.id
-        sessionName = session.displayName
-        paneID = pane.paneID
-        if let workspace, !workspace.label.isEmpty {
-            if workspaceIsMultiTab, let tab, !tab.label.isEmpty {
-                displayLabel = "\(workspace.label) · \(tab.label)"
-            } else {
-                displayLabel = workspace.label
-            }
-        } else {
-            displayLabel = pane.displayLabel
-        }
-        agentLabel = pane.agentLabel
-        status = pane.agentStatus
-    }
-
-    var visibleLabel: String {
-        displayLabel == agentLabel ? displayLabel : "\(displayLabel) · \(agentLabel)"
-    }
-
-    var secondaryLabel: String { "\(status.rawValue) · \(agentLabel)" }
-
-    static func attentionOrder(_ lhs: Self, _ rhs: Self) -> Bool {
-        let lhsRank = lhs.status == .blocked ? 0 : 1
-        let rhsRank = rhs.status == .blocked ? 0 : 1
-        if lhsRank != rhsRank { return lhsRank < rhsRank }
-        return labelOrder(lhs, rhs)
-    }
-
-    static func labelOrder(_ lhs: Self, _ rhs: Self) -> Bool {
-        let locale = Locale(identifier: "en_US_POSIX")
-        let lhsLabel = lhs.displayLabel.folding(options: [.caseInsensitive], locale: locale)
-        let rhsLabel = rhs.displayLabel.folding(options: [.caseInsensitive], locale: locale)
-        if lhsLabel != rhsLabel { return lhsLabel < rhsLabel }
-        return lhs.paneID < rhs.paneID
-    }
-}
-
 struct SessionMenuSection: Identifiable, Equatable, Sendable {
-    let session: SessionDescriptor
-    let items: [AgentMenuItem]
-    var id: SessionID { session.id }
+    let session: AgentSessionDescriptor
+    let items: [AgentRow]
+    var id: AgentSessionKey { session.key }
 }
 
 struct UnavailableSession: Identifiable, Equatable, Sendable {
-    let session: SessionDescriptor
+    let session: AgentSessionDescriptor
     let message: String
-    var id: SessionID { session.id }
+    var id: AgentSessionKey { session.key }
 }
 
 private struct SessionPresentationState {
-    var descriptor: SessionDescriptor
+    var descriptor: AgentSessionDescriptor
     var isConnected = false
     var unavailableMessage: String?
-    var attentionItems: [AgentMenuItem] = []
-    var workingItems: [AgentMenuItem] = []
+    private(set) var rows: [AgentRow] = []
+    private(set) var attentionRows: [AgentRow] = []
+    private(set) var finishedRows: [AgentRow] = []
+    private(set) var workingRows: [AgentRow] = []
+
+    init(descriptor: AgentSessionDescriptor) {
+        self.descriptor = descriptor
+    }
+
+    /// Sections and badge come from `RowState` only.
+    mutating func setRows(_ newRows: [AgentRow]) {
+        rows = newRows
+        attentionRows = newRows.filter(\.isAttention).sorted(by: AgentRow.attentionOrder)
+        finishedRows = newRows.filter { $0.state == .finished }.sorted(by: AgentRow.labelOrder)
+        workingRows = newRows.filter { $0.state == .working }.sorted(by: AgentRow.labelOrder)
+    }
 }
 
-private struct AgentSelectionTarget: Sendable {
-    let sessionID: SessionID
-    let paneID: String
-    let sessionName: String
+private extension AgentRow {
+    var isAttention: Bool {
+        if case .attention = state { return true }
+        return false
+    }
 }
 
 @Observable @MainActor
 final class AgentStore {
-    private let supervisor: any SessionSupervising
-    private let terminalActivator: any TerminalActivating
-    private let ghosttyFocuser: any GhosttySessionFocusing
+    private let backends: [any AgentBackend]
     private let attentionCoordinator: any AttentionNotificationCoordinating
     private let notificationService: any NativeNotificationServing
     private let preferences: Preferences
-    private var eventTask: Task<Void, Never>?
+    private var eventTasks: [Task<Void, Never>] = []
     private var notificationResponseTask: Task<Void, Never>?
     private var notificationResponseSubscription: NotificationResponseSubscription?
     private var pendingNotificationTarget: SelectionTarget?
     private var eventGeneration = UUID()
     private var startTask: Task<Void, Never>?
     private var startToken: UUID?
-    private var startCallingSupervisorToken: UUID?
+    private var startCallingBackendsToken: UUID?
     private var stopTask: Task<Void, Never>?
     private var stopToken: UUID?
     private var selectionTask: Task<Void, Never>?
     private var selectionGeneration = UUID()
     private var isRunning = false
-    private var hasCompletedDiscovery = false
-    private var sessions: [SessionID: SessionPresentationState] = [:]
+    private var discoveredBackends: Set<BackendKind> = []
+    private var sessions: [AgentSessionKey: SessionPresentationState] = [:]
 
     private(set) var connectionState: ConnectionState = .searching
     private(set) var transientError: String?
 
-    var attentionSections: [SessionMenuSection] {
-        sections(keyPath: \.attentionItems)
-    }
-
-    var workingSections: [SessionMenuSection] {
-        sections(keyPath: \.workingItems)
-    }
+    var attentionSections: [SessionMenuSection] { sections(\.attentionRows) }
+    var finishedSections: [SessionMenuSection] { sections(\.finishedRows) }
+    var workingSections: [SessionMenuSection] { sections(\.workingRows) }
 
     var unavailableSessions: [UnavailableSession] {
         sessions.values.compactMap { state in
             state.unavailableMessage.map { UnavailableSession(session: state.descriptor, message: $0) }
         }
-        .sorted { Self.sessionOrder($0.session, $1.session) }
+        .sorted { sessionOrder($0.session, $1.session) }
     }
 
     var attentionCount: Int {
-        sessions.values.reduce(into: 0) { $0 += $1.attentionItems.count }
+        sessions.values.reduce(into: 0) { $0 += $1.attentionRows.count }
     }
 
     init(
-        supervisor: any SessionSupervising,
-        terminalActivator: any TerminalActivating,
-        ghosttyFocuser: any GhosttySessionFocusing,
+        backends: [any AgentBackend],
         attentionCoordinator: any AttentionNotificationCoordinating,
         notificationService: any NativeNotificationServing,
         preferences: Preferences = Preferences()
     ) {
-        self.supervisor = supervisor
-        self.terminalActivator = terminalActivator
-        self.ghosttyFocuser = ghosttyFocuser
+        self.backends = backends
         self.attentionCoordinator = attentionCoordinator
         self.notificationService = notificationService
         self.preferences = preferences
@@ -169,8 +114,12 @@ final class AgentStore {
             await precedingStop?.value
             guard let self, self.ownsStart(generation: generation, token: token) else { return }
 
-            let events = await self.supervisor.events()
-            guard self.ownsStart(generation: generation, token: token) else { return }
+            var streams: [(BackendKind, AsyncStream<BackendEvent>)] = []
+            for backend in self.backends {
+                let events = await backend.events()
+                guard self.ownsStart(generation: generation, token: token) else { return }
+                streams.append((backend.kind, events))
+            }
 
             let notificationResponses = await self.notificationService.responses()
             guard self.ownsStart(generation: generation, token: token) else {
@@ -178,11 +127,13 @@ final class AgentStore {
                 return
             }
 
-            self.eventTask = Task { [weak self] in
-                for await event in events {
-                    guard !Task.isCancelled else { return }
-                    await self?.consume(event, generation: generation)
-                }
+            for (kind, events) in streams {
+                self.eventTasks.append(Task { [weak self] in
+                    for await event in events {
+                        guard !Task.isCancelled else { return }
+                        await self?.consume(event, from: kind, generation: generation)
+                    }
+                })
             }
             self.notificationResponseSubscription = notificationResponses
             self.notificationResponseTask = Task { [weak self] in
@@ -192,18 +143,20 @@ final class AgentStore {
                     self?.select(target)
                 }
             }
-            self.startCallingSupervisorToken = token
-            await self.supervisor.start()
-            guard self.ownsStart(generation: generation, token: token) else { return }
-            self.startCallingSupervisorToken = nil
+            self.startCallingBackendsToken = token
+            for backend in self.backends {
+                await backend.start()
+                guard self.ownsStart(generation: generation, token: token) else { return }
+            }
+            self.startCallingBackendsToken = nil
         }
         startTask = task
         await task.value
         if startToken == token {
             startTask = nil
             startToken = nil
-            if startCallingSupervisorToken == token {
-                startCallingSupervisorToken = nil
+            if startCallingBackendsToken == token {
+                startCallingBackendsToken = nil
             }
         }
     }
@@ -213,7 +166,7 @@ final class AgentStore {
             await stopTask.value
             return
         }
-        guard isRunning || startTask != nil || eventTask != nil
+        guard isRunning || startTask != nil || !eventTasks.isEmpty
             || notificationResponseTask != nil || selectionTask != nil else { return }
 
         isRunning = false
@@ -222,15 +175,15 @@ final class AgentStore {
         let selection = selectionTask
         selectionTask = nil
         selection?.cancel()
-        let startingSupervisor = startCallingSupervisorToken == startToken ? startTask : nil
+        let startingBackends = startCallingBackendsToken == startToken ? startTask : nil
         startTask?.cancel()
         startTask = nil
         startToken = nil
-        startCallingSupervisorToken = nil
+        startCallingBackendsToken = nil
 
-        let consumer = eventTask
-        eventTask = nil
-        consumer?.cancel()
+        let consumers = eventTasks
+        eventTasks = []
+        consumers.forEach { $0.cancel() }
         let responseConsumer = notificationResponseTask
         notificationResponseTask = nil
         let responseSubscription = notificationResponseSubscription
@@ -238,22 +191,23 @@ final class AgentStore {
         pendingNotificationTarget = nil
         responseSubscription?.cancel()
         responseConsumer?.cancel()
-        hasCompletedDiscovery = false
+        discoveredBackends.removeAll()
         sessions.removeAll()
         connectionState = .searching
         transientError = nil
 
         let precedingStop = stopTask
         let token = UUID()
-        let supervisor = self.supervisor
+        let backends = self.backends
+        let coordinator = attentionCoordinator
         let task = Task {
             await precedingStop?.value
             await selection?.value
-            await consumer?.value
+            for consumer in consumers { await consumer.value }
             await responseConsumer?.value
-            await startingSupervisor?.value
-            await attentionCoordinator.reset()
-            await supervisor.stop()
+            await startingBackends?.value
+            await coordinator.reset()
+            for backend in backends { await backend.stop() }
         }
         stopToken = token
         stopTask = task
@@ -266,18 +220,22 @@ final class AgentStore {
 
     func retry() async {
         transientError = nil
-        await supervisor.retryUnavailable()
+        let enabled = preferences.enabledBackends
+        let targets = backends.filter { enabled.contains($0.kind) }
+        await withTaskGroup(of: Void.self) { group in
+            for backend in targets {
+                group.addTask { await backend.retryUnavailable() }
+            }
+        }
     }
 
-    func select(_ item: AgentMenuItem) async {
+    /// A menu row was chosen.
+    func selectRow(_ target: SelectionTarget) async {
         pendingNotificationTarget = nil
-        await startSelection(AgentSelectionTarget(
-            sessionID: item.sessionID,
-            paneID: item.paneID,
-            sessionName: item.sessionName
-        ))?.value
+        await startSelection(target)?.value
     }
 
+    /// A notification click, the latest-notification shortcut, or a menu action.
     func select(_ target: SelectionTarget) {
         guard isRunning else { return }
         receiveNotificationTarget(target, generation: eventGeneration)
@@ -285,9 +243,16 @@ final class AgentStore {
 }
 
 private extension AgentStore {
+    func backend(for kind: BackendKind) -> (any AgentBackend)? {
+        backends.first { $0.kind == kind }
+    }
+
     @discardableResult
-    func startSelection(_ target: AgentSelectionTarget) -> Task<Void, Never>? {
+    func startSelection(_ target: SelectionTarget) -> Task<Void, Never>? {
         guard stopTask == nil else { return nil }
+        guard let backend = backend(for: target.target.session.backend) else { return nil }
+        // Step 0: capture the token from the store's own row cache for every selection source.
+        let seenToken = sessions[target.target.session]?.rows.first { $0.target == target.target }?.seenToken
         let generation = UUID()
         selectionGeneration = generation
         transientError = nil
@@ -296,7 +261,7 @@ private extension AgentStore {
         let task = Task { [weak self] in
             await predecessor?.value
             guard let self, self.ownsSelection(generation) else { return }
-            await self.performSelection(target, generation: generation)
+            await self.performSelection(target, backend: backend, seenToken: seenToken, generation: generation)
             if self.selectionGeneration == generation {
                 self.selectionTask = nil
             }
@@ -305,135 +270,107 @@ private extension AgentStore {
         return task
     }
 
-    func performSelection(_ target: AgentSelectionTarget, generation: UUID) async {
+    func performSelection(
+        _ target: SelectionTarget,
+        backend: any AgentBackend,
+        seenToken: SeenToken?,
+        generation: UUID
+    ) async {
+        // Step 1.
         do {
-            _ = try await supervisor.focus(sessionID: target.sessionID, paneID: target.paneID)
+            try await backend.focusServer(target.target)
         } catch {
             AppLog.systemActions.error("Pane focus failed: \(error.localizedDescription, privacy: .private)")
             if ownsSelection(generation) {
-                transientError = "Could not focus pane in \(target.sessionName): \(error.localizedDescription)"
+                transientError = error.localizedDescription
+            }
+            if case .unavailable = error as? FocusError {
+                await backend.retryUnavailable()
             }
             return
         }
 
+        // Step 2.
         guard ownsSelection(generation) else {
-            await supervisor.refresh(sessionID: target.sessionID)
+            await backend.refreshAfterSelection(target.target)
             return
         }
 
-        let bundleIdentifier = preferences.selectedTerminalBundleIdentifier
-        if bundleIdentifier == GhosttyControlConstants.bundleIdentifier {
-            do {
-                try await ghosttyFocuser.focusAttachedClient(sessionID: target.sessionID)
-            } catch {
-                AppLog.systemActions.error("Ghostty session focus failed: \(error.localizedDescription, privacy: .private)")
-                if ownsSelection(generation) {
-                    transientError = ghosttyFocusMessage(error, sessionName: target.sessionName)
-                }
-                await supervisor.refresh(sessionID: target.sessionID)
-                return
-            }
-        } else if ownsSelection(generation) {
-            do {
-                try await terminalActivator.activate(bundleIdentifier: bundleIdentifier)
-            } catch {
-                AppLog.systemActions.error(
-                    "Terminal activation failed: \(error.localizedDescription, privacy: .private)"
-                )
-                if ownsSelection(generation) {
-                    transientError = error.localizedDescription
-                }
-            }
+        // Step 3.
+        let partial = await backend.activate(target.target)
+        if ownsSelection(generation), let partial {
+            transientError = partial
         }
-        await supervisor.refresh(sessionID: target.sessionID)
+
+        // Step 4.
+        if ownsSelection(generation), partial == nil, let seenToken {
+            await backend.markSeen(seenToken)
+        }
+
+        // Step 5.
+        await backend.refreshAfterSelection(target.target)
     }
 
     func ownsSelection(_ generation: UUID) -> Bool {
         selectionGeneration == generation && !Task.isCancelled
     }
 
-    func ghosttyFocusMessage(_ error: any Error, sessionName: String) -> String {
-        let prefix = "Focused the pane in \(sessionName), but "
-        switch error as? GhosttyFocusError {
-        case .noAttachedClient, .lookupTimedOut:
-            return prefix + "no attached Ghostty surface was found."
-        case .unsupportedHerdr:
-            return prefix + "this Herdr session must be updated for Ghostty surface focus."
-        case .markerCleanupFailed:
-            return prefix + "the temporary Ghostty focus marker could not be cleared."
-        case .ghosttyUnavailable:
-            return prefix + "Ghostty is not running."
-        case .unsupportedGhostty:
-            return prefix + "Ghostty 1.4.0 or later with Apple Event support is required."
-        case .automationDenied:
-            return prefix + "Automation permission to control Ghostty was denied. "
-                + "Allow Herdr Menubar in System Settings > Privacy & Security > Automation."
-        case .targetGone:
-            return prefix + "the attached Ghostty surface or process disappeared."
-        case .ambiguousMarker:
-            return prefix + "more than one Ghostty surface matched the focus marker."
-        case .ghosttyControlFailed, .none:
-            return prefix + "Ghostty could not be controlled."
-        }
-    }
-
     func ownsStart(generation: UUID, token: UUID) -> Bool {
         isRunning && eventGeneration == generation && startToken == token && !Task.isCancelled
     }
 
-    func consume(_ event: SessionSupervisorEvent, generation: UUID) async {
+    func consume(_ event: BackendEvent, from kind: BackendKind, generation: UUID) async {
         guard isRunning, eventGeneration == generation else { return }
         switch event {
-        case .discoverySnapshot(let descriptors):
-            hasCompletedDiscovery = true
-            for descriptor in descriptors where sessions[descriptor.id] == nil {
-                sessions[descriptor.id] = SessionPresentationState(descriptor: descriptor)
+        case .discovery(let descriptors):
+            discoveredBackends.insert(kind)
+            for descriptor in descriptors where sessions[descriptor.key] == nil {
+                sessions[descriptor.key] = SessionPresentationState(descriptor: descriptor)
             }
-            discardAbsentPendingTarget(discovered: descriptors)
+            discardAbsentPendingTarget(kind: kind, discovered: descriptors)
         case .connected(let descriptor, let snapshot):
-            var state = sessions[descriptor.id] ?? SessionPresentationState(descriptor: descriptor)
+            var state = sessions[descriptor.key] ?? SessionPresentationState(descriptor: descriptor)
             state.descriptor = descriptor
             state.isConnected = true
             state.unavailableMessage = nil
-            let allItems = makeAllItems(snapshot: snapshot, session: descriptor)
-            (state.attentionItems, state.workingItems) = makePresentationItems(allItems)
-            sessions[descriptor.id] = state
+            state.setRows(snapshot.rows)
+            sessions[descriptor.key] = state
             await attentionCoordinator.reconcile(
-                session: AgentSessionDescriptor(herdr: descriptor),
-                records: HerdrBackend.makeSnapshot(snapshot, sessionID: descriptor.id).attention,
+                session: descriptor,
+                records: snapshot.attention,
                 policy: notificationPolicy
             )
             if let pendingNotificationTarget,
-               pendingNotificationTarget.target.session == AgentSessionKey(herdr: descriptor.id) {
+               pendingNotificationTarget.target.session == descriptor.key {
                 receiveNotificationTarget(pendingNotificationTarget, generation: generation)
             }
-        case .snapshot(let id, let snapshot):
-            guard var state = sessions[id], state.isConnected else { return }
-            let allItems = makeAllItems(snapshot: snapshot, session: state.descriptor)
-            (state.attentionItems, state.workingItems) = makePresentationItems(allItems)
-            sessions[id] = state
+        case .snapshot(let key, let snapshot):
+            guard var state = sessions[key], state.isConnected else { return }
+            state.setRows(snapshot.rows)
+            sessions[key] = state
             await attentionCoordinator.reconcile(
-                session: AgentSessionDescriptor(herdr: state.descriptor),
-                records: HerdrBackend.makeSnapshot(snapshot, sessionID: id).attention,
+                session: state.descriptor,
+                records: snapshot.attention,
                 policy: notificationPolicy
             )
-        case .unavailable(let id, let message):
-            guard var state = sessions[id] else { return }
+        case .sessionUnavailable(let key, let message):
+            guard var state = sessions[key] else { return }
             state.isConnected = false
             state.unavailableMessage = message
-            state.attentionItems = []
-            state.workingItems = []
-            sessions[id] = state
-            await attentionCoordinator.unavailable(session: AgentSessionKey(herdr: id))
-        case .removed(let id):
-            let removedState = sessions.removeValue(forKey: id)
-            if pendingNotificationTarget?.target.session == AgentSessionKey(herdr: id) {
-                pendingNotificationTarget = nil
-                transientError = "\(id.displayName) is unavailable"
+            state.setRows([])
+            sessions[key] = state
+            await attentionCoordinator.unavailable(session: key)
+        case .removed(let key):
+            let removedState = sessions.removeValue(forKey: key)
+            if let pendingNotificationTarget, pendingNotificationTarget.target.session == key {
+                self.pendingNotificationTarget = nil
+                let name = removedState?.descriptor.displayName ?? sessionName(for: key, hint: pendingNotificationTarget)
+                transientError = "\(name) is unavailable"
             }
             guard removedState != nil else { return }
-            ghosttyFocuser.forget(sessionID: id)
-            await attentionCoordinator.remove(session: AgentSessionKey(herdr: id))
+            await attentionCoordinator.remove(session: key)
+        case .descriptorChanged, .backendUnavailable, .backendHidden:
+            break
         }
         deriveConnectionState()
     }
@@ -446,20 +383,16 @@ private extension AgentStore {
         )
     }
 
-    func receiveNotificationTarget(
-        _ target: SelectionTarget,
-        generation: UUID
-    ) {
+    func receiveNotificationTarget(_ target: SelectionTarget, generation: UUID) {
         guard isRunning, eventGeneration == generation else { return }
+        let kind = target.target.session.backend
+        // An unroutable target never supersedes the current selection.
+        guard backend(for: kind) != nil else { return }
         supersedeSelection()
-        guard let sessionID = target.target.session.herdrSessionID else {
-            pendingNotificationTarget = nil
-            return
-        }
-        guard let state = sessions[sessionID] else {
-            if hasCompletedDiscovery {
+        guard let state = sessions[target.target.session] else {
+            if discoveredBackends.contains(kind) {
                 pendingNotificationTarget = nil
-                transientError = "\(target.sessionDisplayName) is unavailable"
+                transientError = "\(sessionName(for: target.target.session, hint: target)) is unavailable"
             } else {
                 pendingNotificationTarget = target
             }
@@ -470,11 +403,7 @@ private extension AgentStore {
             return
         }
         pendingNotificationTarget = nil
-        startSelection(AgentSelectionTarget(
-            sessionID: sessionID,
-            paneID: target.target.paneID,
-            sessionName: state.descriptor.displayName
-        ))
+        startSelection(SelectionTarget(target: target.target, sessionDisplayName: state.descriptor.displayName))
     }
 
     func supersedeSelection() {
@@ -483,21 +412,27 @@ private extension AgentStore {
         selectionTask?.cancel()
     }
 
-    func discardAbsentPendingTarget(discovered: [SessionDescriptor]) {
+    func discardAbsentPendingTarget(kind: BackendKind, discovered: [AgentSessionDescriptor]) {
         guard let pendingNotificationTarget,
-              let pendingSessionID = pendingNotificationTarget.target.session.herdrSessionID,
-              sessions[pendingSessionID] == nil,
-              !discovered.contains(where: { $0.id == pendingSessionID }) else {
+              pendingNotificationTarget.target.session.backend == kind,
+              sessions[pendingNotificationTarget.target.session] == nil,
+              !discovered.contains(where: { $0.key == pendingNotificationTarget.target.session }) else {
             return
         }
         self.pendingNotificationTarget = nil
-        transientError = "\(pendingNotificationTarget.sessionDisplayName) is unavailable"
+        transientError = "\(sessionName(for: pendingNotificationTarget.target.session, hint: pendingNotificationTarget)) is unavailable"
+    }
+
+    /// User-facing session name: the store's descriptor, else the raw Herdr session ID.
+    /// The payload's display name is only a hint for backends without either.
+    func sessionName(for key: AgentSessionKey, hint: SelectionTarget) -> String {
+        sessions[key]?.descriptor.displayName ?? key.herdrSessionID?.displayName ?? hint.sessionDisplayName
     }
 
     func deriveConnectionState() {
         if sessions.values.contains(where: \.isConnected) {
             connectionState = .connected
-        } else if !hasCompletedDiscovery {
+        } else if discoveredBackends.isEmpty {
             connectionState = .searching
         } else if sessions.isEmpty {
             connectionState = .noSessions
@@ -506,65 +441,22 @@ private extension AgentStore {
         }
     }
 
-    func makeAllItems(
-        snapshot: PresentationSnapshot,
-        session: SessionDescriptor
-    ) -> [AgentMenuItem] {
-        let workspacesByID = Dictionary(uniqueKeysWithValues: snapshot.workspaces.map { ($0.workspaceID, $0) })
-        let tabsByID = Dictionary(uniqueKeysWithValues: snapshot.tabs.map { ($0.tabID, $0) })
-        var tabIDsByWorkspace: [String: Set<String>] = [:]
-        for tab in snapshot.tabs {
-            tabIDsByWorkspace[tab.workspaceID, default: []].insert(tab.tabID)
-        }
-        for pane in snapshot.panes {
-            tabIDsByWorkspace[pane.workspaceID, default: []].insert(pane.tabID)
-        }
-
-        return snapshot.panes.map { pane in
-            let workspace = workspacesByID[pane.workspaceID]
-            let isMultiTab = (workspace?.tabCount ?? 0) > 1
-                || (tabIDsByWorkspace[pane.workspaceID]?.count ?? 0) > 1
-            return AgentMenuItem(
-                session: session,
-                pane: pane,
-                workspace: workspace,
-                tab: tabsByID[pane.tabID],
-                workspaceIsMultiTab: isMultiTab
-            )
-        }
-    }
-
-    func makePresentationItems(
-        _ items: [AgentMenuItem]
-    ) -> (attention: [AgentMenuItem], working: [AgentMenuItem]) {
-        (
-            items.filter { $0.status == .blocked || $0.status == .done }
-                .sorted(by: AgentMenuItem.attentionOrder),
-            items.filter { $0.status == .working }
-                .sorted(by: AgentMenuItem.labelOrder)
-        )
-    }
-
-    func sections(
-        keyPath: KeyPath<SessionPresentationState, [AgentMenuItem]>
-    ) -> [SessionMenuSection] {
+    func sections(_ keyPath: KeyPath<SessionPresentationState, [AgentRow]>) -> [SessionMenuSection] {
         sessions.values.compactMap { state in
-            let items = state[keyPath: keyPath]
-            return items.isEmpty ? nil : SessionMenuSection(session: state.descriptor, items: items)
+            let rows = state[keyPath: keyPath]
+            return rows.isEmpty ? nil : SessionMenuSection(session: state.descriptor, items: rows)
         }
-        .sorted { Self.sessionOrder($0.session, $1.session) }
+        .sorted { sessionOrder($0.session, $1.session) }
     }
 
-    static func sessionOrder(_ lhs: SessionDescriptor, _ rhs: SessionDescriptor) -> Bool {
-        switch (lhs.id, rhs.id) {
-        case (.default, .default): return false
-        case (.default, _): return true
-        case (_, .default): return false
-        case (.named(let lhsName), .named(let rhsName)):
-            let locale = Locale(identifier: "en_US_POSIX")
-            let lhsFolded = lhsName.folding(options: [.caseInsensitive], locale: locale)
-            let rhsFolded = rhsName.folding(options: [.caseInsensitive], locale: locale)
-            return lhsFolded == rhsFolded ? lhsName < rhsName : lhsFolded < rhsFolded
+    /// `BackendKind` order, then the owning backend's comparator.
+    func sessionOrder(_ lhs: AgentSessionDescriptor, _ rhs: AgentSessionDescriptor) -> Bool {
+        if lhs.key.backend != rhs.key.backend {
+            return lhs.key.backend.sortIndex < rhs.key.backend.sortIndex
         }
+        guard let backend = backend(for: lhs.key.backend) else {
+            return lhs.key.rawID < rhs.key.rawID
+        }
+        return backend.compareSessions(lhs, rhs)
     }
 }

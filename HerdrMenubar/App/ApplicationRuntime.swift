@@ -85,10 +85,14 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             preferences: preferences
         )
         let loginItemService = LoginItemService()
-        let store = AgentStore(
+        let herdrBackend = HerdrBackend(
             supervisor: supervisor,
             terminalActivator: TerminalActivationService(),
             ghosttyFocuser: ghosttyFocuser,
+            preferences: preferences
+        )
+        let store = AgentStore(
+            backends: [herdrBackend],
             attentionCoordinator: attentionCoordinator,
             notificationService: notificationService,
             preferences: preferences

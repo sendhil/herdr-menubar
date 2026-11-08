@@ -15,8 +15,8 @@ final class AgentStoreTests: XCTestCase {
 
         let items = store.attentionSections.flatMap(\.items) + store.workingSections.flatMap(\.items)
         XCTAssertEqual(Set(items.map(\.id)), [
-            AgentMenuItemID(sessionID: .default, paneID: "same"),
-            AgentMenuItemID(sessionID: .named("work"), paneID: "same")
+            AgentTarget(session: .default, paneID: "same"),
+            AgentTarget(session: .named("work"), paneID: "same")
         ])
         await store.stop()
     }
@@ -91,7 +91,20 @@ final class AgentStoreTests: XCTestCase {
 
         XCTAssertEqual(store.connectionState, .connected)
         XCTAssertEqual(store.attentionSections.map(\.id), [.default])
-        XCTAssertEqual(store.unavailableSessions, [UnavailableSession(session: workDescriptor, message: "socket unavailable")])
+        XCTAssertEqual(store.unavailableSessions, [UnavailableSession(session: AgentSessionDescriptor(herdr: workDescriptor), message: "socket unavailable")])
+        await store.stop()
+    }
+
+    func testNamedDefaultSessionStaysDistinctFromDefaultSession() async {
+        let supervisor = FakeSessionSupervisor()
+        let store = makeStore(supervisor: supervisor)
+        await store.start()
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("p", .done)])))
+        await supervisor.send(.connected(descriptor("default"), snapshot([pane("p", .done)])))
+        await eventually { store.attentionCount == 2 }
+
+        XCTAssertEqual(store.attentionSections.map(\.id), [.default, .named("default")])
+        XCTAssertEqual(store.attentionSections.map(\.session.displayName), ["Default", "default"])
         await store.stop()
     }
 
@@ -159,21 +172,29 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
 
         await supervisor.send(.connected(workDescriptor, snapshot([
-            pane("idle", .idle), pane("unknown", .unknown), pane("blocked", .blocked)
+            pane("idle", .idle), pane("unknown", .unknown),
+            pane("blocked", .blocked, title: "Zulu"), pane("first-done", .done, title: "Alpha")
         ])))
         await supervisor.send(.snapshot(.named("work"), snapshot([
-            pane("working", .working), pane("done", .done)
+            pane("working", .working), pane("done", .done, title: "Yankee"),
+            pane("second-blocked", .blocked, title: "Bravo")
         ])))
         await waitUntil { await coordinator.reconciliations.count == 2 }
 
         let calls = await coordinator.reconciliations
-        XCTAssertEqual(calls.map { $0.records.map(\.target.paneID) }, [["blocked"], ["done"]])
+        XCTAssertEqual(calls.map { $0.records.map(\.target.paneID) }, [
+            ["first-done", "blocked"], ["second-blocked", "done"]
+        ])
+        XCTAssertEqual(calls.map { $0.records.map(\.state) }, [[.done, .blocked], [.blocked, .done]])
+        XCTAssertEqual(calls.map { $0.records.map(\.visibleLabel) }, [
+            ["Alpha · Claude", "Zulu · Claude"], ["Bravo · Claude", "Yankee · Claude"]
+        ])
         XCTAssertEqual(calls.map(\.session.key), [.named("work"), .named("work")])
         XCTAssertEqual(calls.map(\.policy), [
             NotificationDeliveryPolicy(notificationsEnabled: true, soundEnabled: false),
             NotificationDeliveryPolicy(notificationsEnabled: true, soundEnabled: false)
         ])
-        XCTAssertEqual(store.attentionSections.flatMap(\.items).map(\.paneID), ["done"])
+        XCTAssertEqual(store.attentionSections.flatMap(\.items).map(\.paneID), ["second-blocked", "done"])
         XCTAssertEqual(store.workingSections.flatMap(\.items).map(\.paneID), ["working"])
 
         await supervisor.send(.snapshot(.default, snapshot([pane("stale", .done)])))
@@ -229,9 +250,7 @@ final class AgentStoreTests: XCTestCase {
             ghosttyFocuser: focuser,
             preferences: testPreferences(bundleIdentifier: "com.github.wez.wezterm")
         )
-        let item = AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked))
-
-        await store.select(item)
+        await store.selectRow(.herdr(workDescriptor.id, paneID: "p"))
 
         let actions = await sequence.values
         let focusRequests = await supervisor.focusRequests
@@ -256,7 +275,7 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences(bundleIdentifier: "com.mitchellh.ghostty")
         )
 
-        await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .working)))
+        await store.selectRow(.herdr(workDescriptor.id, paneID: "p"))
 
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
@@ -280,7 +299,7 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences()
         )
 
-        await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked)))
+        await store.selectRow(.herdr(workDescriptor.id, paneID: "p"))
 
         XCTAssertEqual(activator.activationCount, 0)
         XCTAssertTrue(focuser.focusedSessionIDs.isEmpty)
@@ -334,7 +353,7 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences(bundleIdentifier: "com.apple.Terminal")
         )
 
-        await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .done)))
+        await store.selectRow(.herdr(workDescriptor.id, paneID: "p"))
 
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
@@ -471,6 +490,24 @@ final class AgentStoreTests: XCTestCase {
         await store.stop()
     }
 
+    func testHerdrUnavailableWordingComesFromSessionIDNotPayloadHint() async {
+        let supervisor = FakeSessionSupervisor()
+        let coordinator = RecordingAttentionCoordinator()
+        let store = makeStore(supervisor: supervisor, attentionCoordinator: coordinator)
+        await store.start()
+        await supervisor.send(.discoverySnapshot([defaultDescriptor]))
+        await supervisor.send(.connected(defaultDescriptor, snapshot([pane("fallback", .done)])))
+        await coordinator.waitForReconciliations(1)
+
+        store.select(SelectionTarget(
+            target: AgentTarget(session: .named("work"), paneID: "missing"),
+            sessionDisplayName: "stale payload name"
+        ))
+
+        XCTAssertEqual(store.transientError, "work is unavailable")
+        await store.stop()
+    }
+
     func testLaterRowSelectionSupersedesInFlightDirectTarget() async {
         let sequence = ActionSequence()
         let supervisor = FakeSessionSupervisor(sequence: sequence)
@@ -495,10 +532,7 @@ final class AgentStoreTests: XCTestCase {
         store.select(SelectionTarget.herdr(.named("work"), paneID: "old"))
         await focuser.waitForCalls(1)
         let rowSelection = Task {
-            await store.select(AgentMenuItem(
-                session: defaultDescriptor,
-                pane: pane("new", .done)
-            ))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "new"))
         }
         await focuser.waitForCancellations(1)
         await focuser.releaseBlockedCalls()
@@ -527,10 +561,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await supervisor.send(.connected(workDescriptor, snapshot([pane("stale", .done)])))
         await coordinator.waitForReconciliations(1)
-        await store.select(AgentMenuItem(
-            session: defaultDescriptor,
-            pane: pane("fresh", .working)
-        ))
+        await store.selectRow(.herdr(defaultDescriptor.id, paneID: "fresh"))
 
         let focusRequests = await supervisor.focusRequests
         XCTAssertEqual(focusRequests, [
@@ -586,9 +617,7 @@ final class AgentStoreTests: XCTestCase {
         await coordinator.waitForUnavailableCalls(1)
 
         let precedingSelection = Task {
-            await store.select(AgentMenuItem(
-                session: defaultDescriptor, pane: pane("pre", .working)
-            ))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "pre"))
         }
         await focuser.waitForCalls(1)
         await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
@@ -669,9 +698,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
 
         let precedingSelection = Task {
-            await store.select(AgentMenuItem(
-                session: defaultDescriptor, pane: pane("pre", .working)
-            ))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "pre"))
         }
         await focuser.waitForCalls(1)
         await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
@@ -715,9 +742,7 @@ final class AgentStoreTests: XCTestCase {
         await supervisor.send(.discoverySnapshot([workDescriptor]))
 
         let precedingSelection = Task {
-            await store.select(AgentMenuItem(
-                session: defaultDescriptor, pane: pane("pre", .working)
-            ))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "pre"))
         }
         await focuser.waitForCalls(1)
         await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p"
@@ -749,9 +774,7 @@ final class AgentStoreTests: XCTestCase {
         await notifications.send(SelectionTarget.herdr(.named("work"), paneID: "old"
         ))
         await waitUntil { await notifications.deliveredResponseCount == 1 }
-        await store.select(AgentMenuItem(
-            session: defaultDescriptor, pane: pane("new", .working)
-        ))
+        await store.selectRow(.herdr(defaultDescriptor.id, paneID: "new"))
         await supervisor.send(.connected(workDescriptor, snapshot([pane("old", .done)])))
         for _ in 0..<50 { await Task.yield() }
 
@@ -779,7 +802,7 @@ final class AgentStoreTests: XCTestCase {
         await store.start()
         await supervisor.send(.connected(defaultDescriptor, snapshot([pane("new", .done)])))
         let oldSelection = Task {
-            await store.select(AgentMenuItem(session: workDescriptor, pane: pane("old", .working)))
+            await store.selectRow(.herdr(workDescriptor.id, paneID: "old"))
         }
         await eventually { focuser.focusedSessionIDs.count == 1 }
 
@@ -851,9 +874,7 @@ final class AgentStoreTests: XCTestCase {
         await focuser.waitForCalls(1)
 
         let menuSelection = Task {
-            await store.select(AgentMenuItem(
-                session: defaultDescriptor, pane: pane("p2", .done)
-            ))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "p2"))
         }
         await focuser.waitForCancellations(1)
         XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
@@ -885,9 +906,7 @@ final class AgentStoreTests: XCTestCase {
         await fixture.store.start()
 
         let precedingSelection = Task {
-            await fixture.store.select(AgentMenuItem(
-                session: defaultDescriptor, pane: pane("pre", .working)
-            ))
+            await fixture.store.selectRow(.herdr(defaultDescriptor.id, paneID: "pre"))
         }
         await fixture.focuser.waitForCalls(1)
         await fixture.notifications.send(SelectionTarget.herdr(.named("work"), paneID: "p1"
@@ -947,12 +966,12 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences()
         )
         let first = Task {
-            await store.select(AgentMenuItem(session: workDescriptor, pane: pane("first", .working)))
+            await store.selectRow(.herdr(workDescriptor.id, paneID: "first"))
         }
         await eventually { focuser.focusedSessionIDs.count == 1 }
 
         let second = Task {
-            await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("second", .blocked)))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "second"))
         }
         for _ in 0..<20 { await Task.yield() }
         let firstFocusRequests = await supervisor.focusRequests
@@ -989,11 +1008,11 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences()
         )
         let first = Task {
-            await store.select(AgentMenuItem(session: workDescriptor, pane: pane("first", .working)))
+            await store.selectRow(.herdr(workDescriptor.id, paneID: "first"))
         }
         await eventually { focuser.focusedSessionIDs.count == 1 }
         let second = Task {
-            await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("second", .blocked)))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "second"))
         }
         for _ in 0..<20 { await Task.yield() }
         await focuser.releaseBlockedCalls()
@@ -1029,11 +1048,11 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences()
         )
         let first = Task {
-            await store.select(AgentMenuItem(session: workDescriptor, pane: pane("first", .working)))
+            await store.selectRow(.herdr(workDescriptor.id, paneID: "first"))
         }
         await eventually { focuser.focusedSessionIDs.count == 1 }
         let second = Task {
-            await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("second", .blocked)))
+            await store.selectRow(.herdr(defaultDescriptor.id, paneID: "second"))
         }
         for _ in 0..<20 { await Task.yield() }
         await focuser.releaseBlockedCalls()
@@ -1058,7 +1077,7 @@ final class AgentStoreTests: XCTestCase {
         )
         await store.start()
         let selection = Task {
-            await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .working)))
+            await store.selectRow(.herdr(workDescriptor.id, paneID: "p"))
         }
         await eventually { focuser.focusedSessionIDs.count == 1 }
         let stop = Task { await store.stop() }
@@ -1324,106 +1343,6 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(cancellationCount, 2)
     }
 
-    func testJoinedLabelsMatchHerdrForSingleAndMultiTabWorkspaces() async {
-        let supervisor = FakeSessionSupervisor()
-        let store = makeStore(supervisor: supervisor)
-        await store.start()
-        let panes = [
-            pane("single", .done, workspaceID: "dotfiles", tabID: "dotfiles:tab"),
-            pane("multi", .done, workspaceID: "menubar", tabID: "menubar:server")
-        ]
-        let workspaces = [
-            workspace("dotfiles", label: "dotfiles-mac", tabCount: 1),
-            workspace("menubar", label: "Herdr Menubar", tabCount: 2)
-        ]
-        let tabs = [
-            tab("dotfiles:tab", workspaceID: "dotfiles", label: "shell"),
-            tab("menubar:server", workspaceID: "menubar", label: "server")
-        ]
-        await supervisor.send(.connected(defaultDescriptor, PresentationSnapshot(
-            panes: panes, workspaces: workspaces, tabs: tabs
-        )))
-        await eventually { store.attentionCount == 2 }
-
-        XCTAssertEqual(store.attentionSections[0].items.map(\.displayLabel), ["dotfiles-mac", "Herdr Menubar · server"])
-        XCTAssertEqual(store.attentionSections[0].items.map(\.secondaryLabel), ["done · Claude", "done · Claude"])
-        await store.stop()
-    }
-
-    func testVisibleLabelsIncludeAgentContextWithoutDuplicateSuffixes() {
-        let labeledAgentPane = PaneInfo(
-            paneID: "bin:pane", terminalID: "terminal", workspaceID: "bin", tabID: "bin:tab",
-            focused: false, label: "test-agent", agent: "pi", title: nil, displayAgent: nil,
-            agentStatus: .idle, revision: 1
-        )
-        let singleTabItem = AgentMenuItem(
-            session: defaultDescriptor, pane: labeledAgentPane,
-            workspace: workspace("bin", label: "bin", tabCount: 1),
-            tab: tab("bin:tab", workspaceID: "bin", label: "shell")
-        )
-        let multiTabItem = AgentMenuItem(
-            session: defaultDescriptor, pane: labeledAgentPane,
-            workspace: workspace("workspace", label: "workspace", tabCount: 2),
-            tab: tab("workspace:test", workspaceID: "workspace", label: "tab"),
-            workspaceIsMultiTab: true
-        )
-        let duplicateItem = AgentMenuItem(
-            session: defaultDescriptor, pane: labeledAgentPane,
-            workspace: workspace("bin", label: "test-agent", tabCount: 1)
-        )
-        let fallbackPane = PaneInfo(
-            paneID: "pane-42", terminalID: "terminal", workspaceID: "missing", tabID: "missing:tab",
-            focused: false, label: nil, agent: "pi", title: nil, displayAgent: "test-agent",
-            agentStatus: .idle, revision: 1
-        )
-
-        XCTAssertEqual(singleTabItem.visibleLabel, "bin · test-agent")
-        XCTAssertEqual(multiTabItem.visibleLabel, "workspace · tab · test-agent")
-        XCTAssertEqual(duplicateItem.visibleLabel, "test-agent")
-        XCTAssertEqual(AgentMenuItem(session: defaultDescriptor, pane: fallbackPane).visibleLabel, "pane-42 · test-agent")
-    }
-
-    func testSecondaryLabelsPreservePaneAndDisplayAgentPreference() {
-        let paneLabel = PaneInfo(
-            paneID: "p1", terminalID: "t", workspaceID: "w", tabID: "tab", focused: false,
-            label: "test-agent", agent: "pi", title: nil, displayAgent: nil, agentStatus: .idle, revision: 1
-        )
-        let displayAgent = PaneInfo(
-            paneID: "p2", terminalID: "t", workspaceID: "w", tabID: "tab", focused: false,
-            label: "test-agent", agent: "pi", title: nil, displayAgent: "Pi Display", agentStatus: .idle, revision: 1
-        )
-        XCTAssertEqual(AgentMenuItem(session: defaultDescriptor, pane: paneLabel).secondaryLabel, "idle · test-agent")
-        XCTAssertEqual(AgentMenuItem(session: defaultDescriptor, pane: displayAgent).secondaryLabel, "idle · Pi Display")
-    }
-
-    func testJoinedLabelFallsBackThroughPaneTitleLabelAndID() async {
-        let supervisor = FakeSessionSupervisor()
-        let store = makeStore(supervisor: supervisor)
-        await store.start()
-        await supervisor.send(.connected(defaultDescriptor, PresentationSnapshot(panes: [
-            pane("title", .done, title: "Pane title", workspaceID: "missing", tabID: "missing:tab"),
-            pane("label", .done, label: "Pane label", workspaceID: "missing", tabID: "missing:tab"),
-            pane("final-id", .done, workspaceID: "missing", tabID: "missing:tab")
-        ], workspaces: [], tabs: [])))
-        await eventually { store.attentionCount == 3 }
-        XCTAssertEqual(store.attentionSections[0].items.map(\.displayLabel), ["final-id", "Pane label", "Pane title"])
-        await store.stop()
-    }
-
-    func testDistinctSnapshotTabsMakeWorkspaceMultiTabWhenCountIsStale() async {
-        let supervisor = FakeSessionSupervisor()
-        let store = makeStore(supervisor: supervisor)
-        await store.start()
-        let value = PresentationSnapshot(
-            panes: [pane("server", .working, workspaceID: "w", tabID: "t2")],
-            workspaces: [workspace("w", label: "Herdr Menubar", tabCount: 1)],
-            tabs: [tab("t1", workspaceID: "w", label: "shell"), tab("t2", workspaceID: "w", label: "server")]
-        )
-        await supervisor.send(.connected(defaultDescriptor, value))
-        await eventually { store.workingSections.first?.items.first?.displayLabel == "Herdr Menubar · server" }
-        await store.stop()
-    }
-
     func testSelectionReadsCurrentTerminalPreferenceAfterFocusSucceeds() async {
         let suiteName = "dev.herdr.menubar.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -1443,7 +1362,7 @@ final class AgentStoreTests: XCTestCase {
             preferences: preferences
         )
 
-        await store.select(AgentMenuItem(session: defaultDescriptor, pane: pane("p", .blocked)))
+        await store.selectRow(.herdr(defaultDescriptor.id, paneID: "p"))
 
         XCTAssertTrue(activator.activatedBundleIdentifiers.isEmpty)
         XCTAssertEqual(focuser.focusedSessionIDs, [.default])
@@ -1476,7 +1395,7 @@ final class AgentStoreTests: XCTestCase {
             preferences: testPreferences(bundleIdentifier: GhosttyControlConstants.bundleIdentifier)
         )
 
-        await store.select(AgentMenuItem(session: workDescriptor, pane: pane("p", .blocked)))
+        await store.selectRow(.herdr(workDescriptor.id, paneID: "p"))
 
         let actions = await sequence.values
         let refreshRequests = await supervisor.refreshRequests
@@ -2038,19 +1957,5 @@ private func pane(
         paneID: id, terminalID: "terminal-\(id)", workspaceID: workspaceID, tabID: tabID,
         focused: false, label: label, agent: "claude", title: title, displayAgent: "Claude",
         agentStatus: status, revision: 1
-    )
-}
-
-private func workspace(_ id: String, label: String, tabCount: Int) -> WorkspaceInfo {
-    WorkspaceInfo(
-        workspaceID: id, number: 1, label: label, focused: false, paneCount: 1,
-        tabCount: tabCount, activeTabID: "\(id):tab", agentStatus: .working
-    )
-}
-
-private func tab(_ id: String, workspaceID: String, label: String) -> TabInfo {
-    TabInfo(
-        tabID: id, workspaceID: workspaceID, number: 1, label: label, focused: false,
-        paneCount: 1, agentStatus: .working
     )
 }

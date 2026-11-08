@@ -194,13 +194,13 @@ private extension StatusMenuPresentationBuilder {
         nodes.append(.heading(heading))
         for section in sections {
             nodes.append(.heading(section.session.displayName.uppercased()))
-            nodes.append(contentsOf: section.items.map { item in
+            nodes.append(contentsOf: section.items.map { row in
                 .agent(
-                    title: item.visibleLabel,
-                    subtitle: item.secondaryLabel,
-                    symbol: statusSymbol(item.status),
+                    title: row.visibleLabel,
+                    subtitle: row.subtitle,
+                    symbol: statusSymbol(row.state),
                     quieter: quieter,
-                    target: SelectionTarget.herdr(item.sessionID, paneID: item.paneID)
+                    target: SelectionTarget(target: row.target, sessionDisplayName: section.session.displayName)
                 )
             })
         }
@@ -263,16 +263,16 @@ private extension StatusMenuPresentationBuilder {
         if let error { nodes.append(.info(error, tone: .error)) }
     }
 
-    func statusSymbol(_ status: AgentStatus) -> String {
-        switch status {
-        case .blocked:
+    func statusSymbol(_ state: RowState) -> String {
+        switch state {
+        case .attention(.blocked):
             "exclamationmark.triangle.fill"
-        case .done:
+        case .attention(.error):
+            "xmark.octagon"
+        case .attention(.done), .finished:
             "checkmark.circle.fill"
         case .working:
             "ellipsis.circle"
-        default:
-            "circle"
         }
     }
 }

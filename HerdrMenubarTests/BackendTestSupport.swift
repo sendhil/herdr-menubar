@@ -36,3 +36,40 @@ extension AttentionNotificationCoordinating {
         )
     }
 }
+
+extension AgentRow {
+    var paneID: String { target.paneID }
+}
+
+extension AgentStore {
+    /// Herdr-only store with the pre-backend initializer shape, so existing store and
+    /// integration tests exercise AgentStore + HerdrBackend unchanged.
+    convenience init(
+        supervisor: any SessionSupervising,
+        terminalActivator: any TerminalActivating,
+        ghosttyFocuser: any GhosttySessionFocusing,
+        attentionCoordinator: any AttentionNotificationCoordinating,
+        notificationService: any NativeNotificationServing,
+        preferences: Preferences = Preferences()
+    ) {
+        self.init(
+            backends: [HerdrBackend(
+                supervisor: supervisor,
+                terminalActivator: terminalActivator,
+                ghosttyFocuser: ghosttyFocuser,
+                preferences: preferences
+            )],
+            attentionCoordinator: attentionCoordinator,
+            notificationService: notificationService,
+            preferences: preferences
+        )
+    }
+
+    /// Menu-row selection of a Herdr row read from the store's sections.
+    func select(_ row: AgentRow) async {
+        await selectRow(SelectionTarget(
+            target: row.target,
+            sessionDisplayName: row.target.session.herdrSessionID?.displayName ?? row.target.session.rawID
+        ))
+    }
+}
