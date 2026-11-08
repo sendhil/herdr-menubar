@@ -40,6 +40,33 @@ final class HerdrBackendTests: XCTestCase {
         XCTAssertTrue(attention.allSatisfy { $0.recordID == "" && $0.epoch == 0 && $0.message == nil })
     }
 
+    func testAttentionDedupeLastOccurrenceWinsWhenWorkingPrecedesBlocked() {
+        let snapshot = herdrSnapshot([
+            herdrPane("dup", .working, title: "Dup"),
+            herdrPane("other", .done, title: "Other"),
+            herdrPane("dup", .blocked, title: "Dup")
+        ])
+
+        let attention = HerdrBackend.makeSnapshot(snapshot, sessionID: .default).attention
+
+        XCTAssertEqual(attention.map(\.target.paneID), ["dup", "other"])
+        XCTAssertEqual(attention.map(\.state), [.blocked, .done])
+    }
+
+    func testAttentionOrderBreaksEqualLabelTiesByPaneID() {
+        let snapshot = herdrSnapshot([
+            herdrPane("p2", .blocked, title: "Same"),
+            herdrPane("p1", .done, title: "Same"),
+            herdrPane("b", .blocked, title: "Beta"),
+            herdrPane("a", .blocked, title: "beta")
+        ])
+
+        let attention = HerdrBackend.makeSnapshot(snapshot, sessionID: .default).attention
+
+        // Case-folded label equality falls through to the pane ID, not the raw label.
+        XCTAssertEqual(attention.map(\.target.paneID), ["a", "b", "p1", "p2"])
+    }
+
     func testNamedDefaultAndDefaultProduceDistinctTargets() {
         let snapshot = herdrSnapshot([herdrPane("same", .done)])
         let defaultRow = HerdrBackend.makeSnapshot(snapshot, sessionID: .default).rows[0]
@@ -213,6 +240,24 @@ final class HerdrBackendTests: XCTestCase {
         XCTAssertEqual(actions, ["events", "start", "stop"])
     }
 
+    func testStopWhileEventsAwaitsSupervisorDeliversNothingAfterStop() async {
+        let fixture = HerdrBackendFixture(gateEvents: true)
+        let eventsTask = Task { await fixture.backend.events() }
+        while await !fixture.supervisor.eventsEntered { await Task.yield() }
+
+        await fixture.backend.stop()
+        await fixture.supervisor.releaseEvents()
+        let stream = await eventsTask.value
+        await fixture.supervisor.send(.discoverySnapshot([herdrDescriptor("work")]))
+
+        // The lifecycle guard finishes the stale stream instead of forwarding into it.
+        var iterator = stream.makeAsyncIterator()
+        let first = await iterator.next()
+        XCTAssertNil(first)
+        let actions = await fixture.supervisor.actions
+        XCTAssertEqual(actions, ["events", "stop"])
+    }
+
     // MARK: Selection
 
     func testFocusServerWrapsFailureWithSessionNameWording() async {
@@ -230,6 +275,26 @@ final class HerdrBackendTests: XCTestCase {
         }
         let actions = await fixture.supervisor.actions
         XCTAssertEqual(actions, ["focus:work:p"])
+    }
+
+    func testFocusServerCancelledMidFlightThrowsWrappedFailure() async {
+        // The backend surfaces cancellation as an ordinary focus failure; AgentStore's
+        // ownsSelection gate is what suppresses the message for a superseded selection.
+        let fixture = HerdrBackendFixture(focusHangs: true)
+        let focus = Task { try await fixture.backend.focusServer(herdrTarget(.named("work"), "p")) }
+        while await !fixture.supervisor.actions.contains("focus:work:p") { await Task.yield() }
+
+        focus.cancel()
+
+        do {
+            try await focus.value
+            XCTFail("Expected cancelled focus to throw")
+        } catch let error as FocusError {
+            guard case .failed(let message) = error else { return XCTFail("Unexpected \(error)") }
+            XCTAssertTrue(message.hasPrefix("Could not focus pane in work: "), message)
+        } catch {
+            XCTFail("Unexpected error \(error)")
+        }
     }
 
     func testFocusServerFocusesExactSessionAndPane() async throws {
@@ -301,9 +366,11 @@ private struct HerdrBackendFixture {
     init(
         focusError: (any Error)? = nil,
         terminal: String = GhosttyControlConstants.bundleIdentifier,
-        enabledBackends: [String]? = nil
+        enabledBackends: [String]? = nil,
+        gateEvents: Bool = false,
+        focusHangs: Bool = false
     ) {
-        supervisor = HerdrBackendSupervisor(focusError: focusError)
+        supervisor = HerdrBackendSupervisor(focusError: focusError, gateEvents: gateEvents, focusHangs: focusHangs)
         focuser = HerdrBackendGhosttyFocuser()
         activator = HerdrBackendActivator()
         let defaults = UserDefaults(suiteName: "dev.herdr.menubar.herdr-backend-tests.\(UUID().uuidString)")!
@@ -332,13 +399,25 @@ private actor HerdrBackendSupervisor: SessionSupervising {
     private var continuation: AsyncStream<SessionSupervisorEvent>.Continuation?
     private let termination = HerdrBackendTerminationFlag()
     private let focusError: (any Error)?
+    private let gateEvents: Bool
+    private let focusHangs: Bool
+    private var eventsWaiter: CheckedContinuation<Void, Never>?
     private(set) var actions: [String] = []
     private(set) var stopSawTerminatedStream = false
+    private(set) var eventsEntered = false
 
-    init(focusError: (any Error)?) { self.focusError = focusError }
+    init(focusError: (any Error)?, gateEvents: Bool = false, focusHangs: Bool = false) {
+        self.focusError = focusError
+        self.gateEvents = gateEvents
+        self.focusHangs = focusHangs
+    }
 
-    func events() -> AsyncStream<SessionSupervisorEvent> {
+    func events() async -> AsyncStream<SessionSupervisorEvent> {
         actions.append("events")
+        if gateEvents {
+            eventsEntered = true
+            await withCheckedContinuation { eventsWaiter = $0 }
+        }
         let (stream, continuation) = AsyncStream<SessionSupervisorEvent>.makeStream()
         let termination = self.termination
         continuation.onTermination = { _ in termination.set() }
@@ -356,8 +435,14 @@ private actor HerdrBackendSupervisor: SessionSupervising {
 
     func retryUnavailable() { actions.append("retry") }
 
-    func focus(sessionID: SessionID, paneID: String) throws -> PaneInfo {
+    func releaseEvents() {
+        eventsWaiter?.resume()
+        eventsWaiter = nil
+    }
+
+    func focus(sessionID: SessionID, paneID: String) async throws -> PaneInfo {
         actions.append("focus:\(sessionID.displayName):\(paneID)")
+        if focusHangs { try await Task.sleep(for: .seconds(60)) }
         if let focusError { throw focusError }
         return herdrPane(paneID, .idle)
     }
