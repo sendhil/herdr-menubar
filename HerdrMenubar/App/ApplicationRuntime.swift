@@ -93,7 +93,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             preferences: preferences
         )
         let store = AgentStore(
-            backends: [herdrBackend],
+            backends: makeBackends(preferences: preferences, herdr: herdrBackend, makeRex: liveRexBackend),
             attentionCoordinator: attentionCoordinator,
             notificationService: notificationService,
             preferences: preferences
@@ -168,6 +168,25 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         ))
         callbackRelay.runtime = runtime
         return runtime
+    }
+
+    /// Herdr always; Rex only when `enabledBackends` contains it (off by default in step 2), so a
+    /// Herdr-only install never constructs, resolves, or spawns anything for Rex. Called once per
+    /// app launch, so there is one Rex CLI resolver per launch.
+    static func makeBackends(
+        preferences: Preferences,
+        herdr: any AgentBackend,
+        makeRex: (_ configuredCLIPath: String?) -> any AgentBackend
+    ) -> [any AgentBackend] {
+        var backends: [any AgentBackend] = [herdr]
+        if preferences.enabledBackends.contains(.rex) {
+            backends.append(makeRex(preferences.rexCLIPath))
+        }
+        return backends
+    }
+
+    static func liveRexBackend(configuredCLIPath: String?) -> any AgentBackend {
+        RexBackend(resolver: RexCLIResolver(configuredPath: configuredCLIPath), isEnabled: { true })
     }
 
     static func shouldStartSynchronization(environment: [String: String]) -> Bool {
