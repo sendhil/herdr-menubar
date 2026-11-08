@@ -27,6 +27,8 @@
 		12A000000000000000000009 /* AgentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000019 /* AgentStoreTests.swift */; };
 		12A000000000000000000033 /* MenuBarIconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000034 /* MenuBarIconTests.swift */; };
 		12A00000000000000000000A /* AgentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000020 /* AgentStore.swift */; };
+		BB0000000000000000000001 /* AgentBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000011 /* AgentBackend.swift */; };
+		BB0000000000000000000002 /* AgentBackendTypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000012 /* AgentBackendTypesTests.swift */; };
 		12A00000000000000000000B /* MenuBarIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000021 /* MenuBarIcon.swift */; };
 		12A00000000000000000000E /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000024 /* Preferences.swift */; };
 		12A00000000000000000000F /* TerminalActivationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A000000000000000000025 /* TerminalActivationService.swift */; };
@@ -116,6 +118,8 @@
 		12A000000000000000000019 /* AgentStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStoreTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000034 /* MenuBarIconTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarIconTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000020 /* AgentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStore.swift; sourceTree = "<group>"; };
+		BB0000000000000000000011 /* AgentBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBackend.swift; sourceTree = "<group>"; };
+		BB0000000000000000000012 /* AgentBackendTypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBackendTypesTests.swift; sourceTree = "<group>"; };
 		12A000000000000000000021 /* MenuBarIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarIcon.swift; sourceTree = "<group>"; };
 		12A000000000000000000024 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
 		12A000000000000000000025 /* TerminalActivationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalActivationService.swift; sourceTree = "<group>"; };
@@ -229,6 +233,7 @@
 				12A000000000000000000036 /* HerdrClientTestSupport.swift */,
 				F00000000000000000000022 /* Protocol16HerdrClientTests.swift */,
 				12A000000000000000000019 /* AgentStoreTests.swift */,
+				BB0000000000000000000012 /* AgentBackendTypesTests.swift */,
 				12A000000000000000000034 /* MenuBarIconTests.swift */,
 				F90000000000000000000001 /* SketchyBarIntegrationTests.swift */,
 				12A000000000000000000026 /* PreferencesTests.swift */,
@@ -241,6 +246,7 @@
 			isa = PBXGroup;
 			children = (
 				12A000000000000000000020 /* AgentStore.swift */,
+				BB0000000000000000000011 /* AgentBackend.swift */,
 			);
 			path = Status;
 			sourceTree = "<group>";
@@ -484,6 +490,7 @@
 				12A000000000000000000005 /* HerdrConnection.swift in Sources */,
 				12A000000000000000000007 /* HerdrClient.swift in Sources */,
 				12A00000000000000000000A /* AgentStore.swift in Sources */,
+				BB0000000000000000000001 /* AgentBackend.swift in Sources */,
 				12A00000000000000000000B /* MenuBarIcon.swift in Sources */,
 				12A00000000000000000000E /* Preferences.swift in Sources */,
 				12A00000000000000000000F /* TerminalActivationService.swift in Sources */,
@@ -529,6 +536,7 @@
 				12A000000000000000000035 /* HerdrClientTestSupport.swift in Sources */,
 				F00000000000000000000012 /* Protocol16HerdrClientTests.swift in Sources */,
 				12A000000000000000000009 /* AgentStoreTests.swift in Sources */,
+				BB0000000000000000000002 /* AgentBackendTypesTests.swift in Sources */,
 				12A000000000000000000033 /* MenuBarIconTests.swift in Sources */,
 				F90000000000000000000002 /* SketchyBarIntegrationTests.swift in Sources */,
 				12A000000000000000000010 /* PreferencesTests.swift in Sources */,
