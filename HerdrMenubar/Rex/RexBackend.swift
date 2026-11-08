@@ -226,14 +226,6 @@ actor RexBackend: AgentBackend {
         wait.cancel()
     }
 
-    func focusServer(_ target: AgentTarget) async throws {
-        throw FocusError.unavailable("Rex focus is not available yet")
-    }
-
-    func activate(_ target: AgentTarget) async -> String? {
-        "Rex focus is not available yet"
-    }
-
     func refreshAfterSelection(_ target: AgentTarget) async {}
 
     func markSeen(_ token: SeenToken) async {
