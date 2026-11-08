@@ -109,6 +109,30 @@ final class AgentStoreBackendTests: XCTestCase {
         await store.stop()
     }
 
+    func testTargetForHiddenBackendDoesNotSupersedeInFlightHerdrSelection() async {
+        let herdr = FakeAgentBackend(kind: .herdr)
+        let rex = FakeAgentBackend(kind: .rex)
+        herdr.heldFocusPaneIDs = ["p"]
+        let store = makeBackendStore([herdr, rex])
+        await store.start()
+        rex.send(.backendHidden)
+        let herdrSession = AgentSessionDescriptor(key: .named("work"), displayName: "work")
+        herdr.send(.connected(herdrSession, BackendSnapshot(rows: [row(herdrSession.key, "p", .working)], attention: [])))
+        await eventually { store.workingSections.count == 1 }
+        for _ in 0..<20 { await Task.yield() }
+
+        let selection = Task { await store.selectRow(.herdr(.named("work"), paneID: "p")) }
+        await eventually { herdr.calls.contains("focus:p") }
+        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        XCTAssertEqual(store.transientError, "Rex is not available")
+        herdr.releaseHeldFocus()
+        await selection.value
+
+        XCTAssertEqual(herdr.calls, ["start", "focus:p", "activate:p", "refresh:p"])
+        XCTAssertEqual(store.transientError, "Rex is not available")
+        await store.stop()
+    }
+
     func testFinishedRowsFormTheirOwnSectionAndAreNotCounted() async {
         let backend = FakeAgentBackend(kind: .rex)
         let store = makeBackendStore([backend])

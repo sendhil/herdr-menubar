@@ -500,13 +500,14 @@ private extension AgentStore {
             transientError = "\(kind.displayName) is not available"
             return
         }
-        supersedeSelection()
-        // Rex condition (c): the backend is currently hidden.
+        // Rex condition (c): the backend is currently hidden. Like the rules above, this never
+        // supersedes the current selection or another backend's held target.
         if kind != .herdr, hiddenBackends.contains(kind) {
-            clearPendingTarget()
+            if pendingNotificationTarget?.target.session.backend == kind { clearPendingTarget() }
             transientError = "\(kind.displayName) is not available"
             return
         }
+        supersedeSelection()
         guard let state = sessions[target.target.session] else {
             if discoveredBackends.contains(kind) {
                 // Rex condition (a); Herdr's absent-session rule.
