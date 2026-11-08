@@ -209,7 +209,9 @@ enum FocusError: LocalizedError, Equatable {
 protocol AgentBackend: Sendable {
     var kind: BackendKind { get }
     func events() async -> AsyncStream<BackendEvent>
-    /// Returns promptly; work happens in tasks.
+    /// Starts discovery and event delivery. May await brief setup (HerdrBackend awaits its
+    /// supervisor's start); AgentStore starts backends sequentially, so keep this short and
+    /// leave long-running work to tasks.
     func start() async
     func stop() async
     func retryUnavailable() async

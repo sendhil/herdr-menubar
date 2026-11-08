@@ -400,6 +400,8 @@ private extension AgentStore {
                 sessions[key]?.isConnected = false
                 sessions[key]?.setRows([])
             }
+            // Publish the outage before awaiting the coordinator.
+            deriveConnectionState()
             for key in keys {
                 await attentionCoordinator.unavailable(session: key)
             }
@@ -415,6 +417,7 @@ private extension AgentStore {
                 self.pendingNotificationTarget = nil
                 transientError = "\(kind.displayName) is not available"
             }
+            deriveConnectionState()
             for key in keys {
                 await attentionCoordinator.remove(session: key)
             }

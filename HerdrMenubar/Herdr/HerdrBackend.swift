@@ -99,6 +99,8 @@ final class HerdrBackend: AgentBackend {
                 return Self.ghosttyFocusMessage(error, sessionName: sessionID.displayName)
             }
         }
+        // A superseded selection must not bring the terminal forward.
+        if Task.isCancelled { return nil }
         do {
             try await terminalActivator.activate(bundleIdentifier: bundleIdentifier)
             return nil

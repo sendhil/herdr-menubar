@@ -330,6 +330,19 @@ final class HerdrBackendTests: XCTestCase {
         XCTAssertTrue(fixture.focuser.focused.isEmpty)
     }
 
+    func testCancelledSelectionDoesNotActivateGenericTerminal() async {
+        // master re-checked ownsSelection right before generic activation; a superseded
+        // (cancelled) selection must not bring the terminal forward.
+        let fixture = HerdrBackendFixture(terminal: "com.apple.Terminal")
+        let task = Task { @MainActor () -> String? in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await fixture.backend.activate(herdrTarget(.default, "p"))
+        }
+        let result = await task.value
+        XCTAssertNil(result)
+        XCTAssertTrue(fixture.activator.activated.isEmpty)
+    }
+
     func testRefreshAndRetryDelegateToSupervisor() async {
         let fixture = HerdrBackendFixture()
         await fixture.backend.refreshAfterSelection(herdrTarget(.named("work"), "p"))
