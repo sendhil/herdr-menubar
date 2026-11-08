@@ -22,6 +22,10 @@ final class RexRowsTests: XCTestCase {
         XCTAssertEqual(RexText.sanitize("\u{1B}[31mred"), "[31mred")
     }
 
+    func testSanitizeKeepsUnassignedScalars() {
+        XCTAssertEqual(RexText.sanitize("a\u{0378}b"), "a\u{0378}b")
+    }
+
     func testSanitizeCollapsesWhitespaceIncludingNewlinesAndTrims() {
         XCTAssertEqual(RexText.sanitize("  Allow\n\n rm\t-rf\u{2028}build?  "), "Allow rm -rf build?")
         XCTAssertEqual(RexText.sanitize("a \u{200E} b"), "a b")

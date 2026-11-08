@@ -122,6 +122,18 @@ final class RexReducerTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(h.reducer.epoch(of: rk("s1", "b1"))), first)
     }
 
+    func testViaIsSkippedWhenTheLastKnownTimeIsMissing() throws {
+        var h = RexReducerHarness()
+        h.apply([
+            L.session("s1"), L.view("s1", [L.ViewBlock(b: "b1")]),
+            L.line(["t": "block", "s": "s1", "b": "b1", "records": [["id": "", "state": "done"]]]),
+            L.line(["t": "snapshot_done"]),
+        ])
+        let first = try XCTUnwrap(h.reducer.epoch(of: rk("s1", "b1")))
+        h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 30)], via: L.changed("working", at: 20)))
+        XCTAssertEqual(h.reducer.epoch(of: rk("s1", "b1")), first, "no known time: cannot tell the event is newer")
+    }
+
     func testEpochsComeFromOneIncreasingCounterAndNeverRepeat() throws {
         var h = RexReducerHarness()
         h.apply(snapshotLines(b1: [L.Rec(state: "blocked", at: 1)], b2: [L.Rec(state: "done", at: 1)]))

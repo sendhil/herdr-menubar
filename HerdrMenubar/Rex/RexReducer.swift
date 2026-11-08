@@ -111,6 +111,14 @@ struct RexReducer: Sendable {
         lastEmitted = [:]
     }
 
+    /// The watcher generation failed or exited: ignore its remaining lines and emit nothing (from
+    /// lines, ticks, `markSeen`, or `clearFinished`) until the next generation's `snapshot_done`.
+    /// State changes made meanwhile (settling, seen marks) are reported by that `.connected`.
+    mutating func endGeneration() {
+        generation = nil
+        isSnapshotDone = false
+    }
+
     /// `stop()`: forget everything except the epoch counter's value. The next generation's first
     /// successful snapshot is a fresh "first".
     mutating func reset() {
@@ -126,7 +134,10 @@ struct RexReducer: Sendable {
         var output = RexReducerOutput()
         guard generation == self.generation else { return output }
 
-        var affected = settleDue(now: now)
+        // Settle what is already due first, as its own snapshot: the line may replace a record
+        // whose deadline passed while the settle timer was late, and that settle must not be lost.
+        emitChangedSnapshots(for: settleDue(now: now), into: &output)
+        var affected: Set<String> = []
         switch line {
         case .session(let id, let label):
             if sessions[id] == nil { sessions[id] = SessionState(label: label) }
@@ -370,7 +381,7 @@ struct RexReducer: Sendable {
         // 1. `via` check: the event saw a state the re-read may have collapsed.
         if let via = read.via, let viaState = via.state, let viaAt = via.updatedAt {
             let key = recordKey(read.sessionID, read.blockID, via.id)
-            if let known = lastKnown[key], viaAt > (known.updatedAt ?? .min), viaState != known.state {
+            if let known = lastKnown[key], let knownAt = known.updatedAt, viaAt > knownAt, viaState != known.state {
                 setLastKnown(key, state: viaState, updatedAt: viaAt, newEpoch: true, now: now)
             }
         }

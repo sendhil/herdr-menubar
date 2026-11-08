@@ -145,4 +145,35 @@ final class RexFlapProtectionTests: XCTestCase {
         XCTAssertEqual(attention(h.apply(snapshotLines([L.Rec(state: "blocked", at: 2)]))), [.blocked],
                        "the next start is a fresh first snapshot")
     }
+
+    func testOverdueSettleIsEmittedBeforeALineThatReplacesTheRecord() throws {
+        var h = RexReducerHarness()
+        h.apply(snapshotLines([L.Rec(state: "working", at: 1)]))
+        h.apply(L.block("s1", "b1", [L.Rec(state: "blocked", at: 2)], via: L.changed("blocked", at: 2)))
+        h.elapsed += .milliseconds(1600)   // the settle timer ran late: no tick
+
+        let events = h.apply(L.block("s1", "b1", [L.Rec(state: "working", at: 4)], via: L.changed("working", at: 4))).events
+        let snapshots = events.compactMap(\.snapshotPayload)
+        XCTAssertEqual(snapshots.count, 2, "\(events)")
+        XCTAssertEqual(snapshots.first?.1.attention.map(\.state), [.blocked], "the settled blocked epoch surfaces first")
+        XCTAssertEqual(snapshots.last?.1.attention.map(\.state), [])
+        XCTAssertEqual(snapshots.last?.1.rows.map(\.state), [.working])
+    }
+
+    func testEndGenerationSuppressesEmissionsUntilTheNextSnapshotDone() {
+        var h = RexReducerHarness()
+        h.apply(snapshotLines([L.Rec(state: "working", at: 1), L.Rec(id: "c", state: "done", at: 1)]))
+        h.apply(L.block("s1", "b1", [L.Rec(state: "blocked", at: 2), L.Rec(id: "c", state: "done", at: 1)],
+                        via: L.changed("blocked", at: 2)))
+        h.reducer.endGeneration()
+
+        XCTAssertFalse(h.reducer.isSnapshotDone)
+        XCTAssertEqual(h.advance(.seconds(2)), [], "tick during backoff emits nothing")
+        XCTAssertEqual(h.reducer.clearFinished(), [])
+        XCTAssertEqual(h.apply(L.line(["t": "heartbeat"])).events, [], "lines of the ended generation are ignored")
+
+        h.restart()
+        let events = h.apply(snapshotLines([L.Rec(state: "blocked", at: 2), L.Rec(id: "c", state: "done", at: 1)]))
+        XCTAssertEqual(attention(events), [.blocked, .done], "settled during the gap, reported with the next snapshot")
+    }
 }

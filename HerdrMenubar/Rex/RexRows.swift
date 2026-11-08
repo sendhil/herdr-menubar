@@ -19,7 +19,7 @@ enum RexText {
                 continue
             }
             switch properties.generalCategory {
-            case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate, .unassigned:
+            case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate:
                 continue
             default:
                 break
