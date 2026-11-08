@@ -1,6 +1,6 @@
 # Rex Backend and Per-Backend Notifications Design
 
-Revision 6.2 (2026-11-08). See [Revision log](#revision-log).
+Revision 6.3 (2026-11-08). See [Revision log](#revision-log).
 
 ## Summary
 
@@ -257,7 +257,7 @@ protocol AgentBackend: Sendable {
 ### Active backends
 
 A backend is **active** once it has emitted `.discovery` in this run (Rex: after its first `snapshot_done`, even with zero sessions). Herdr is treated as active for wording purposes whenever it is enabled. "Active" drives:
-- the `Backend · ` heading prefix (more than one active backend);
+- the `Backend · ` heading prefix (more than one backend that has emitted `.discovery` in this run; being enabled does not count here, not even for Herdr, so Herdr-only output never changes);
 - the RECONNECTING line for a backend outage (only for a backend that has been active);
 - `connectionState` (computed over active backends, plus Herdr if enabled, so a Herdr user with Rex installed but not running sees exactly today's states);
 - strings (below).
@@ -290,11 +290,12 @@ A superseding selection cancels the previous task. `RexBackend` runs child proce
     | (c) the backend is currently hidden | "Rex is not available" |
     | (d) 30 seconds after receipt without resolution | "Rex did not respond in time" |
 - **Disabled backend:** a target for a backend missing from `enabledBackends` is discarded immediately with "Rex is turned off" (or "Herdr is turned off").
+- **Never superseding:** the disabled, missing-instance, and hidden (condition (c) at arrival) checks all run before the current selection is superseded, so such a target never cancels an in-flight selection or another backend's held target.
 
 **Unavailability.**
 
 - `.sessionUnavailable`: today's per-session behaviour.
-- `.backendUnavailable(reason)`: for each of that backend's sessions, clear rows and badge contribution, call the coordinator's existing `unavailable` (history kept), and mark the session not connected. These sessions are excluded from `unavailableSessions` and from `connectionState`. If the backend has been active, RECONNECTING shows one line, **Rex**, in the same style as existing session lines; the reason goes to the tooltip and the log.
+- `.backendUnavailable(reason)`: for each of that backend's sessions, clear rows and badge contribution, call the coordinator's existing `unavailable` (history kept), and mark the session not connected. These sessions are excluded from `unavailableSessions` and from `connectionState`. If the backend has been active, RECONNECTING shows one line, **Rex**, in the same style as existing session lines; the reason goes to the tooltip and the log. For a watcher that exits on its own, the reason quotes its last stderr line only when that line starts with `Error:` and is not `Error: interrupted` (the SIGTERM message); otherwise, e.g. for the `listening:` banner, it is "The Rex watcher exited with status N" (or "signal N").
 - `.backendHidden`: remove the backend's sessions and their coordinator history; show nothing. (A backend that had resolved its CLI earlier in the run and then cannot find it emits `.backendUnavailable`, not `.backendHidden`, so a Rex update does not drop history.)
 - **Retry Unavailable Sessions** is shown when any session or backend line is shown. It calls `retryUnavailable()` on every enabled backend concurrently.
 
@@ -345,7 +346,7 @@ A superseding selection cancels the previous task. `RexBackend` runs child proce
 4. Run `rex --autostart=false server status --json` with the first valid candidate (3-second timeout).
    - **Server unreachable:** any non-zero exit, or stdout that is not a JSON object with `rex_version`. Prefer `Current`, else the first valid candidate, and treat the server as unreachable (60-second retry interval). `server status` exits 1, not 4, in this case (F15).
    - **Otherwise:** pick the candidate whose version equals `rex_version`. If none matches, prefer `Current`, then the highest API revision.
-5. If the chosen binary's watcher exits on its own before `snapshot_done`, with an exit code other than 4, it is remembered as failed for this run. Timeouts and our own termination don't count. Resolution skips failed candidates until none are left, then clears the list.
+5. If the chosen binary's watcher exits on its own before `snapshot_done`, with an exit code other than 4, it is remembered as failed for this run (as is a `snapshot_error`, i.e. the snapshot as a whole failing, such as `session.list`). Timeouts, our own termination, and per-block or per-session read errors don't count. Resolution skips failed candidates until none are left, then clears the list.
 
 Nothing found and never found in this run → `.backendHidden`, rechecked every 5 minutes. Previously found → `.backendUnavailable`.
 
@@ -358,7 +359,7 @@ A new type (the earlier `BoundedProcessRunner` was removed in 478c560):
 - Stderr drained continuously into a 16 KiB ring buffer.
 - `terminate()`: SIGTERM, wait up to 1 second, then SIGKILL. Called on task cancellation, on `RexBackend.stop()` (reached through the existing `applicationShouldTerminate` → `runtime.stop` → `store.stop` path), and on watcher failure.
 - Lines are tagged with the process generation; older generations are discarded.
-- One-shot runs take a timeout (version 2 s, server status 3 s, focus 5 s).
+- One-shot runs take a timeout (version 2 s, server status 3 s, focus 5 s, `client ls` 5 s).
 
 #### Watcher script
 
@@ -492,7 +493,9 @@ rex.every(5, function() out{ t = "heartbeat" } end)
 -- no return value (F1)
 ```
 
-Fixtures are recorded from this script against the live server during implementation.
+Only the snapshot fixture (`snapshot-live.jsonl`) is recorded from this script against the live server; event lines in tests are hand-written from the verified facts.
+
+Read errors are per block or per session and never fatal: `status_error` (one block), `view_error` (one session), and, during the snapshot, `list_blocks_error`, after which the session is still announced and its blocks are read through its view. A session with a failed read is marked stale: it is viewed again after 30 seconds, and its next successful view (that retry, or one triggered by `session_view_changed`, `session_label_changed`, or `block_created`) re-reads all of its terminal blocks. Program-status events re-read their block as usual. Only `session.list` failing (or any other error escaping the snapshot) produces `snapshot_error`.
 
 #### Reducer (pure, inside RexBackend)
 
@@ -515,20 +518,20 @@ The reducer's per-generation state is reset at the start of each watcher generat
   - Unknown session: create it and emit `.connected(descriptor, empty)`.
   - Known session: treat as a label update only.
 - `snapshot_done`:
-  1. Prune last-known records, seen marks, and settled status for blocks and sessions absent from this generation's snapshot.
+  1. Prune last-known records, seen marks, and settled status for blocks and sessions absent from this generation's snapshot. Blocks this snapshot could not read (a `status_error`, or a live session with a `list_blocks_error`) keep theirs, so a later successful read compares against history: unchanged records keep their epochs and do not notify again.
   2. Emit `.discovery`.
   3. Emit `.connected` per session with its current rows and attention.
   4. Emit `.removed` for sessions known to the store and absent now.
 - After `snapshot_done`, any line that changes a session's rows or attention emits `.snapshot` for that session. Emissions may be coalesced per session within one run-loop turn, but a `.connected` is never merged with a following `.snapshot`.
 - Errors:
-  - `status_error` or `view_error` before `snapshot_done`: watcher failure.
-  - After `snapshot_done`: logged, and the previous records or view are kept.
-  - `snapshot_error`, `encode_error`, or an oversized line: watcher failure.
+  - `status_error`, `view_error`, `list_blocks_error`: logged, never a watcher failure and never a failed candidate. Before `snapshot_done` the block is skipped (the session shows without it) or the session connects without rows (no view yet) until a later read or view succeeds; after `snapshot_done` the previous records or view are kept.
+  - `snapshot_error`, `encode_error`, or an oversized line: watcher failure. Only `snapshot_error` marks the candidate failed.
 
 #### Lifecycle and failure
 
 - `start()` returns immediately; resolution and spawning run in a task.
 - After spawning, `snapshot_done` must arrive within 20 seconds. After `snapshot_done`, a heartbeat must arrive at least every 15 seconds. Heartbeat supervision starts at `snapshot_done`, because a long snapshot delays timers.
+- **Sleep and wake.** The supervision clock keeps counting while the Mac sleeps. When the snapshot or heartbeat deadline fires more than 5 seconds after it was due (the process or host was suspended), it re-arms a fresh window (20 s before `snapshot_done`, 15 s after) instead of failing; on `NSWorkspace.didWakeNotification` the deadline is extended to at least a fresh window from now. The watcher fails only if no line or heartbeat arrives within that window.
 - Failure means any of: process exit, `snapshot_error`, snapshot timeout, heartbeat timeout, or a framing error. On failure:
   - terminate the process;
   - emit `.backendUnavailable(reason)`;
@@ -561,6 +564,7 @@ Ids are passed only through `--args` JSON. The session defaults from `-s` (`rex.
 | exit 0, `focus:"error"` otherwise | `FocusError.failed("<session label>: <err>")` |
 | exit 3 | `FocusError.failed("<session label> is no longer running in Rex")` |
 | exit 4 | `FocusError.unavailable("Rex is not running")` |
+| timeout (5 s) | `FocusError.failed("Rex did not respond in time")` |
 | any other exit, or no JSON line | `FocusError.failed` with the last stderr line |
 
 There is no fallback.
@@ -568,7 +572,7 @@ There is no fallback.
 **`activate(target)`:**
 
 1. No client selected:
-   - If Rex.app is running, activate it and return "Rex app is not connected to the server."
+   - If Rex.app is running, activate it and return "Rex app is not connected to the server." (Activation brings an already-running Rex.app forward and never launches it.)
    - Otherwise return "Rex is not running."
 2. Run `rex --autostart=false -C <client_id> do session.select --args '{"session_id":"<session_id>"}'`.
 
@@ -577,8 +581,9 @@ There is no fallback.
    | exit 0 | continue |
    | exit 1 with `not accepting actions` | partial: "Turn on Remote Control in Rex Settings → Rex Server to switch sessions." |
    | exit 3 | partial: "Rex app disconnected." |
+   | timeout (5 s) | partial: "Rex did not respond in time." |
    | other | partial with the last stderr line |
-3. If not cancelled, activate Rex.app with `NSWorkspace` (bundle identifier `com.superlogical.rex`). No Apple Events are needed.
+3. If not cancelled, activate Rex.app with `NSWorkspace` (bundle identifier `com.superlogical.rex`) if it is running; it is never launched. No Apple Events are needed.
 4. Return the partial message, or nil.
 
 Server focus runs before the client switch, matching the user's `jump_attention` action.
@@ -732,6 +737,7 @@ The icon dims only when no session of any active backend is connected.
 
 ## Revision log
 
+- **r6.3 (2026-11-08).** From the step-2 final review. Clarifications matching the implementation: `activate` brings Rex.app forward only if it is already running and never launches it; focus and session-select timeouts read "Rex did not respond in time" (the partial ends with a period); `client ls` has a 5-second timeout; only the snapshot fixture is recorded, event fixtures are hand-written; the outage reason quotes the watcher's last stderr line only for a real `Error:` line (not the `listening:` banner or `Error: interrupted`), else the exit status; the hidden-backend check for a notification target runs before the current selection is superseded. Behaviour changes: **resilience** (a per-block `status_error`, per-session `view_error`, or `list_blocks` failure is logged and that block or session skipped, never failing the generation or marking the candidate; the script emits `list_blocks_error`, reads such a session through its view, and re-views stale sessions after 30 s; unread blocks keep their history through the snapshot's pruning; only the snapshot as a whole failing marks the candidate); **sleep/wake grace** (a supervision deadline that fires more than 5 s late, or a system wake, re-arms a fresh 20 s/15 s window instead of failing); **heading prefix** counts only backends that emitted `.discovery` this run, not merely enabled ones.
 - **r6.2 (2026-11-08).** Client selection keeps clients whose `connection_state` is not `"lost"`; a missing or unknown value counts as connected, as documented by `rex api describe client.list`.
 - **r6.1 (2026-11-07).** From the r6 confirmation review. The `connectionState` rows were reordered so the Rex rows can be reached. Clarifications:
   - settle snapshots
