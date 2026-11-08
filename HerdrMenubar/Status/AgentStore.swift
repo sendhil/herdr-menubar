@@ -74,6 +74,16 @@ final class AgentStore {
 
     private(set) var connectionState: ConnectionState = .searching
     private(set) var transientError: String?
+    /// Backends that have emitted `.discovery` in this run and are not hidden; drives
+    /// `connectionState` and `wording`.
+    private(set) var activeBackends: Set<BackendKind> = []
+    /// Backends that have emitted `.discovery` in this run, kept across `.backendHidden`
+    /// ("has been active"); cleared only by `stop()`.
+    private(set) var everActiveBackends: Set<BackendKind> = []
+    /// Whole-backend outages; their sessions are excluded from RECONNECTING and connection state.
+    private(set) var unavailableBackends: [BackendKind: String] = [:]
+
+    var wording: AgentWording { activeBackends.contains(.rex) ? .agents : .herdr }
 
     var attentionSections: [SessionMenuSection] { sections(\.attentionRows) }
     var finishedSections: [SessionMenuSection] { sections(\.finishedRows) }
@@ -81,7 +91,8 @@ final class AgentStore {
 
     var unavailableSessions: [UnavailableSession] {
         sessions.values.compactMap { state in
-            state.unavailableMessage.map { UnavailableSession(session: state.descriptor, message: $0) }
+            guard unavailableBackends[state.descriptor.key.backend] == nil else { return nil }
+            return state.unavailableMessage.map { UnavailableSession(session: state.descriptor, message: $0) }
         }
         .sorted { sessionOrder($0.session, $1.session) }
     }
@@ -192,6 +203,9 @@ final class AgentStore {
         responseSubscription?.cancel()
         responseConsumer?.cancel()
         discoveredBackends.removeAll()
+        activeBackends.removeAll()
+        everActiveBackends.removeAll()
+        unavailableBackends.removeAll()
         sessions.removeAll()
         connectionState = .searching
         transientError = nil
@@ -324,6 +338,9 @@ private extension AgentStore {
         switch event {
         case .discovery(let descriptors):
             discoveredBackends.insert(kind)
+            activeBackends.insert(kind)
+            everActiveBackends.insert(kind)
+            unavailableBackends[kind] = nil
             for descriptor in descriptors where sessions[descriptor.key] == nil {
                 sessions[descriptor.key] = SessionPresentationState(descriptor: descriptor)
             }
@@ -369,8 +386,38 @@ private extension AgentStore {
             }
             guard removedState != nil else { return }
             await attentionCoordinator.remove(session: key)
-        case .descriptorChanged, .backendUnavailable, .backendHidden:
-            break
+        case .descriptorChanged(let descriptor):
+            guard var state = sessions[descriptor.key] else { break }
+            state.descriptor = descriptor
+            sessions[descriptor.key] = state
+        case .backendUnavailable(let reason):
+            unavailableBackends[kind] = reason
+            AppLog.systemActions.error(
+                "\(kind.displayName, privacy: .public) unavailable: \(reason, privacy: .private)"
+            )
+            let keys = sessions.keys.filter { $0.backend == kind }
+            for key in keys {
+                sessions[key]?.isConnected = false
+                sessions[key]?.setRows([])
+            }
+            for key in keys {
+                await attentionCoordinator.unavailable(session: key)
+            }
+        case .backendHidden:
+            unavailableBackends[kind] = nil
+            activeBackends.remove(kind)
+            discoveredBackends.remove(kind)
+            let keys = sessions.keys.filter { $0.backend == kind }
+            for key in keys {
+                sessions.removeValue(forKey: key)
+            }
+            if let pendingNotificationTarget, pendingNotificationTarget.target.session.backend == kind {
+                self.pendingNotificationTarget = nil
+                transientError = "\(kind.displayName) is not available"
+            }
+            for key in keys {
+                await attentionCoordinator.remove(session: key)
+            }
         }
         deriveConnectionState()
     }
@@ -386,8 +433,16 @@ private extension AgentStore {
     func receiveNotificationTarget(_ target: SelectionTarget, generation: UUID) {
         guard isRunning, eventGeneration == generation else { return }
         let kind = target.target.session.backend
-        // An unroutable target never supersedes the current selection.
-        guard backend(for: kind) != nil else { return }
+        // A target for a disabled or missing backend is discarded with a message and never
+        // supersedes the current selection.
+        guard preferences.enabledBackends.contains(kind) else {
+            transientError = "\(kind.displayName) is turned off"
+            return
+        }
+        guard backend(for: kind) != nil else {
+            transientError = "\(kind.displayName) is not available"
+            return
+        }
         supersedeSelection()
         guard let state = sessions[target.target.session] else {
             if discoveredBackends.contains(kind) {
@@ -429,15 +484,43 @@ private extension AgentStore {
         sessions[key]?.descriptor.displayName ?? key.herdrSessionID?.displayName ?? hint.sessionDisplayName
     }
 
+    /// Each backend's own state first (Herdr's is exactly the pre-backend derivation), then the
+    /// spec's aggregation table, first match wins: any connected; any connecting (a known session
+    /// that is not connected); a non-Herdr backend active and unavailable (connecting, its sessions
+    /// excluded); a non-Herdr backend active with zero sessions; Herdr's own state; otherwise searching.
+    /// Only enabled backends count, and non-Herdr backends only once active.
     func deriveConnectionState() {
-        if sessions.values.contains(where: \.isConnected) {
+        let enabled = preferences.enabledBackends
+        var states: [BackendKind: ConnectionState] = [:]
+        for backend in backends where enabled.contains(backend.kind) {
+            let kind = backend.kind
+            guard kind == .herdr || activeBackends.contains(kind) else { continue }
+            if unavailableBackends[kind] != nil {
+                states[kind] = .connecting
+                continue
+            }
+            let kindSessions = sessions.values.filter { $0.descriptor.key.backend == kind }
+            if kindSessions.contains(where: \.isConnected) {
+                states[kind] = .connected
+            } else if !discoveredBackends.contains(kind) {
+                states[kind] = .searching
+            } else if kindSessions.isEmpty {
+                states[kind] = .noSessions
+            } else {
+                states[kind] = .connecting
+            }
+        }
+        let others = states.filter { $0.key != .herdr }.values
+        if states.values.contains(.connected) {
             connectionState = .connected
-        } else if discoveredBackends.isEmpty {
-            connectionState = .searching
-        } else if sessions.isEmpty {
-            connectionState = .noSessions
-        } else {
+        } else if states.values.contains(.connecting) {
             connectionState = .connecting
+        } else if others.contains(.noSessions) {
+            connectionState = .noSessions
+        } else if let herdrState = states[.herdr] {
+            connectionState = herdrState
+        } else {
+            connectionState = .searching
         }
     }
 

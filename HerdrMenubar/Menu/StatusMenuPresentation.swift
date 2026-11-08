@@ -63,7 +63,7 @@ struct StatusMenuPresentationBuilder {
         loginItem: any LoginItemManaging,
         notifications: NotificationSettingsController
     ) -> StatusItemPresentation {
-        let wording = AgentWording.herdr
+        let wording = store.wording
         return StatusItemPresentation(
             icon: MenuBarIconPresentation(
                 connectionState: store.connectionState,

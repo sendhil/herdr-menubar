@@ -105,7 +105,7 @@ final class AgentStoreBackendTests: XCTestCase {
         await selection.value
 
         XCTAssertEqual(herdr.calls, ["start", "focus:p", "activate:p", "refresh:p"])
-        XCTAssertNil(store.transientError)
+        XCTAssertEqual(store.transientError, "Rex is turned off")
         await store.stop()
     }
 
@@ -138,11 +138,200 @@ final class AgentStoreBackendTests: XCTestCase {
         XCTAssertEqual(store.workingSections.map(\.session.displayName), ["zulu", "beta", "fix-playback"])
         await store.stop()
     }
+
+    func testBackendUnavailableClearsRowsKeepsHistoryAndHidesSessionsFromReconnecting() async {
+        let backend = FakeAgentBackend(kind: .rex)
+        let coordinator = BackendStoreCoordinator()
+        let store = makeBackendStore([backend], coordinator: coordinator)
+        await store.start()
+        backend.send(.discovery([rexSession]))
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [attentionRow], attention: [])))
+        await eventually { store.attentionCount == 1 }
+
+        backend.send(.backendUnavailable("watcher exited"))
+        await eventually { store.attentionCount == 0 }
+
+        XCTAssertEqual(store.unavailableBackends, [.rex: "watcher exited"])
+        XCTAssertTrue(store.unavailableSessions.isEmpty)
+        // `waitUntil` is the shared helper in HerdrClientTestSupport.swift.
+        await waitUntil { await coordinator.unavailableSessions == [rexKey] }
+        let unavailable = await coordinator.unavailableSessions
+        let removed = await coordinator.removedSessions
+        XCTAssertEqual(unavailable, [rexKey])
+        XCTAssertTrue(removed.isEmpty)
+
+        backend.send(.discovery([rexSession]))
+        await eventually { store.unavailableBackends.isEmpty }
+        await store.stop()
+    }
+
+    func testBackendHiddenRemovesSessionsAndHistory() async {
+        let backend = FakeAgentBackend(kind: .rex)
+        let coordinator = BackendStoreCoordinator()
+        let store = makeBackendStore([backend], coordinator: coordinator)
+        await store.start()
+        backend.send(.discovery([rexSession]))
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [attentionRow], attention: [])))
+        await eventually { store.attentionCount == 1 }
+
+        backend.send(.backendHidden)
+        await eventually { store.attentionSections.isEmpty }
+        await waitUntil { await coordinator.removedSessions == [rexKey] }
+
+        let removed = await coordinator.removedSessions
+        XCTAssertEqual(removed, [rexKey])
+        XCTAssertFalse(store.activeBackends.contains(.rex))
+        // "Has been active in this run" is sticky across `.backendHidden`.
+        XCTAssertEqual(store.everActiveBackends, [.rex])
+        XCTAssertEqual(store.wording, .herdr)
+        XCTAssertEqual(store.connectionState, .searching)
+        await store.stop()
+        XCTAssertTrue(store.everActiveBackends.isEmpty)
+    }
+
+    func testBackendHiddenDiscardsItsPendingTargetAsNotAvailable() async {
+        let backend = FakeAgentBackend(kind: .rex)
+        let store = makeBackendStore([backend])
+        await store.start()
+
+        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        XCTAssertNil(store.transientError)
+        backend.send(.backendHidden)
+        await eventually { store.transientError == "Rex is not available" }
+
+        backend.send(.discovery([rexSession]))
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [finishedRow], attention: [])))
+        await eventually { store.finishedSections.count == 1 }
+        XCTAssertFalse(backend.calls.contains("focus:b1"))
+        await store.stop()
+    }
+
+    func testDescriptorChangedRenamesHeadingWithoutTouchingCoordinator() async {
+        let backend = FakeAgentBackend(kind: .rex)
+        let coordinator = BackendStoreCoordinator()
+        let store = makeBackendStore([backend], coordinator: coordinator)
+        await store.start()
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [attentionRow], attention: [])))
+        await eventually { store.attentionCount == 1 }
+
+        backend.send(.descriptorChanged(AgentSessionDescriptor(key: rexKey, displayName: "renamed")))
+        await eventually { store.attentionSections.first?.session.displayName == "renamed" }
+
+        let reconciled = await coordinator.reconciledSessions
+        XCTAssertEqual(reconciled, [rexKey])
+        await store.stop()
+    }
+
+    func testTargetForDisabledBackendIsDiscardedAsTurnedOff() async {
+        let herdr = FakeAgentBackend(kind: .herdr)
+        let store = makeBackendStore([herdr], enabledBackends: ["herdr"])
+        await store.start()
+
+        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+
+        XCTAssertEqual(store.transientError, "Rex is turned off")
+        XCTAssertEqual(herdr.calls, ["start"])
+        await store.stop()
+    }
+
+    func testTargetForEnabledBackendWithoutInstanceIsNotAvailable() async {
+        let herdr = FakeAgentBackend(kind: .herdr)
+        let store = makeBackendStore([herdr], enabledBackends: ["herdr", "rex"])
+        await store.start()
+
+        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+
+        XCTAssertEqual(store.transientError, "Rex is not available")
+        await store.stop()
+    }
+
+    func testWordingSwitchesToAgentsOnlyOnceRexIsActive() async {
+        let herdr = FakeAgentBackend(kind: .herdr)
+        let rex = FakeAgentBackend(kind: .rex)
+        let store = makeBackendStore([herdr, rex])
+        await store.start()
+        herdr.send(.discovery([]))
+        await eventually { store.connectionState == .noSessions }
+        XCTAssertEqual(store.wording, .herdr)
+
+        rex.send(.discovery([]))
+        await eventually { store.wording == .agents }
+        XCTAssertEqual(store.activeBackends, [.herdr, .rex])
+        await store.stop()
+    }
+
+    func testHerdrOnlyConnectionStatesAreTodaysWhenRexNeverBecomesActive() async {
+        let herdr = FakeAgentBackend(kind: .herdr)
+        let rex = FakeAgentBackend(kind: .rex)
+        let store = makeBackendStore([herdr, rex])
+        await store.start()
+        XCTAssertEqual(store.connectionState, .searching)
+
+        herdr.send(.discovery([]))
+        await eventually { store.connectionState == .noSessions }
+        herdr.send(.discovery([herdrWork]))
+        await eventually { store.connectionState == .connecting }
+        herdr.send(.connected(herdrWork, .empty))
+        await eventually { store.connectionState == .connected }
+        herdr.send(.sessionUnavailable(herdrWork.key, "socket unavailable"))
+        await eventually { store.connectionState == .connecting }
+        XCTAssertEqual(store.wording, .herdr)
+        await store.stop()
+    }
+
+    func testConnectionStateAggregatesActiveBackendsInSpecTableOrder() async {
+        let herdr = FakeAgentBackend(kind: .herdr)
+        let rex = FakeAgentBackend(kind: .rex)
+        let store = makeBackendStore([herdr, rex])
+        await store.start()
+
+        // Rex active with zero sessions precedes Herdr's own (searching) state.
+        rex.send(.discovery([]))
+        await eventually { store.activeBackends.contains(.rex) }
+        XCTAssertEqual(store.connectionState, .noSessions)
+
+        herdr.send(.discovery([]))
+        await eventually { store.activeBackends.contains(.herdr) }
+        XCTAssertEqual(store.connectionState, .noSessions)
+
+        rex.send(.discovery([rexSession]))
+        await eventually { store.connectionState == .connecting }
+
+        rex.send(.connected(rexSession, .empty))
+        await eventually { store.connectionState == .connected }
+
+        // Rex active and currently unavailable is connecting; its sessions are excluded.
+        rex.send(.backendUnavailable("heartbeat timeout"))
+        await eventually { store.connectionState == .connecting }
+        XCTAssertEqual(store.unavailableBackends, [.rex: "heartbeat timeout"])
+
+        herdr.send(.connected(herdrWork, .empty))
+        await eventually { store.connectionState == .connected }
+
+        // A Herdr connecting (unavailable) session while Rex is unavailable is connecting,
+        // and only the Rex sessions are hidden from RECONNECTING.
+        herdr.send(.sessionUnavailable(herdrWork.key, "socket unavailable"))
+        await eventually { store.connectionState == .connecting }
+        XCTAssertEqual(store.unavailableSessions.map(\.id), [herdrWork.key])
+        await store.stop()
+    }
+
+    func testRexOnlyActiveWithZeroSessionsIsNoSessions() async {
+        let rex = FakeAgentBackend(kind: .rex)
+        let store = makeBackendStore([rex], enabledBackends: ["rex"])
+        await store.start()
+        XCTAssertEqual(store.connectionState, .searching)
+
+        rex.send(.discovery([]))
+        await eventually { store.connectionState == .noSessions }
+        await store.stop()
+    }
 }
 
 // MARK: - Fixtures
 
 private let rexKey = AgentSessionKey(backend: .rex, rawID: "s1")
+private let herdrWork = AgentSessionDescriptor(key: .named("work"), displayName: "work")
 private let rexSession = AgentSessionDescriptor(key: rexKey, displayName: "fix-playback")
 private let finishedToken = SeenToken(marks: ["s1/b1/:3"])
 private let finishedRow = AgentRow(
