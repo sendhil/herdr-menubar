@@ -33,7 +33,7 @@ final class RexFocusTests: XCTestCase {
                              hostName: { host }, isEnabled: { true })
         recorder = BackendEventRecorder(await backend.events())
         await backend.start()
-        await rexWaitUntil { watchers.processes.count == 1 }
+        await rexWaitUntil { watchers.processes.count == 1 && watchers.processes[0].started }
         watchers.last!.send(RexJSON.snapshot(state: "blocked"))
         await rexWaitUntil { recorder.events.contains { if case .connected = $0 { true } else { false } } }
     }

@@ -61,22 +61,13 @@ struct LiveRexAppControl: RexAppControlling {
         await MainActor.run { Self.runningApp() != nil }
     }
 
-    /// Brings a running Rex.app forward. Never launches it (launching is a non-goal): when it is
-    /// not running this does nothing.
+    /// Brings an already-running Rex.app forward. Never launches it (a non-goal): when it is not
+    /// running this does nothing.
     func activate() async {
         await MainActor.run {
             guard let running = Self.runningApp() else { return }
-            guard let url = running.bundleURL
-                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.bundleIdentifier) else {
-                _ = running.activate()
-                return
-            }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-                if let error {
-                    AppLog.systemActions.error("Rex activation failed: \(error.localizedDescription, privacy: .private)")
-                }
+            if !running.activate() {
+                AppLog.systemActions.error("Rex.app refused activation")
             }
         }
     }
@@ -142,7 +133,9 @@ actor RexBackend: AgentBackend {
     private var unavailableReason: String?
     /// The CLI of the latest successful resolution (focus uses it).
     private(set) var resolvedCLI: RexCLI?
-    /// A CLI resolved at least once since `start()` (step 3's "Rex resolved this run").
+    /// A CLI resolved at least once during this app launch (step 3's "Rex resolved this run").
+    /// Not reset by `stop()`, like `RexCLIResolver.hasEverResolved`: create one backend (and one
+    /// resolver) per app launch.
     private(set) var hasResolvedCLIThisRun = false
 
     // Timers
@@ -212,15 +205,15 @@ actor RexBackend: AgentBackend {
         pendingProcessEvents = []
         continuation?.finish()
         continuation = nil
-        await process?.terminate()
-        await loop?.value
+        // Reset before the first await, so a `start()` that runs during these awaits keeps its state.
         reducer.reset()
         backoffIndex = 0
         isHidden = false
         unavailableReason = nil
         resolvedCLI = nil
-        hasResolvedCLIThisRun = false
         sessionNames = [:]
+        await process?.terminate()
+        await loop?.value
     }
 
     func retryUnavailable() async {
@@ -270,6 +263,7 @@ actor RexBackend: AgentBackend {
             let delay: Duration
             switch resolution {
             case .hidden:
+                resolvedCLI = nil
                 if !isHidden {
                     isHidden = true
                     yield(.backendHidden)
@@ -277,6 +271,7 @@ actor RexBackend: AgentBackend {
                 delay = resolution.retryInterval ?? Self.hiddenRecheckInterval
             case .unavailable(let reason):
                 isHidden = false
+                resolvedCLI = nil
                 markUnavailable(reason)
                 delay = resolution.retryInterval ?? nextBackoff()
             case .serverUnreachable(let cli):
@@ -382,13 +377,22 @@ actor RexBackend: AgentBackend {
         pendingProcessEvents = []
         reducer.endGeneration()
         rearmTimer()
+        // Tell the store before the (up to one second) termination, so dead rows go away now.
+        if !outcome.stopped { markUnavailable(outcome.reason) }
         generation.waiter?.resume(returning: outcome)
     }
+
+    /// Test seam: when false, queued process events are applied only by the timer path, so a test
+    /// can hold a line in the queue while a deadline fires.
+    private var automaticDrain = true
+
+    func setAutomaticDrainForTesting(_ enabled: Bool) { automaticDrain = enabled }
+    var pendingProcessEventCountForTesting: Int { pendingProcessEvents.count }
 
     private func enqueue(_ event: ManagedProcessEvent) {
         guard let current, event.generation == current.id else { return }
         pendingProcessEvents.append(event)
-        guard !drainScheduled else { return }
+        guard automaticDrain, !drainScheduled else { return }
         drainScheduled = true
         Task { [weak self] in await self?.drainProcessEvents() }
     }

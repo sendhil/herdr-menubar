@@ -44,7 +44,9 @@ final class RexBackendTests: XCTestCase {
     }
 
     private func waitForProcess(_ count: Int, file: StaticString = #filePath, line: UInt = #line) async {
-        await rexWaitUntil("\(count) watcher processes", file: file, line: line) { watchers.processes.count >= count }
+        await rexWaitUntil("\(count) watcher processes", file: file, line: line) {
+            watchers.processes.count >= count && watchers.processes[count - 1].started
+        }
     }
 
     private func waitForEvent(file: StaticString = #filePath, line: UInt = #line,
@@ -378,6 +380,64 @@ final class RexBackendTests: XCTestCase {
         ])
     }
 
+    func testQueuedHeartbeatIsAppliedBeforeTheSupervisionDeadlineIsChecked() async {
+        await startHealthy()
+        await waitForSleep(.seconds(15))
+        await backend.setAutomaticDrainForTesting(false)
+        watchers.last!.send(RexJSON.heartbeat)
+        await rexWaitUntil { await self.backend.pendingProcessEventCountForTesting == 1 }
+        clock.advance(.seconds(15))   // the deadline fires while the heartbeat is still queued
+        await rexWaitUntil { await self.backend.pendingProcessEventCountForTesting == 0 }
+        await settleTasks()
+        XCTAssertTrue(unavailableReasons().isEmpty, "\(recorder.events)")
+        XCTAssertEqual(watchers.processes[0].terminateCount, 0)
+    }
+
+    func testBackendUnavailableIsEmittedBeforeTheWatcherIsTerminated() async {
+        let slow = SlowTerminatingWatcherFactory()
+        backend = RexBackend(resolver: resolver, scriptURL: URL(fileURLWithPath: "/x.lua"), makeWatcher: slow.factory,
+                             runner: ScriptedProcessRunner(), app: FakeRexApp(), clock: clock, hostName: { nil },
+                             isEnabled: { true })
+        recorder = BackendEventRecorder(await backend.events())
+        await backend.start()
+        await rexWaitUntil { slow.process?.started == true }
+        slow.process!.send(RexJSON.snapshot())
+        await waitForEvent(isConnected)
+        slow.process!.sendFramingError()
+        await rexWaitUntil { slow.process!.terminateCount == 1 }
+        // terminate() is still blocked, yet the store already knows the watcher is down.
+        await rexWaitUntil { self.unavailableReasons().count == 1 }
+        slow.gate.open()
+    }
+
+    func testResolverLosingTheCLIClearsItForFocus() async {
+        resolver.set([.ready(cli), .unavailable("Rex command-line tool not found")])
+        let runner = ScriptedProcessRunner { _ in ProcessResult(outcome: .exited(0), stdout: Data(#"{"focus":"ok"}"#.utf8)) }
+        backend = RexBackend(resolver: resolver, scriptURL: URL(fileURLWithPath: "/x.lua"), makeWatcher: watchers.factory,
+                             runner: runner, app: FakeRexApp(), clock: clock, hostName: { nil }, isEnabled: { true })
+        recorder = BackendEventRecorder(await backend.events())
+        await backend.start()
+        await waitForProcess(1)
+        watchers.last!.exit(1)
+        await waitForSleep(.seconds(1))
+        clock.advance(.seconds(1))
+        await waitForEvent { $0 == .backendUnavailable("Rex command-line tool not found") }
+        do {
+            try await backend.focusServer(AgentTarget(session: rexKey("s1"), paneID: "b1"))
+            XCTFail("expected an error")
+        } catch {
+            XCTAssertEqual(error as? FocusError, .unavailable("Rex is not running"))
+        }
+        XCTAssertTrue(runner.requests.isEmpty, "the missing binary is never launched")
+    }
+
+    func testResolvedThisRunSurvivesStopForTheAppLaunch() async {
+        await startHealthy()
+        await backend.stop()
+        let resolved = await backend.hasResolvedCLIThisRun
+        XCTAssertTrue(resolved)
+    }
+
     // MARK: Retry
 
     func testRetryInBackoffRestartsNowAndResetsTheBackoff() async {
@@ -528,4 +588,44 @@ final class BlockingResolver: RexCLIResolving, @unchecked Sendable {
     }
 
     func markFailed(path: String) async {}
+}
+
+/// A watcher whose terminate() blocks until the gate opens.
+final class SlowTerminatingWatcherFactory: @unchecked Sendable {
+    let gate = RexTestGate()
+    private let lock = NSLock()
+    private var _process: SlowTerminatingWatcher?
+    var process: SlowTerminatingWatcher? { lock.withLock { _process } }
+
+    var factory: RexWatcherFactory {
+        { [self] cli, _, generation in
+            lock.withLock {
+                let process = SlowTerminatingWatcher(cli: cli, generation: generation, gate: gate)
+                if _process == nil { _process = process }
+                return process
+            }
+        }
+    }
+}
+
+final class SlowTerminatingWatcher: RexWatcherProcess, @unchecked Sendable {
+    let inner: FakeWatcherProcess
+    let gate: RexTestGate
+
+    init(cli: RexCLI, generation: Int, gate: RexTestGate) {
+        inner = FakeWatcherProcess(cli: cli, generation: generation)
+        self.gate = gate
+    }
+
+    var started: Bool { inner.started }
+    var terminateCount: Int { inner.terminateCount }
+    var lastStderrLine: String? { nil }
+    func start() throws(ManagedProcessError) -> AsyncStream<ManagedProcessEvent> { try inner.start() }
+    func send(_ objects: [[String: Any]]) { inner.send(objects) }
+    func sendFramingError() { inner.sendFramingError() }
+
+    func terminate() async {
+        await inner.terminate()
+        await gate.wait()
+    }
 }

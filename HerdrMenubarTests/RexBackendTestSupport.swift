@@ -64,12 +64,15 @@ final class ManualRexClock: RexBackendClock, @unchecked Sendable {
     }
 }
 
-/// A watcher child the test drives by hand.
+/// A watcher child the test drives by hand. Events sent before the backend calls `start()` are
+/// buffered and replayed on start, so a test never races the backend's spawn.
 final class FakeWatcherProcess: RexWatcherProcess, @unchecked Sendable {
     let cli: RexCLI
     let generation: Int
     private let lock = NSLock()
     private var continuation: AsyncStream<ManagedProcessEvent>.Continuation?
+    private var buffered: [ManagedProcessEvent] = []
+    private var _started = false
     private var _terminateCount = 0
     private var exited = false
     private let failStart: Bool
@@ -81,26 +84,51 @@ final class FakeWatcherProcess: RexWatcherProcess, @unchecked Sendable {
         self.failStart = failStart
     }
 
+    var started: Bool { lock.withLock { _started } }
     var terminateCount: Int { lock.withLock { _terminateCount } }
     var lastStderrLine: String? { lock.withLock { stderrLine } }
 
     func start() throws(ManagedProcessError) -> AsyncStream<ManagedProcessEvent> {
-        if failStart { throw .launchFailed("boom") }
+        if failStart {
+            lock.withLock { _started = true }   // the spawn was attempted
+            throw .launchFailed("boom")
+        }
         let (stream, continuation) = AsyncStream<ManagedProcessEvent>.makeStream()
-        lock.withLock { self.continuation = continuation }
+        let (replay, finished): ([ManagedProcessEvent], Bool) = lock.withLock {
+            self.continuation = continuation
+            _started = true
+            defer { buffered = [] }
+            return (buffered, exited)
+        }
+        for event in replay { continuation.yield(event) }
+        if finished { continuation.finish() }
         return stream
     }
 
-    func terminate() async {
+    /// Yields now, or buffers until `start()`. `finishing` ends the stream (an exit).
+    private func deliver(_ event: ManagedProcessEvent, finishing: Bool = false) {
         let continuation: AsyncStream<ManagedProcessEvent>.Continuation? = lock.withLock {
-            _terminateCount += 1
-            guard !exited else { return nil }
-            exited = true
-            return self.continuation
+            guard let continuation = self.continuation else {
+                buffered.append(event)
+                return nil
+            }
+            return continuation
         }
-        continuation?.yield(.exited(generation: generation,
-                                    ProcessTermination(reason: .exited, status: 130, terminatedByUs: true)))
-        continuation?.finish()
+        continuation?.yield(event)
+        if finishing { continuation?.finish() }
+    }
+
+    func terminate() async {
+        let shouldExit: Bool = lock.withLock {
+            _terminateCount += 1
+            guard !exited else { return false }
+            exited = true
+            return true
+        }
+        if shouldExit {
+            deliver(.exited(generation: generation,
+                            ProcessTermination(reason: .exited, status: 130, terminatedByUs: true)), finishing: true)
+        }
     }
 
     func send(_ object: [String: Any]) {
@@ -109,24 +137,23 @@ final class FakeWatcherProcess: RexWatcherProcess, @unchecked Sendable {
     }
 
     func sendRaw(_ data: Data) {
-        let continuation = lock.withLock { self.continuation }
-        continuation?.yield(.line(generation: generation, data))
+        deliver(.line(generation: generation, data))
     }
 
     func sendFramingError() {
-        let continuation = lock.withLock { self.continuation }
-        continuation?.yield(.framingError(generation: generation, .lineTooLong(limit: 4_194_304)))
+        deliver(.framingError(generation: generation, .lineTooLong(limit: 4_194_304)))
     }
 
     func exit(_ code: Int32) {
-        let continuation: AsyncStream<ManagedProcessEvent>.Continuation? = lock.withLock {
-            guard !exited else { return nil }
+        let shouldExit: Bool = lock.withLock {
+            guard !exited else { return false }
             exited = true
-            return self.continuation
+            return true
         }
-        continuation?.yield(.exited(generation: generation,
-                                    ProcessTermination(reason: .exited, status: code, terminatedByUs: false)))
-        continuation?.finish()
+        if shouldExit {
+            deliver(.exited(generation: generation,
+                            ProcessTermination(reason: .exited, status: code, terminatedByUs: false)), finishing: true)
+        }
     }
 }
 
