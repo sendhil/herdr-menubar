@@ -195,12 +195,13 @@ final class RexBackendTests: XCTestCase {
         }
         XCTAssertEqual(snapshot.rows.map(\.state), [.finished])
         await backend.markSeen(token)
-        XCTAssertEqual(recorder.events.lastSnapshot("s1")?.rows, [])
+        // The recorder drains the stream on its own task, so wait for the emitted snapshot.
+        await rexWaitUntil { recorder.events.lastSnapshot("s1")?.rows == [] }
 
         watchers.last!.send(RexJSON.block("s1", "b1", state: "done", at: 9, via: "working"))
         await rexWaitUntil { recorder.events.lastSnapshot("s1")?.rows.map(\.state) == [.finished] }
         await backend.clearFinished()
-        XCTAssertEqual(recorder.events.lastSnapshot("s1")?.rows, [])
+        await rexWaitUntil { recorder.events.lastSnapshot("s1")?.rows == [] }
     }
 
     // MARK: Supervision
