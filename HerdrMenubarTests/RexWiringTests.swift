@@ -91,6 +91,7 @@ final class RexWiringTests: XCTestCase {
             (try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
         let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        defer { kill(pid, SIGKILL) }
         XCTAssertEqual(kill(pid, 0), 0, "the focus child is alive before supersession")
 
         let started = ContinuousClock.now
