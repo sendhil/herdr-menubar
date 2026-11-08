@@ -32,6 +32,7 @@ struct ApplicationRuntimeDependencies {
     let startStore: () async -> Void
     let stopStore: () async -> Void
     let retryStore: () async -> Void
+    let clearFinishedStore: () async -> Void
     let selectTarget: (SelectionTarget) -> Void
     let selectTerminal: (String) -> Void
     let sealAndResetLatestTarget: () async -> Void
@@ -147,6 +148,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             startStore: { await store.start() },
             stopStore: { await store.stop() },
             retryStore: { await store.retry() },
+            clearFinishedStore: { await store.clearFinished() },
             selectTarget: { store.select($0) },
             selectTerminal: {
                 preferences.selectedTerminalBundleIdentifier = $0
@@ -285,6 +287,11 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             let dependencies = dependencies
             launchMenuAction(generation: token) {
                 await dependencies.retryStore()
+            }
+        case .clearFinished:
+            let dependencies = dependencies
+            launchMenuAction(generation: token) {
+                await dependencies.clearFinishedStore()
             }
         case .openKeyboardShortcuts:
             dependencies.showShortcutSettings()

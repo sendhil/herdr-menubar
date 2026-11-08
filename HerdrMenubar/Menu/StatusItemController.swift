@@ -247,12 +247,14 @@ private extension NativeStatusMenuRenderer {
             }
             return item
 
-        case let .info(title, tone):
-            return textItem(
+        case let .info(title, tone, toolTip):
+            let item = textItem(
                 title,
                 color: tone == .secondary ? .secondaryLabelColor : .systemRed,
                 font: .menuFont(ofSize: 0)
             )
+            item.toolTip = toolTip
+            return item
 
         case let .toggle(title, isOn, isEnabled, action):
             let item = actionItem(title: title, action: action)

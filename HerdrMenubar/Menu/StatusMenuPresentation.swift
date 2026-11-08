@@ -20,7 +20,7 @@ indirect enum StatusMenuNode: Equatable, Sendable {
         quieter: Bool,
         target: SelectionTarget
     )
-    case info(String, tone: MenuTextTone)
+    case info(String, tone: MenuTextTone, toolTip: String? = nil)
     case toggle(
         title: String,
         isOn: Bool,
@@ -50,6 +50,7 @@ enum StatusMenuAction: Equatable, Sendable {
     case setNotifications(Bool)
     case setSound(Bool)
     case retryUnavailable
+    case clearFinished
     case openKeyboardShortcuts
     case quit
 }
@@ -99,31 +100,48 @@ private extension StatusMenuPresentationBuilder {
     ) -> [StatusMenuNode] {
         var nodes: [StatusMenuNode] = []
 
+        let showsBackendPrefix = store.showsBackendPrefix
         appendAgentSections(
             store.attentionSections,
             heading: "NEEDS ATTENTION",
             quieter: false,
+            showsBackendPrefix: showsBackendPrefix,
+            to: &nodes
+        )
+        appendAgentSections(
+            store.finishedSections,
+            heading: "FINISHED",
+            quieter: false,
+            showsBackendPrefix: showsBackendPrefix,
+            trailing: .action(title: "Clear Finished", state: .off, isEnabled: true, action: .clearFinished),
             to: &nodes
         )
         appendAgentSections(
             store.workingSections,
             heading: "WORKING",
             quieter: true,
+            showsBackendPrefix: showsBackendPrefix,
             to: &nodes
         )
 
         if let connectionNode = connectionNode(
             state: store.connectionState,
-            hasPresentedAgents: !store.attentionSections.isEmpty || !store.workingSections.isEmpty,
+            hasPresentedAgents: !store.attentionSections.isEmpty || !store.finishedSections.isEmpty
+                || !store.workingSections.isEmpty,
             wording: wording
         ) {
             nodes.append(connectionNode)
         }
 
-        if !store.unavailableSessions.isEmpty {
+        let unavailableSessions = store.unavailableSessions
+        let unavailableBackends = store.reconnectingBackends
+        if !unavailableSessions.isEmpty || !unavailableBackends.isEmpty {
             nodes.append(.heading("RECONNECTING"))
-            nodes.append(contentsOf: store.unavailableSessions.map {
+            nodes.append(contentsOf: unavailableSessions.map {
                 .info($0.session.displayName, tone: .secondary)
+            })
+            nodes.append(contentsOf: unavailableBackends.map {
+                .info($0.kind.displayName, tone: .secondary, toolTip: $0.reason)
             })
         }
 
@@ -164,7 +182,7 @@ private extension StatusMenuPresentationBuilder {
             to: &nodes
         )
 
-        if !store.unavailableSessions.isEmpty {
+        if !unavailableSessions.isEmpty || !unavailableBackends.isEmpty {
             nodes.append(.action(
                 title: "Retry Unavailable Sessions",
                 state: .off,
@@ -188,12 +206,17 @@ private extension StatusMenuPresentationBuilder {
         _ sections: [SessionMenuSection],
         heading: String,
         quieter: Bool,
+        showsBackendPrefix: Bool,
+        trailing: StatusMenuNode? = nil,
         to nodes: inout [StatusMenuNode]
     ) {
         guard !sections.isEmpty else { return }
         nodes.append(.heading(heading))
         for section in sections {
-            nodes.append(.heading(section.session.displayName.uppercased()))
+            let name = showsBackendPrefix
+                ? "\(section.session.key.backend.displayName) · \(section.session.displayName)"
+                : section.session.displayName
+            nodes.append(.heading(name.uppercased()))
             nodes.append(contentsOf: section.items.map { row in
                 .agent(
                     title: row.visibleLabel,
@@ -204,6 +227,7 @@ private extension StatusMenuPresentationBuilder {
                 )
             })
         }
+        if let trailing { nodes.append(trailing) }
         nodes.append(.separator)
     }
 

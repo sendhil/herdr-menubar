@@ -183,9 +183,10 @@ final class ApplicationRuntimeTests: XCTestCase {
         runtime.perform(.setNotifications(false))
         runtime.perform(.setSound(true))
         runtime.perform(.retryUnavailable)
+        runtime.perform(.clearFinished)
         runtime.perform(.openKeyboardShortcuts)
         runtime.perform(.quit)
-        await harness.waitForAsyncActions(3)
+        await harness.waitForAsyncActions(4)
 
         XCTAssertTrue(harness.events.contains("store.select.work.pane-2"))
         XCTAssertTrue(harness.events.contains("terminal.select.com.github.wez.wezterm"))
@@ -193,6 +194,7 @@ final class ApplicationRuntimeTests: XCTestCase {
         XCTAssertTrue(harness.events.contains("notification.set.false"))
         XCTAssertTrue(harness.events.contains("sound.set.true"))
         XCTAssertTrue(harness.events.contains("store.retry"))
+        XCTAssertTrue(harness.events.contains("store.clearFinished"))
         XCTAssertTrue(harness.events.contains("settings.show"))
         XCTAssertTrue(harness.events.contains("quit"))
         await runtime.stop()
@@ -603,6 +605,10 @@ private final class RuntimeHarness {
                 }
                 self?.retryCount += 1
                 self?.events.append("store.retry")
+                self?.markAsyncAction()
+            },
+            clearFinishedStore: { [weak self] in
+                self?.events.append("store.clearFinished")
                 self?.markAsyncAction()
             },
             selectTarget: { [weak self] target in

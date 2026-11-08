@@ -15,6 +15,13 @@ struct SessionMenuSection: Identifiable, Equatable, Sendable {
     var id: AgentSessionKey { session.key }
 }
 
+/// A whole-backend outage line in RECONNECTING; the reason is the tooltip.
+struct UnavailableBackend: Identifiable, Equatable, Sendable {
+    let kind: BackendKind
+    let reason: String
+    var id: BackendKind { kind }
+}
+
 struct UnavailableSession: Identifiable, Equatable, Sendable {
     let session: AgentSessionDescriptor
     let message: String
@@ -106,6 +113,24 @@ final class AgentStore {
             return state.unavailableMessage.map { UnavailableSession(session: state.descriptor, message: $0) }
         }
         .sorted { sessionOrder($0.session, $1.session) }
+    }
+
+    /// Outages of backends that have been active in this run, in `BackendKind` order.
+    var reconnectingBackends: [UnavailableBackend] {
+        unavailableBackends
+            .filter { everActiveBackends.contains($0.key) }
+            .map { UnavailableBackend(kind: $0.key, reason: $0.value) }
+            .sorted { $0.kind.sortIndex < $1.kind.sortIndex }
+    }
+
+    /// Group headings gain a `Backend · ` prefix while more than one backend is active
+    /// (Herdr counts as active whenever it is enabled).
+    var showsBackendPrefix: Bool {
+        var active = activeBackends
+        if preferences.enabledBackends.contains(.herdr), backend(for: .herdr) != nil {
+            active.insert(.herdr)
+        }
+        return active.count > 1
     }
 
     var attentionCount: Int {
@@ -253,6 +278,17 @@ final class AgentStore {
         await withTaskGroup(of: Void.self) { group in
             for backend in targets {
                 group.addTask { await backend.retryUnavailable() }
+            }
+        }
+    }
+
+    /// Clear Finished: every enabled backend marks its visible finished rows seen.
+    func clearFinished() async {
+        let enabled = preferences.enabledBackends
+        let targets = backends.filter { enabled.contains($0.kind) }
+        await withTaskGroup(of: Void.self) { group in
+            for backend in targets {
+                group.addTask { await backend.clearFinished() }
             }
         }
     }
