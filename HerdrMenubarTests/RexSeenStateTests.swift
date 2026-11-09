@@ -75,6 +75,24 @@ final class RexSeenStateTests: XCTestCase {
         XCTAssertEqual(h.reducer.seenMarkCount, 0)
     }
 
+    /// Rex stamps `updated_at` with each report's arrival, so a `done` re-reported without an
+    /// intervening state (a message update or duplicate report) has a newer time but is not a
+    /// new result: it keeps its epoch, stays seen, and does not notify again. A real new result
+    /// passes through `working`, which `via` catches even when the re-read collapses it (r6.7).
+    func testDoneReReportedWithANewerTimestampAndNoInterveningStateIsNotANewResult() throws {
+        var h = started([L.Rec(state: "done", at: 10, msg: "Tests passed")])
+        h.reducer.markSeen(try XCTUnwrap(row(h, "b1")?.seenToken))
+        let epochs = h.reducer.snapshot(forSession: "s1").attention.map(\.epoch)
+
+        h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 40, msg: "Tests passed (12)")],
+                        via: L.changed("done", at: 40)))
+        XCTAssertNil(row(h, "b1"))
+        XCTAssertEqual(h.reducer.snapshot(forSession: "s1").attention.map(\.epoch), epochs, "same epoch, so no new notification")
+
+        h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 60)], via: L.changed("working", at: 50)))
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done), "a cycle through working is a new result")
+    }
+
     func testMarksArePrunedWhenRecordsDisappear() throws {
         var h = started([L.Rec(state: "done", at: 1)], [L.Rec(state: "done", at: 1)])
         h.reducer.markSeen(try XCTUnwrap(row(h, "b1")?.seenToken))
