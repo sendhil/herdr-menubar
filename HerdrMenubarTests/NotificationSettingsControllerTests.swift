@@ -22,7 +22,7 @@ final class NotificationSettingsControllerTests: XCTestCase {
         defer { fixture.removeDefaults() }
 
         XCTAssertEqual(fixture.controller.notifyStates(for: .herdr), [.blocked, .done])
-        XCTAssertEqual(fixture.controller.notifyStates(for: .rex), [.blocked, .error])
+        XCTAssertEqual(fixture.controller.notifyStates(for: .rex), [.blocked, .error, .done])
         XCTAssertNil(fixture.defaults.object(forKey: "notifyStates.herdr"))
 
         fixture.controller.setNotifyState(.done, enabled: false, for: .herdr)
@@ -31,9 +31,9 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertEqual(fixture.defaults.stringArray(forKey: "notifyStates.herdr"), ["blocked"])
         XCTAssertNil(fixture.defaults.object(forKey: "notifyStates.rex"))
 
-        fixture.controller.setNotifyState(.done, enabled: true, for: .rex)
-        XCTAssertEqual(fixture.controller.notifyStates(for: .rex), [.blocked, .done, .error])
-        XCTAssertEqual(fixture.defaults.stringArray(forKey: "notifyStates.rex"), ["blocked", "done", "error"])
+        fixture.controller.setNotifyState(.done, enabled: false, for: .rex)
+        XCTAssertEqual(fixture.controller.notifyStates(for: .rex), [.blocked, .error])
+        XCTAssertEqual(fixture.defaults.stringArray(forKey: "notifyStates.rex"), ["blocked", "error"])
 
         fixture.controller.setNotifyState(.blocked, enabled: false, for: .herdr)
         XCTAssertEqual(fixture.controller.notifyStates(for: .herdr), [])
@@ -48,7 +48,7 @@ final class NotificationSettingsControllerTests: XCTestCase {
         defer { fixture.removeDefaults() }
 
         fixture.controller.setNotifyState(.blocked, enabled: true, for: .rex)
-        fixture.controller.setNotifyState(.done, enabled: false, for: .rex)
+        fixture.controller.setNotifyState(.done, enabled: true, for: .rex)
 
         XCTAssertNil(fixture.defaults.object(forKey: "notifyStates.rex"))
         XCTAssertFalse(fixture.preferences.hasStoredNotifyStates(for: .rex))

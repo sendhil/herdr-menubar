@@ -724,7 +724,7 @@ final class AttentionNotificationCoordinatorTests: XCTestCase {
 
         let deliveries = await service.deliveries
         XCTAssertEqual(Set(deliveries.prefix(2).map(\.event.target.paneID)), ["a", "b"])
-        XCTAssertEqual(deliveries.dropFirst(2).map(\.event.target.paneID), ["r1", "r2"])
+        XCTAssertEqual(deliveries.dropFirst(2).map(\.event.target.paneID), ["r1", "r2", "r3"])
     }
 }
 

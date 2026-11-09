@@ -432,7 +432,7 @@ final class StatusMenuNotifyStatePresentationTests: XCTestCase {
             .heading("NOTIFICATIONS"),
             .toggle(title: "Notifications", isOn: false, isEnabled: true, action: .setNotifications(true)),
             herdrAgents(blocked: true, finished: true, state: .on),
-            rexAgents(blocked: true, failed: true, finished: false, state: .mixed),
+            rexAgents(blocked: true, failed: true, finished: true, state: .on),
             .toggle(title: "Sound", isOn: false, isEnabled: false, action: .setSound(true))
         ])
         await fixture.stop()
@@ -467,11 +467,12 @@ final class StatusMenuNotifyStatePresentationTests: XCTestCase {
     }
 
     func testStoredRexStatesShowRexAgentsWithoutActivityButOnlyWhenRexIsEnabled() async {
-        let stored = ["notifyStates.rex": ["done", "blocked", "error"]]
+        // A value stored under the old [blocked, error] default is kept, not replaced by the new default.
+        let stored = ["notifyStates.rex": ["blocked", "error"]]
         let enabled = RexPresentationFixture(stored: stored)
         await enabled.start()
         XCTAssertEqual(rexAgentsNode(enabled.presentation().menu),
-                       rexAgents(blocked: true, failed: true, finished: true, state: .on))
+                       rexAgents(blocked: true, failed: true, finished: false, state: .mixed))
         await enabled.stop()
 
         let disabled = RexPresentationFixture(enabledBackends: ["herdr"], stored: stored)
@@ -490,7 +491,7 @@ final class StatusMenuNotifyStatePresentationTests: XCTestCase {
 
         let area = notificationArea(fixture.presentation().menu)
         XCTAssertEqual(area.count, 4)
-        XCTAssertEqual(area[2], rexAgents(blocked: true, failed: true, finished: false, state: .mixed))
+        XCTAssertEqual(area[2], rexAgents(blocked: true, failed: true, finished: true, state: .on))
         await fixture.stop()
     }
 

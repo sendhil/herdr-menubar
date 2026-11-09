@@ -136,7 +136,7 @@ final class PreferencesTests: XCTestCase {
             // Step 3: an absent `enabledBackends` means both backends.
             XCTAssertEqual(preferences.enabledBackends, [.herdr, .rex])
             XCTAssertEqual(Preferences.defaultEnabledBackends, [.herdr, .rex])
-            XCTAssertEqual(preferences.notifyStates, [.herdr: [.blocked, .done], .rex: [.blocked, .error]])
+            XCTAssertEqual(preferences.notifyStates, [.herdr: [.blocked, .done], .rex: [.blocked, .error, .done]])
             XCTAssertNil(defaults.object(forKey: "enabledBackends"))
             XCTAssertNil(defaults.object(forKey: "notifyStates.herdr"))
             XCTAssertNil(defaults.object(forKey: "notifyStates.rex"))
@@ -206,7 +206,7 @@ final class PreferencesTests: XCTestCase {
 
             XCTAssertFalse(preferences.hasStoredNotifyStates(for: .rex))
             XCTAssertFalse(preferences.hasStoredNotifyStates(for: .herdr))
-            XCTAssertEqual(preferences.notifyStates[.rex], [.blocked, .error])
+            XCTAssertEqual(preferences.notifyStates[.rex], [.blocked, .error, .done])
             XCTAssertEqual(preferences.notifyStates[.herdr], [.blocked, .done])
         }
     }
@@ -219,6 +219,18 @@ final class PreferencesTests: XCTestCase {
 
             XCTAssertEqual(preferences.notifyStates[.rex], [.blocked])
             XCTAssertEqual(preferences.notifyStates[.herdr], [])
+        }
+    }
+
+    /// Users who stored the old Rex default ([blocked, error]) keep it; the new default (with done)
+    /// applies only when `notifyStates.rex` is absent.
+    func testStoredOldRexDefaultIsKeptOverTheNewDefault() {
+        withDefaults { defaults in
+            defaults.set(["blocked", "error"], forKey: "notifyStates.rex")
+            let preferences = Preferences(defaults: defaults)
+
+            XCTAssertTrue(preferences.hasStoredNotifyStates(for: .rex))
+            XCTAssertEqual(preferences.notifyStates[.rex], [.blocked, .error])
         }
     }
 

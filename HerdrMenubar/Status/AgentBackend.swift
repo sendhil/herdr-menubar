@@ -20,7 +20,7 @@ enum BackendKind: String, Codable, Sendable, CaseIterable {
     var defaultNotifyStates: Set<AttentionState> {
         switch self {
         case .herdr: [.blocked, .done]
-        case .rex: [.blocked, .error]
+        case .rex: [.blocked, .error, .done]
         }
     }
 }

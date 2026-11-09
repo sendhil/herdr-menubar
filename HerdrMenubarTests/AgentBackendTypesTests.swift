@@ -28,7 +28,7 @@ final class AgentBackendTypesTests: XCTestCase {
         XCTAssertEqual(BackendKind.herdr.displayName, "Herdr")
         XCTAssertEqual(BackendKind.rex.displayName, "Rex")
         XCTAssertEqual(BackendKind.herdr.defaultNotifyStates, [.blocked, .done])
-        XCTAssertEqual(BackendKind.rex.defaultNotifyStates, [.blocked, .error])
+        XCTAssertEqual(BackendKind.rex.defaultNotifyStates, [.blocked, .error, .done])
     }
 
     func testHerdrDescriptorBridgeKeepsDisplayName() {

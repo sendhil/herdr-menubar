@@ -153,7 +153,7 @@ final class AgentStoreTests: XCTestCase {
 
         let policy = await coordinator.reconciliations.first?.policy
         XCTAssertEqual(policy?.notifyStates[.herdr], [.blocked])
-        XCTAssertEqual(policy?.notifyStates[.rex], [.blocked, .error])
+        XCTAssertEqual(policy?.notifyStates[.rex], [.blocked, .error, .done])
         await store.stop()
     }
 
