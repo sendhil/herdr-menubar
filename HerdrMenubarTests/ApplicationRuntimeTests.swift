@@ -182,6 +182,8 @@ final class ApplicationRuntimeTests: XCTestCase {
         runtime.perform(.setLaunchAtLogin(true))
         runtime.perform(.setNotifications(false))
         runtime.perform(.setSound(true))
+        runtime.perform(.setNotifyState(.rex, .error, false))
+        runtime.perform(.setNotifyState(.herdr, .done, true))
         runtime.perform(.retryUnavailable)
         runtime.perform(.clearFinished)
         runtime.perform(.openKeyboardShortcuts)
@@ -193,6 +195,8 @@ final class ApplicationRuntimeTests: XCTestCase {
         XCTAssertTrue(harness.events.contains("login.set.true"))
         XCTAssertTrue(harness.events.contains("notification.set.false"))
         XCTAssertTrue(harness.events.contains("sound.set.true"))
+        XCTAssertTrue(harness.events.contains("notifyState.set.rex.error.false"))
+        XCTAssertTrue(harness.events.contains("notifyState.set.herdr.done.true"))
         XCTAssertTrue(harness.events.contains("store.retry"))
         XCTAssertTrue(harness.events.contains("store.clearFinished"))
         XCTAssertTrue(harness.events.contains("settings.show"))
@@ -587,6 +591,9 @@ private final class RuntimeHarness {
                 self?.markAsyncAction()
             },
             setSound: { [weak self] enabled in self?.events.append("sound.set.\(enabled)") },
+            setNotifyState: { [weak self] kind, state, enabled in
+                self?.events.append("notifyState.set.\(kind.rawValue).\(state.rawValue).\(enabled)")
+            },
             refreshShortcutRegistration: { [weak self] in self?.events.append("shortcut.refresh") },
             startStore: { [weak self] in
                 self?.storeStartCount += 1

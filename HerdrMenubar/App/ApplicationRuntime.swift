@@ -28,6 +28,7 @@ struct ApplicationRuntimeDependencies {
     let refreshNotifications: () async -> Void
     let setNotifications: (Bool) async throws -> Void
     let setSound: (Bool) -> Void
+    let setNotifyState: (BackendKind, AttentionState, Bool) -> Void
     let refreshShortcutRegistration: () -> Void
     let startStore: () async -> Void
     let stopStore: () async -> Void
@@ -142,6 +143,9 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
                 try await notificationSettings.setNotificationsEnabled(enabled)
             },
             setSound: { notificationSettings.setSoundEnabled($0) },
+            setNotifyState: { kind, state, enabled in
+                notificationSettings.setNotifyState(state, enabled: enabled, for: kind)
+            },
             refreshShortcutRegistration: {
                 assignmentController.refreshRegistrationStatus()
             },
@@ -302,6 +306,8 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             }
         case .setSound(let enabled):
             dependencies.setSound(enabled)
+        case let .setNotifyState(kind, state, enabled):
+            dependencies.setNotifyState(kind, state, enabled)
         case .retryUnavailable:
             let dependencies = dependencies
             launchMenuAction(generation: token) {

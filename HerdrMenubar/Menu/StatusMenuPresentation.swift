@@ -50,6 +50,8 @@ enum StatusMenuAction: Equatable, Sendable {
     case setLaunchAtLogin(Bool)
     case setNotifications(Bool)
     case setSound(Bool)
+    /// Turns one notification state on or off for a backend.
+    case setNotifyState(BackendKind, AttentionState, Bool)
     case retryUnavailable
     case clearFinished
     case openKeyboardShortcuts
