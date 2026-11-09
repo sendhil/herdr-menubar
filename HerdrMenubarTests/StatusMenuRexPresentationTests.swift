@@ -386,6 +386,164 @@ final class StatusMenuRexPresentationTests: XCTestCase {
     }
 }
 
+// MARK: - Notification-state submenus (rollout step 3)
+
+/// Spec "Notification settings (rollout step 3)": "Herdr Agents" whenever Herdr is enabled; "Rex
+/// Agents" only when Rex is enabled and (has been active in this run, or `notifyStates.rex` is
+/// stored). Both sit between Notifications and Sound; the parent shows on/mixed/off.
+@MainActor
+final class StatusMenuNotifyStatePresentationTests: XCTestCase {
+    func testHerdrOnlyShowsHerdrAgentsBetweenNotificationsAndSound() async {
+        let fixture = RexPresentationFixture(enabledBackends: ["herdr"])
+        await fixture.start()
+
+        XCTAssertEqual(notificationArea(fixture.presentation().menu), [
+            .heading("NOTIFICATIONS"),
+            .toggle(title: "Notifications", isOn: false, isEnabled: true, action: .setNotifications(true)),
+            herdrAgents(blocked: true, finished: true, state: .on),
+            .toggle(title: "Sound", isOn: false, isEnabled: false, action: .setSound(true))
+        ])
+        await fixture.stop()
+    }
+
+    func testRexAgentsAppearsOnceRexHasBeenActiveWithDefaultStates() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        XCTAssertNil(rexAgentsNode(fixture.presentation().menu))
+
+        fixture.rex.send(.discovery([]))
+        await fixture.waitUntil { fixture.store.everActiveBackends.contains(.rex) }
+
+        XCTAssertEqual(notificationArea(fixture.presentation().menu), [
+            .heading("NOTIFICATIONS"),
+            .toggle(title: "Notifications", isOn: false, isEnabled: true, action: .setNotifications(true)),
+            herdrAgents(blocked: true, finished: true, state: .on),
+            rexAgents(blocked: true, failed: true, finished: false, state: .mixed),
+            .toggle(title: "Sound", isOn: false, isEnabled: false, action: .setSound(true))
+        ])
+        await fixture.stop()
+    }
+
+    func testRexAgentsStaysAfterRexGoesHiddenOrUnavailableLaterInTheRun() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.discovery([rexFix]))
+        fixture.rex.send(.backendUnavailable("watcher exited"))
+        fixture.rex.send(.backendHidden)
+        await fixture.waitUntil { !fixture.store.activeBackends.contains(.rex) && fixture.store.everActiveBackends.contains(.rex) }
+
+        XCTAssertNotNil(rexAgentsNode(fixture.presentation().menu))
+        await fixture.stop()
+    }
+
+    /// Installed but never running: the CLI may resolve (server unreachable) and the backend
+    /// reports an outage, but it never emits `.discovery`, so the menu looks as before.
+    func testRexEnabledButNeverActiveShowsNoRexAgents() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.backendUnavailable("Rex is not running"))
+        fixture.herdr.send(.discovery([herdrWork]))
+        await fixture.waitUntil { fixture.store.everActiveBackends == [.herdr] && fixture.store.unavailableBackends[.rex] != nil }
+
+        XCTAssertNil(rexAgentsNode(fixture.presentation().menu))
+        fixture.rex.send(.backendHidden)
+        await fixture.waitUntil { fixture.store.unavailableBackends[.rex] == nil }
+        XCTAssertNil(rexAgentsNode(fixture.presentation().menu))
+        await fixture.stop()
+    }
+
+    func testStoredRexStatesShowRexAgentsWithoutActivityButOnlyWhenRexIsEnabled() async {
+        let stored = ["notifyStates.rex": ["done", "blocked", "error"]]
+        let enabled = RexPresentationFixture(stored: stored)
+        await enabled.start()
+        XCTAssertEqual(rexAgentsNode(enabled.presentation().menu),
+                       rexAgents(blocked: true, failed: true, finished: true, state: .on))
+        await enabled.stop()
+
+        let disabled = RexPresentationFixture(enabledBackends: ["herdr"], stored: stored)
+        await disabled.start()
+        disabled.rex.send(.discovery([]))
+        await disabled.waitUntil { disabled.store.everActiveBackends.contains(.rex) }
+        XCTAssertNil(rexAgentsNode(disabled.presentation().menu))
+        await disabled.stop()
+    }
+
+    func testHerdrAgentsHiddenWhenHerdrIsDisabled() async {
+        let fixture = RexPresentationFixture(enabledBackends: ["rex"])
+        await fixture.start()
+        fixture.rex.send(.discovery([]))
+        await fixture.waitUntil { fixture.store.everActiveBackends.contains(.rex) }
+
+        let area = notificationArea(fixture.presentation().menu)
+        XCTAssertEqual(area.count, 4)
+        XCTAssertEqual(area[2], rexAgents(blocked: true, failed: true, finished: false, state: .mixed))
+        await fixture.stop()
+    }
+
+    func testParentStateFollowsTheStoredStatesAndTogglesFlipOneState() async {
+        let fixture = RexPresentationFixture(enabledBackends: ["herdr"])
+        await fixture.start()
+
+        fixture.notifications.setNotifyState(.done, enabled: false, for: .herdr)
+        XCTAssertEqual(herdrAgentsNode(fixture.presentation().menu), herdrAgents(blocked: true, finished: false, state: .mixed))
+
+        fixture.notifications.setNotifyState(.blocked, enabled: false, for: .herdr)
+        XCTAssertEqual(herdrAgentsNode(fixture.presentation().menu), herdrAgents(blocked: false, finished: false, state: .off))
+
+        fixture.notifications.setNotifyState(.blocked, enabled: true, for: .herdr)
+        fixture.notifications.setNotifyState(.done, enabled: true, for: .herdr)
+        XCTAssertEqual(herdrAgentsNode(fixture.presentation().menu), herdrAgents(blocked: true, finished: true, state: .on))
+        await fixture.stop()
+    }
+
+    /// The submenu toggles stay usable while the main switch is off (they are stored preferences),
+    /// and the detached menu shows the same nodes.
+    func testDetachedMenuShowsTheSameNotifyStateSubmenus() async {
+        let fixture = RexPresentationFixture(stored: ["notifyStates.rex": ["error"]])
+        await fixture.start()
+        let presentation = fixture.presentation()
+
+        var shown: [[StatusMenuNode]] = []
+        let detached = DetachedMenuController(show: { nodes, _ in shown.append(nodes) }, cancel: {}, action: { _ in })
+        detached.apply(presentation)
+        detached.show()
+
+        XCTAssertEqual(shown, [presentation.menu])
+        XCTAssertEqual(rexAgentsNode(shown[0]), rexAgents(blocked: false, failed: true, finished: false, state: .mixed))
+        await fixture.stop()
+    }
+}
+
+private func herdrAgents(blocked: Bool, finished: Bool, state: MenuItemState) -> StatusMenuNode {
+    .submenu(title: "Herdr Agents", state: state, children: [
+        .toggle(title: "Blocked", isOn: blocked, isEnabled: true, action: .setNotifyState(.herdr, .blocked, !blocked)),
+        .toggle(title: "Finished", isOn: finished, isEnabled: true, action: .setNotifyState(.herdr, .done, !finished))
+    ])
+}
+
+private func rexAgents(blocked: Bool, failed: Bool, finished: Bool, state: MenuItemState) -> StatusMenuNode {
+    .submenu(title: "Rex Agents", state: state, children: [
+        .toggle(title: "Blocked", isOn: blocked, isEnabled: true, action: .setNotifyState(.rex, .blocked, !blocked)),
+        .toggle(title: "Failed", isOn: failed, isEnabled: true, action: .setNotifyState(.rex, .error, !failed)),
+        .toggle(title: "Finished", isOn: finished, isEnabled: true, action: .setNotifyState(.rex, .done, !finished))
+    ])
+}
+
+private func submenuNode(_ title: String, _ menu: [StatusMenuNode]) -> StatusMenuNode? {
+    menu.first { if case .submenu(title, _, _) = $0 { true } else { false } }
+}
+
+private func herdrAgentsNode(_ menu: [StatusMenuNode]) -> StatusMenuNode? { submenuNode("Herdr Agents", menu) }
+private func rexAgentsNode(_ menu: [StatusMenuNode]) -> StatusMenuNode? { submenuNode("Rex Agents", menu) }
+
+/// From the NOTIFICATIONS heading through the Sound toggle.
+private func notificationArea(_ menu: [StatusMenuNode]) -> [StatusMenuNode] {
+    guard let start = menu.firstIndex(of: .heading("NOTIFICATIONS")),
+          let end = menu.firstIndex(where: { if case .toggle("Sound", _, _, _) = $0 { true } else { false } })
+    else { return [] }
+    return Array(menu[start...end])
+}
+
 // MARK: - Fixtures
 
 private let rexFixKey = AgentSessionKey(backend: .rex, rawID: "s1")
@@ -434,10 +592,11 @@ final class RexPresentationFixture {
     let notifications: NotificationSettingsController
     let login = RexPresentationLoginItem()
 
-    init(enabledBackends: [String] = ["herdr", "rex"]) {
+    init(enabledBackends: [String]? = ["herdr", "rex"], stored: [String: Any] = [:]) {
         let suite = "dev.herdr.menubar.rex-presentation-tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defaults.set(enabledBackends, forKey: Preferences.enabledBackendsKey)
+        if let enabledBackends { defaults.set(enabledBackends, forKey: Preferences.enabledBackendsKey) }
+        stored.forEach { defaults.set($0.value, forKey: $0.key) }
         preferences = Preferences(defaults: defaults)
         let service = BackendStoreNotifications()
         notifications = NotificationSettingsController(service: service, preferences: preferences)

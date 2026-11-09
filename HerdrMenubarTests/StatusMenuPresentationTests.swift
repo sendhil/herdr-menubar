@@ -27,6 +27,11 @@ final class StatusMenuPresentationTests: XCTestCase {
                     title: "Notifications", isOn: false, isEnabled: true,
                     action: .setNotifications(true)
                 ),
+                // Step 3's one intentional Herdr-only change: the notification-states submenu.
+                .submenu(title: "Herdr Agents", state: .on, children: [
+                    .toggle(title: "Blocked", isOn: true, isEnabled: true, action: .setNotifyState(.herdr, .blocked, false)),
+                    .toggle(title: "Finished", isOn: true, isEnabled: true, action: .setNotifyState(.herdr, .done, false))
+                ]),
                 .toggle(
                     title: "Sound", isOn: false, isEnabled: false,
                     action: .setSound(true)

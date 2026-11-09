@@ -175,6 +175,7 @@ private extension StatusMenuPresentationBuilder {
             isEnabled: !notifications.isChanging,
             action: .setNotifications(!notifications.isEnabled)
         ))
+        nodes.append(contentsOf: notifyStateNodes(store: store, preferences: preferences, notifications: notifications))
         nodes.append(.toggle(
             title: "Sound",
             isOn: notifications.isSoundEnabled,
@@ -205,6 +206,48 @@ private extension StatusMenuPresentationBuilder {
         nodes.append(.separator)
         nodes.append(.action(title: "Quit", state: .off, isEnabled: true, action: .quit))
         return nodes
+    }
+
+    /// Per-backend notification states, between Notifications and Sound. Herdr's submenu shows
+    /// whenever Herdr is enabled; Rex's only when Rex is enabled and has been active in this run
+    /// (emitted `.discovery`) or `notifyStates.rex` is stored, so a Rex that is absent, or
+    /// installed but never running, adds nothing.
+    func notifyStateNodes(
+        store: AgentStore,
+        preferences: Preferences,
+        notifications: NotificationSettingsController
+    ) -> [StatusMenuNode] {
+        let enabled = preferences.enabledBackends
+        var nodes: [StatusMenuNode] = []
+        if enabled.contains(.herdr) {
+            nodes.append(notifyStateSubmenu(.herdr, states: [("Blocked", .blocked), ("Finished", .done)],
+                                            notifications: notifications))
+        }
+        if enabled.contains(.rex),
+           store.everActiveBackends.contains(.rex) || preferences.hasStoredNotifyStates(for: .rex) {
+            nodes.append(notifyStateSubmenu(.rex, states: [("Blocked", .blocked), ("Failed", .error), ("Finished", .done)],
+                                            notifications: notifications))
+        }
+        return nodes
+    }
+
+    func notifyStateSubmenu(
+        _ kind: BackendKind,
+        states: [(title: String, state: AttentionState)],
+        notifications: NotificationSettingsController
+    ) -> StatusMenuNode {
+        let selected = notifications.notifyStates(for: kind)
+        let onCount = states.filter { selected.contains($0.state) }.count
+        let parentState: MenuItemState = onCount == states.count ? .on : (onCount == 0 ? .off : .mixed)
+        return .submenu(
+            title: "\(kind.displayName) Agents",
+            state: parentState,
+            children: states.map { item in
+                let isOn = selected.contains(item.state)
+                return .toggle(title: item.title, isOn: isOn, isEnabled: true,
+                               action: .setNotifyState(kind, item.state, !isOn))
+            }
+        )
     }
 
     /// Clear Finished dismisses Rex finished rows and settled Rex error rows. It is shown when either
