@@ -135,6 +135,9 @@ actor RexBackend: AgentBackend {
         let cli: RexCLI
         var supervisionDeadline: ContinuousClock.Instant
         var snapshotDone = false
+        /// A late deadline already re-armed a grace window and no watcher line has arrived since;
+        /// another late fire is then a real timeout (bounds re-arming under App Nap).
+        var lateRearmed = false
         var waiter: CheckedContinuation<GenerationOutcome, Never>?
     }
 
@@ -189,6 +192,11 @@ actor RexBackend: AgentBackend {
         self.clock = clock
         self.hostName = hostName
         self.isEnabled = isEnabled
+    }
+
+    /// Normally `stop()` removes the wake observer; this covers a backend released without it.
+    deinit {
+        cancelWakeObservation?()
     }
 
     static let liveWatcherFactory: RexWatcherFactory = { cli, scriptURL, generation in
@@ -442,6 +450,7 @@ actor RexBackend: AgentBackend {
             guard let generation = current, event.generation == generation.id else { break }
             switch event {
             case .line(_, let data):
+                current?.lateRearmed = false   // any line, even an undecodable one, shows life
                 let line: RexWatcherLine
                 do {
                     line = try RexWatcherLine.decode(data)
@@ -539,10 +548,11 @@ actor RexBackend: AgentBackend {
         if !pendingProcessEvents.isEmpty { drainProcessEvents() }
         let now = clock.now
         if let generation = current, now >= generation.supervisionDeadline {
-            if now - deadline > Self.suspensionTolerance {
+            if now - deadline > Self.suspensionTolerance, !generation.lateRearmed {
                 // Fired long after its deadline: we were asleep, and so was the watcher.
                 AppLog.synchronization.info("Rex supervision deadline fired late; allowing a fresh grace window")
                 current?.supervisionDeadline = now + Self.graceWindow(snapshotDone: generation.snapshotDone)
+                current?.lateRearmed = true
             } else {
                 let reason = generation.snapshotDone
                     ? "The Rex watcher stopped responding"

@@ -268,11 +268,48 @@ final class RexBackendTests: XCTestCase {
         await waitForEvent { $0 == .backendUnavailable("Rex did not finish its snapshot in time") }
     }
 
+    func testSecondLateFireWithoutAnyWatcherLineFails() async {
+        await startHealthy()
+        await waitForSleep(.seconds(15))
+        clock.advance(.seconds(600))   // first late fire: fresh window
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(615)) }
+        XCTAssertTrue(unavailableReasons().isEmpty)
+        clock.advance(.seconds(600))   // late again, and the watcher said nothing: a hung watcher
+        await waitForEvent { $0 == .backendUnavailable("The Rex watcher stopped responding") }
+    }
+
+    func testAWatcherLineBetweenLateFiresAllowsAnotherReArm() async {
+        await startHealthy()
+        await waitForSleep(.seconds(15))
+        clock.advance(.seconds(600))
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(615)) }
+        clock.advance(.seconds(5))
+        watchers.last!.send(RexJSON.heartbeat)
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(620)) }
+        clock.advance(.seconds(600))   // late again, but the watcher spoke in between
+        await rexWaitUntil { clock.pendingOffsets.contains(.seconds(1220)) }
+        XCTAssertTrue(unavailableReasons().isEmpty, "\(unavailableReasons())")
+    }
+
     func testSlightlyLateDeadlineStillFails() async {
         await startHealthy()
         await waitForSleep(.seconds(15))
         clock.advance(.seconds(17))   // within the lateness tolerance: a real stall
         await waitForEvent { $0 == .backendUnavailable("The Rex watcher stopped responding") }
+    }
+
+    func testWakeObservationIsRemovedWhenTheBackendIsReleasedWithoutStop() async {
+        let wake = FakeRexWakeSignal()
+        var released: RexBackend? = RexBackend(
+            resolver: ThrowingResolver(), scriptURL: URL(fileURLWithPath: "/x.lua"), makeWatcher: watchers.factory,
+            runner: ScriptedProcessRunner(), app: FakeRexApp(), clock: clock, hostName: { nil },
+            observeWake: wake.subscribe, isEnabled: { true })
+        await released?.start()
+        XCTAssertEqual(wake.subscriberCount, 1)
+        weak var weakBackend = released
+        released = nil
+        await rexWaitUntil("backend released") { weakBackend == nil }
+        XCTAssertEqual(wake.subscriberCount, 0)
     }
 
     func testSystemWakeExtendsTheSupervisionDeadline() async {
@@ -669,6 +706,12 @@ final class RexTestGate: @unchecked Sendable {
         }
         waiters.forEach { $0.resume() }
     }
+}
+
+/// Resolution fails at once, so the supervision loop ends and holds no reference to the backend.
+final class ThrowingResolver: RexCLIResolving, @unchecked Sendable {
+    func resolve() async throws -> RexCLIResolution { throw CancellationError() }
+    func markFailed(path: String) async {}
 }
 
 final class BlockingResolver: RexCLIResolving, @unchecked Sendable {
