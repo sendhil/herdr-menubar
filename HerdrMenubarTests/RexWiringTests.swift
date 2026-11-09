@@ -126,8 +126,8 @@ final class RexWiringTests: XCTestCase {
 
     // MARK: Herdr-only visibility
 
-    func testHerdrOnlyOutputIsIdenticalWhenRexIsAbsentDisabledHiddenUnreachableOrStopped() async {
-        let baseline = await herdrOnlyRun(.absent)
+    func testHerdrOnlyOutputIsIdenticalWhenRexIsNotBuiltDisabledHiddenUnreachableOrStopped() async {
+        let baseline = await herdrOnlyRun(.herdrOnlyPreference)
 
         // Today's exact Herdr wording, badge, and states.
         XCTAssertEqual(baseline.map(\.presentation.menu.first), [
@@ -161,13 +161,13 @@ final class RexWiringTests: XCTestCase {
     }
 
     private enum HerdrOnlyVariant: CustomStringConvertible {
-        case absent, disabled, hidden, serverUnreachable, stoppedAfterActiveRun
+        case herdrOnlyPreference, disabled, hidden, serverUnreachable, stoppedAfterActiveRun
         var description: String {
             switch self {
-            case .absent: "absent"
-            case .disabled: "disabled"
-            case .hidden: "hidden (not installed)"
-            case .serverUnreachable: "installed but not running"
+            case .herdrOnlyPreference: "enabledBackends = herdr (Rex never constructed)"
+            case .disabled: "Rex backend present but disabled"
+            case .hidden: "default preferences, Rex not installed"
+            case .serverUnreachable: "default preferences, Rex installed but not running"
             case .stoppedAfterActiveRun: "stopped after an active run"
             }
         }
@@ -189,18 +189,20 @@ final class RexWiringTests: XCTestCase {
         let enabled: [String]?
         var backends: [any AgentBackend] = [herdr]
         switch variant {
-        case .absent:
+        case .herdrOnlyPreference:
+            // What `ApplicationRuntime.makeBackends` builds for this preference: Herdr alone.
             resolver = FakeRexResolver([.hidden])
-            enabled = nil
+            enabled = ["herdr"]
         case .disabled:
             resolver = FakeRexResolver([.hidden])
             enabled = ["herdr"]
         case .hidden:
+            // `enabledBackends` unset: both on (step 3), and a real RexBackend that finds no CLI.
             resolver = FakeRexResolver([.hidden])
-            enabled = ["herdr", "rex"]
+            enabled = nil
         case .serverUnreachable:
             resolver = FakeRexResolver([.serverUnreachable(cli)])
-            enabled = ["herdr", "rex"]
+            enabled = nil
         case .stoppedAfterActiveRun:
             resolver = FakeRexResolver([.ready(cli)])
             enabled = ["herdr", "rex"]
@@ -210,7 +212,7 @@ final class RexWiringTests: XCTestCase {
             runner: ScriptedProcessRunner(), app: FakeRexApp(), clock: ManualRexClock(),
             hostName: { "Studio" }, isEnabled: { variant != .disabled }
         )
-        if variant != .absent { backends.append(rex) }
+        if variant != .herdrOnlyPreference { backends.append(rex) }
 
         let preferences = wiringPreferences(enabled)
         let service = BackendStoreNotifications()
@@ -237,7 +239,7 @@ final class RexWiringTests: XCTestCase {
 
         await store.start()
         switch variant {
-        case .absent, .disabled:
+        case .herdrOnlyPreference, .disabled:
             await settleTasks()
         case .hidden:
             await rexWaitUntil { resolver.resolveCount >= 1 }
