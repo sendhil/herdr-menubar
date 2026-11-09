@@ -10,7 +10,7 @@ enum RexLines {
     struct Rec {
         var id = ""
         var state: String
-        var at: Int = 0
+        var at: Int? = 0
         var app: String? = nil
         var title: String? = nil
         var msg: String? = nil
@@ -58,7 +58,8 @@ enum RexLines {
                       via: [String: Any]? = nil) -> RexWatcherLine {
         var o: [String: Any] = ["t": "block", "s": s, "b": b]
         o["records"] = records.isEmpty ? [String: Any]() as Any : records.map { r -> [String: Any] in
-            var d: [String: Any] = ["id": r.id, "state": r.state, "at": ts(r.at)]
+            var d: [String: Any] = ["id": r.id, "state": r.state]
+            d["at"] = r.at.map(ts)
             d["app"] = r.app; d["title"] = r.title; d["msg"] = r.msg; d["kind"] = r.kind
             return d
         }

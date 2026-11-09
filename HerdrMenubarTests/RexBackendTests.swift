@@ -9,6 +9,7 @@ final class RexBackendTests: XCTestCase {
     private var resolver: FakeRexResolver!
     private var backend: RexBackend!
     private var recorder: BackendEventRecorder!
+    private var dismissalStore: any RexDismissalStoring = NoRexDismissalStore()
 
     override func setUp() {
         super.setUp()
@@ -32,6 +33,7 @@ final class RexBackendTests: XCTestCase {
             app: FakeRexApp(),
             clock: clock,
             hostName: { "Mac" },
+            dismissalStore: dismissalStore,
             isEnabled: { enabled }
         )
     }
@@ -202,6 +204,34 @@ final class RexBackendTests: XCTestCase {
         await rexWaitUntil { recorder.events.lastSnapshot("s1")?.rows.map(\.state) == [.attention(.done)] }
         await backend.clearFinished()
         await rexWaitUntil { recorder.events.lastSnapshot("s1")?.rows == [] }
+    }
+
+    func testDismissalsLoadAtStartAndAreSavedWhenTheyChange() async {
+        let old = RexDismissal(sessionID: "s1", blockID: "b1", recordID: "", state: "done", updatedAt: RexLines.micros(1))
+        let store = RecordingRexDismissalStore([old])
+        dismissalStore = store
+        await startHealthy(state: "done")
+        guard case .connected(_, let snapshot) = recorder.events.last else { return XCTFail("\(recorder.events)") }
+        XCTAssertEqual(snapshot.rows, [], "dismissed in an earlier launch")
+        XCTAssertEqual(store.loadCount, 1)
+
+        watchers.last!.send(RexJSON.block("s1", "b1", state: "done", at: 9, via: "working"))
+        await rexWaitUntil { recorder.events.lastSnapshot("s1")?.rows.map(\.state) == [.attention(.done)] }
+        XCTAssertEqual(store.saved.last, [], "the new emission dropped the dismissal")
+
+        await backend.clearFinished()
+        let new = RexDismissal(sessionID: "s1", blockID: "b1", recordID: "", state: "done", updatedAt: RexLines.micros(9))
+        XCTAssertEqual(store.saved.last, [new])
+
+        await backend.stop()
+        recorder = BackendEventRecorder(await backend.events())
+        await backend.start()
+        await waitForProcess(2)
+        watchers.last!.send(RexJSON.snapshot(state: "done", at: 9))
+        await waitForEvent(isConnected)
+        XCTAssertEqual(store.loadCount, 2)
+        guard case .connected(_, let relaunched) = recorder.events.last else { return XCTFail("\(recorder.events)") }
+        XCTAssertEqual(relaunched.rows, [])
     }
 
     // MARK: Supervision

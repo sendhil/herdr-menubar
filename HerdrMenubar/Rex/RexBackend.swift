@@ -119,6 +119,9 @@ actor RexBackend: AgentBackend {
     private let isEnabled: @Sendable () -> Bool
     private let observeWake: RexWakeSubscription
     private var cancelWakeObservation: (@Sendable () -> Void)?
+    private let dismissalStore: any RexDismissalStoring
+    /// The reducer's `dismissalsRevision` last saved (or loaded).
+    private var savedDismissalsRevision = 0
 
     private var continuation: AsyncStream<BackendEvent>.Continuation?
     private var reducer = RexReducer()
@@ -181,9 +184,11 @@ actor RexBackend: AgentBackend {
         clock: any RexBackendClock = LiveRexBackendClock(),
         hostName: @escaping @Sendable () -> String? = { Host.current().localizedName },
         observeWake: @escaping RexWakeSubscription = RexSystemWake.live,
+        dismissalStore: any RexDismissalStoring = NoRexDismissalStore(),
         isEnabled: @escaping @Sendable () -> Bool
     ) {
         self.observeWake = observeWake
+        self.dismissalStore = dismissalStore
         self.resolver = resolver
         self.scriptURL = scriptURL
         self.makeWatcher = makeWatcher
@@ -221,6 +226,8 @@ actor RexBackend: AgentBackend {
             yield(.backendHidden)
             return
         }
+        reducer.loadDismissals(dismissalStore.load())
+        savedDismissalsRevision = reducer.dismissalsRevision
         let owner = lifecycle
         cancelWakeObservation = observeWake { [weak self] in
             Task { await self?.systemDidWake() }
@@ -246,6 +253,7 @@ actor RexBackend: AgentBackend {
         continuation = nil
         // Reset before the first await, so a `start()` that runs during these awaits keeps its state.
         reducer.reset()
+        savedDismissalsRevision = reducer.dismissalsRevision
         backoffIndex = 0
         isHidden = false
         unavailableReason = nil
@@ -266,10 +274,19 @@ actor RexBackend: AgentBackend {
 
     func markSeen(_ token: SeenToken) async {
         emit(reducer.markSeen(token))
+        saveDismissalsIfChanged()
     }
 
     func clearFinished() async {
         emit(reducer.clearFinished())
+        saveDismissalsIfChanged()
+    }
+
+    /// Persists the reducer's dismissals when they changed since the last save or load.
+    private func saveDismissalsIfChanged() {
+        guard reducer.dismissalsRevision != savedDismissalsRevision else { return }
+        savedDismissalsRevision = reducer.dismissalsRevision
+        dismissalStore.save(reducer.dismissals)
     }
 
     nonisolated func compareSessions(_ lhs: AgentSessionDescriptor, _ rhs: AgentSessionDescriptor) -> Bool {
@@ -487,6 +504,7 @@ actor RexBackend: AgentBackend {
         }
 
         emit(RexEventCoalescer.coalesce(events))
+        saveDismissalsIfChanged()
         if let ended { finishGeneration(ended) }
         rearmTimer()
     }

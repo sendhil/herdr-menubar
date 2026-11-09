@@ -26,6 +26,8 @@
 		CC00000000000000000000B6 /* RexSeenStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000C6 /* RexSeenStateTests.swift */; };
 		CC00000000000000000000B7 /* RexFlapProtectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000C7 /* RexFlapProtectionTests.swift */; };
 		CC00000000000000000000B1 /* RexRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000C1 /* RexRows.swift */; };
+		DE0000000000000000000001 /* RexDismissalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE0000000000000000000011 /* RexDismissalStore.swift */; };
+		DE0000000000000000000002 /* RexDismissalPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE0000000000000000000012 /* RexDismissalPersistenceTests.swift */; };
 		CC0000000000000000000005 /* ManagedProcessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000015 /* ManagedProcessTests.swift */; };
 		CC0000000000000000000006 /* RexCLIResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000016 /* RexCLIResolverTests.swift */; };
 		CC0000000000000000000007 /* RexWatcherLineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000017 /* RexWatcherLineTests.swift */; };
@@ -146,6 +148,8 @@
 		CC00000000000000000000C6 /* RexSeenStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexSeenStateTests.swift; sourceTree = "<group>"; };
 		CC00000000000000000000C7 /* RexFlapProtectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexFlapProtectionTests.swift; sourceTree = "<group>"; };
 		CC00000000000000000000C1 /* RexRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexRows.swift; sourceTree = "<group>"; };
+		DE0000000000000000000011 /* RexDismissalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexDismissalStore.swift; sourceTree = "<group>"; };
+		DE0000000000000000000012 /* RexDismissalPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexDismissalPersistenceTests.swift; sourceTree = "<group>"; };
 		CC0000000000000000000015 /* ManagedProcessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedProcessTests.swift; sourceTree = "<group>"; };
 		CC0000000000000000000016 /* RexCLIResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexCLIResolverTests.swift; sourceTree = "<group>"; };
 		CC0000000000000000000017 /* RexWatcherLineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexWatcherLineTests.swift; sourceTree = "<group>"; };
@@ -240,6 +244,7 @@
 				CC0000000000000000000012 /* RexCLIResolver.swift */,
 				CC0000000000000000000013 /* RexWatcherLine.swift */,
 				CC00000000000000000000C1 /* RexRows.swift */,
+				DE0000000000000000000011 /* RexDismissalStore.swift */,
 				CC00000000000000000000C3 /* RexReducer.swift */,
 				CC00000000000000000000E1 /* RexBackend.swift */,
 				CC00000000000000000000E4 /* RexFocus.swift */,
@@ -320,6 +325,7 @@
 				CC00000000000000000000C2 /* RexRowsTests.swift */,
 				CC00000000000000000000C7 /* RexFlapProtectionTests.swift */,
 				CC00000000000000000000C6 /* RexSeenStateTests.swift */,
+				DE0000000000000000000012 /* RexDismissalPersistenceTests.swift */,
 				CC00000000000000000000C5 /* RexReducerTests.swift */,
 				CC00000000000000000000E3 /* RexBackendTests.swift */,
 				CC00000000000000000000E5 /* RexFocusTests.swift */,
@@ -599,6 +605,7 @@
 				CC0000000000000000000002 /* RexCLIResolver.swift in Sources */,
 				CC0000000000000000000003 /* RexWatcherLine.swift in Sources */,
 				CC00000000000000000000B1 /* RexRows.swift in Sources */,
+				DE0000000000000000000001 /* RexDismissalStore.swift in Sources */,
 				CC00000000000000000000B3 /* RexReducer.swift in Sources */,
 				CC00000000000000000000D1 /* RexBackend.swift in Sources */,
 				CC00000000000000000000D4 /* RexFocus.swift in Sources */,
@@ -661,6 +668,7 @@
 				CC00000000000000000000B2 /* RexRowsTests.swift in Sources */,
 				CC00000000000000000000B7 /* RexFlapProtectionTests.swift in Sources */,
 				CC00000000000000000000B6 /* RexSeenStateTests.swift in Sources */,
+				DE0000000000000000000002 /* RexDismissalPersistenceTests.swift in Sources */,
 				CC00000000000000000000B5 /* RexReducerTests.swift in Sources */,
 				CC00000000000000000000D3 /* RexBackendTests.swift in Sources */,
 				CC00000000000000000000D5 /* RexFocusTests.swift in Sources */,

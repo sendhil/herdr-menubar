@@ -67,6 +67,23 @@ struct RexReducer: Sendable {
     private var seenMarks: [RexRecordKey: Int] = [:]
     /// Settled epochs (flap protection). A record is in `attention` iff its current epoch is here.
     private var settled: [RexRecordKey: Int] = [:]
+    /// Persisted dismissals by record key: the state and `updated_at` a seen or cleared record had.
+    /// A record whose new epoch has exactly that state and `updated_at` starts out seen, so a
+    /// dismissal survives relaunches. Loaded from and saved to a `RexDismissalStoring` by
+    /// RexBackend. `order` ranks them for the cap (higher is newer).
+    private struct Dismissed: Sendable {
+        var state: String
+        var updatedAt: Int64
+        var order: Int
+    }
+
+    /// At most this many dismissals are kept; the oldest go first.
+    static let dismissalCap = 500
+
+    private var dismissed: [RexRecordKey: Dismissed] = [:]
+    private var dismissalOrder = 0
+    /// Bumped whenever `dismissals` changes, so RexBackend saves only real changes.
+    private(set) var dismissalsRevision = 0
     /// Set at the first successful `snapshot_done` since start, whose records all settle at once.
     private var hasCompletedFirstSnapshot = false
     /// Sessions the store has been told about with `.connected` and not yet `.removed`.
@@ -120,8 +137,8 @@ struct RexReducer: Sendable {
         isSnapshotDone = false
     }
 
-    /// `stop()`: forget everything except the epoch counter's value. The next generation's first
-    /// successful snapshot is a fresh "first".
+    /// `stop()`: forget everything except the epoch counter's value (dismissals too: `start()`
+    /// reloads them). The next generation's first successful snapshot is a fresh "first".
     mutating func reset() {
         let counter = epochCounter
         self = RexReducer()
@@ -257,13 +274,34 @@ struct RexReducer: Sendable {
 
     // MARK: Seen-state
 
+    /// Replaces the dismissals with `list` (oldest first; the newest `dismissalCap` are kept) and
+    /// hides any known record they match. Called by RexBackend at `start()`.
+    mutating func loadDismissals(_ list: [RexDismissal]) {
+        dismissed = [:]
+        for dismissal in list.suffix(Self.dismissalCap) {
+            dismissalOrder += 1
+            dismissed[dismissal.key] = Dismissed(state: dismissal.state, updatedAt: dismissal.updatedAt, order: dismissalOrder)
+        }
+        for (key, known) in lastKnown where matchesDismissal(key, state: known.state, updatedAt: known.updatedAt) {
+            seenMarks[key] = known.epoch
+        }
+    }
+
+    /// The dismissals to persist, oldest first.
+    var dismissals: [RexDismissal] {
+        dismissed.sorted { $0.value.order < $1.value.order }.map { key, value in
+            RexDismissal(sessionID: key.sessionID, blockID: key.blockID, recordID: key.recordID,
+                         state: value.state, updatedAt: value.updatedAt)
+        }
+    }
+
     /// Marks every `(record key, epoch)` in the token whose epoch is still current. Returns
     /// `.snapshot` events for sessions whose rows changed (none before `snapshot_done`).
     mutating func markSeen(_ token: SeenToken) -> [BackendEvent] {
         var affected: Set<String> = []
         for (key, known) in lastKnown where Self.isTerminal(known.state) && seenMarks[key] != known.epoch {
             guard token.marks.contains(Self.mark(key, epoch: known.epoch)) else { continue }
-            seenMarks[key] = known.epoch
+            dismiss(key, known)
             affected.insert(key.sessionID)
         }
         var output = RexReducerOutput()
@@ -280,9 +318,9 @@ struct RexReducer: Sendable {
                 for record in blockRecords[BlockKey(sessionID: sessionID, blockID: block.blockID)] ?? []
                 where record.programState == .done || record.programState == .error {
                     let key = recordKey(sessionID, block.blockID, record.id)
-                    guard let epoch = lastKnown[key]?.epoch, seenMarks[key] != epoch else { continue }
-                    if record.programState == .error, settled[key] != epoch { continue }
-                    seenMarks[key] = epoch
+                    guard let known = lastKnown[key], seenMarks[key] != known.epoch else { continue }
+                    if record.programState == .error, settled[key] != known.epoch { continue }
+                    dismiss(key, known)
                     affected.insert(sessionID)
                 }
             }
@@ -290,6 +328,46 @@ struct RexReducer: Sendable {
         var output = RexReducerOutput()
         emitChangedSnapshots(for: affected, into: &output)
         return output.events
+    }
+
+    /// Marks the record's current epoch seen and persists it by server identity. A record without
+    /// `updated_at` has no stable identity, so it is hidden for this run only.
+    private mutating func dismiss(_ key: RexRecordKey, _ known: LastKnown) {
+        seenMarks[key] = known.epoch
+        setDismissal(key, state: known.state, updatedAt: known.updatedAt, keepOrder: false)
+    }
+
+    private func matchesDismissal(_ key: RexRecordKey, state: String, updatedAt: Int64?) -> Bool {
+        guard let dismissal = dismissed[key], let updatedAt else { return false }
+        return dismissal.state == state && dismissal.updatedAt == updatedAt
+    }
+
+    /// Stores (or, with no `updatedAt`, removes) the dismissal for `key`, evicting the oldest
+    /// beyond the cap. `keepOrder` refreshes an existing entry without making it newer.
+    private mutating func setDismissal(_ key: RexRecordKey, state: String, updatedAt: Int64?, keepOrder: Bool) {
+        guard let updatedAt else {
+            removeDismissal(key)
+            return
+        }
+        let order: Int
+        if keepOrder, let existing = dismissed[key] {
+            guard existing.state != state || existing.updatedAt != updatedAt else { return }
+            order = existing.order
+        } else {
+            dismissalOrder += 1
+            order = dismissalOrder
+        }
+        dismissed[key] = Dismissed(state: state, updatedAt: updatedAt, order: order)
+        if dismissed.count > Self.dismissalCap,
+           let oldest = dismissed.min(by: { $0.value.order < $1.value.order })?.key {
+            dismissed[oldest] = nil
+        }
+        dismissalsRevision += 1
+    }
+
+    private mutating func removeDismissal(_ key: RexRecordKey) {
+        guard dismissed.removeValue(forKey: key) != nil else { return }
+        dismissalsRevision += 1
     }
 
     /// Number of live seen marks. For tests and diagnostics.
@@ -408,11 +486,22 @@ struct RexReducer: Sendable {
         if newEpoch || lastKnown[key] == nil {
             epochCounter += 1
             lastKnown[key] = LastKnown(state: state, updatedAt: updatedAt, epoch: epochCounter, epochStart: now)
-            seenMarks[key] = nil
             settled[key] = nil
+            // A persisted dismissal of exactly this emission (same state and `updated_at`) keeps
+            // it seen across relaunches; any other emission shows and drops the dismissal.
+            if matchesDismissal(key, state: state, updatedAt: updatedAt) {
+                seenMarks[key] = epochCounter
+            } else {
+                seenMarks[key] = nil
+                removeDismissal(key)
+            }
         } else {
             lastKnown[key]?.state = state
             lastKnown[key]?.updatedAt = updatedAt
+            // Same epoch, so a seen record stays seen; its dismissal follows the new `updated_at`.
+            if let known = lastKnown[key], seenMarks[key] == known.epoch {
+                setDismissal(key, state: state, updatedAt: updatedAt, keepOrder: true)
+            }
         }
     }
 
@@ -421,6 +510,11 @@ struct RexReducer: Sendable {
             lastKnown[key] = nil
             seenMarks[key] = nil
             settled[key] = nil
+        }
+        // Dismissals of records that no longer exist (including ones loaded at start and never
+        // seen this run: after a successful snapshot, those of unread-and-absent blocks).
+        for key in dismissed.keys where shouldDrop(key) {
+            removeDismissal(key)
         }
     }
 

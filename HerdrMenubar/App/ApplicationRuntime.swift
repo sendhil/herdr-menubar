@@ -191,7 +191,11 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
     }
 
     static func liveRexBackend(configuredCLIPath: String?) -> any AgentBackend {
-        RexBackend(resolver: RexCLIResolver(configuredPath: configuredCLIPath), isEnabled: { true })
+        RexBackend(
+            resolver: RexCLIResolver(configuredPath: configuredCLIPath),
+            dismissalStore: UserDefaultsRexDismissalStore(defaults: Preferences.applicationDefaults()),
+            isEnabled: { true }
+        )
     }
 
     static func shouldStartSynchronization(environment: [String: String]) -> Bool {
