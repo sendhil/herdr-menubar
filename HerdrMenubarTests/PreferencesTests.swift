@@ -197,6 +197,20 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
+    /// A malformed (non-array) value reads as absent for both the states and the stored flag.
+    func testMalformedScalarNotifyStatesCountAsAbsent() {
+        withDefaults { defaults in
+            defaults.set("blocked", forKey: "notifyStates.rex")
+            defaults.set(1, forKey: "notifyStates.herdr")
+            let preferences = Preferences(defaults: defaults)
+
+            XCTAssertFalse(preferences.hasStoredNotifyStates(for: .rex))
+            XCTAssertFalse(preferences.hasStoredNotifyStates(for: .herdr))
+            XCTAssertEqual(preferences.notifyStates[.rex], [.blocked, .error])
+            XCTAssertEqual(preferences.notifyStates[.herdr], [.blocked, .done])
+        }
+    }
+
     func testStoredNotifyStatesIgnoreUnknownValuesAndMayBeEmpty() {
         withDefaults { defaults in
             defaults.set(["blocked", "exploded"], forKey: "notifyStates.rex")
