@@ -93,18 +93,23 @@ final class RexWiringTests: XCTestCase {
         let work = AgentSessionDescriptor(key: .named("work"), displayName: "work")
         herdr.send(.discovery([work]))
         herdr.send(.connected(work, .empty))
-        await rexWaitUntil { watchers.processes.count == 1 && watchers.processes[0].started }
+        await rexWaitUntil(timeout: .seconds(10)) { watchers.processes.count == 1 && watchers.processes[0].started }
         watchers.last!.send(RexJSON.snapshot(state: "blocked"))
-        await rexWaitUntil { store.attentionCount == 1 && store.connectionState == .connected }
+        await rexWaitUntil(timeout: .seconds(10)) { store.attentionCount == 1 && store.connectionState == .connected }
 
         store.select(SelectionTarget(
             target: AgentTarget(session: AgentSessionKey(backend: .rex, rawID: "s1"), paneID: "b1"),
             sessionDisplayName: "work"
         ))
-        await rexWaitUntil("Rex focus child running") {
-            (try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        // A real /bin/sh child: allow for full-suite load, and poll until the pid file holds a
+        // complete, parseable pid (it is created empty before `echo` writes it).
+        var childPID: Int32?
+        await rexWaitUntil("Rex focus child running", timeout: .seconds(15)) {
+            childPID = (try? String(contentsOf: pidFile, encoding: .utf8))
+                .flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            return childPID != nil
         }
-        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let pid = try XCTUnwrap(childPID)
         defer { kill(pid, SIGKILL) }
         XCTAssertEqual(kill(pid, 0), 0, "the focus child is alive before supersession")
 
@@ -112,7 +117,7 @@ final class RexWiringTests: XCTestCase {
         await store.selectRow(.herdr(.named("work"), paneID: "p"))
 
         XCTAssertEqual(herdr.calls, ["start", "focus:p", "activate:p", "refresh:p"])
-        await rexWaitUntil("Rex focus child terminated") { kill(pid, 0) == -1 && errno == ESRCH }
+        await rexWaitUntil("Rex focus child terminated", timeout: .seconds(15)) { kill(pid, 0) == -1 && errno == ESRCH }
         XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
         XCTAssertEqual(app.activations, 0)
         XCTAssertNil(store.transientError)
