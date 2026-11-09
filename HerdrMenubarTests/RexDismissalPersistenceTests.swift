@@ -107,17 +107,53 @@ final class RexDismissalPersistenceTests: XCTestCase {
         XCTAssertEqual(h.reducer.dismissals, [])
     }
 
-    func testSuccessfulSnapshotPrunesDismissalsOfMissingRecordsButKeepsUnreadBlocks() {
+    /// Absence from a snapshot proves nothing (a restarting server may list only some sessions),
+    /// so only a successful read of the block that lacks the record removes its dismissal.
+    func testSnapshotKeepsDismissalsOfAbsentBlocksAndSessionsButDropsRecordsMissingFromARead() {
         let gone = dismissal("b1", id: "child")          // block read, record absent
-        let closed = dismissal("b9")                       // block absent from the snapshot
+        let absent = dismissal("b9")                       // block absent from the snapshot
         let unread = dismissal("b3")                       // block whose status read failed
         let otherSession = RexDismissal(sessionID: "s2", blockID: "b1", recordID: "", state: "done", updatedAt: 1)
-        let (h, _) = launch([gone, closed, unread, otherSession, dismissal()], lines(
+        let (h, _) = launch([gone, absent, unread, otherSession, dismissal()], lines(
             [L.Rec(state: "done", at: 1)],
             extra: [L.line(["t": "status_error", "s": "s1", "b": "b3", "err": "boom"])]
         ))
 
-        XCTAssertEqual(Set(h.reducer.dismissals), [unread, dismissal()])
+        XCTAssertEqual(Set(h.reducer.dismissals), [absent, unread, otherSession, dismissal()])
+    }
+
+    func testBlockClosedAndSessionDestroyedRemoveDismissals() {
+        let other = RexDismissal(sessionID: "s2", blockID: "b1", recordID: "", state: "done", updatedAt: 1)
+        var (h, _) = launch([dismissal(), dismissal("b9"), other], lines([L.Rec(state: "done", at: 1)]))
+
+        h.apply(L.line(["t": "block_closed", "s": "s1", "b": "b9"]))
+        XCTAssertEqual(Set(h.reducer.dismissals), [dismissal(), other])
+        h.apply(L.line(["t": "session_destroyed", "s": "s2"]))
+        XCTAssertEqual(h.reducer.dismissals, [dismissal()])
+        h.apply(L.line(["t": "block_closed", "s": "s1", "b": "b1"]))
+        XCTAssertEqual(h.reducer.dismissals, [])
+    }
+
+    func testGoneReadDoesNotRemoveTheDismissal() {
+        var (h, _) = launch([dismissal()], lines([L.Rec(state: "done", at: 1)]))
+        h.apply(L.block("s1", "b1", [], gone: true))
+        XCTAssertEqual(h.reducer.dismissals, [dismissal()], "block_closed decides; a 404 can be transient")
+    }
+
+    func testServerRestartWithAPartialSessionListKeepsTheDismissal() throws {
+        var (h, _) = launch([], lines([L.Rec(state: "done", at: 1)]))
+        h.reducer.markSeen(try XCTUnwrap(row(h, "b1")?.seenToken))
+
+        // The server restarts and its first snapshot lists no sessions yet.
+        h.restart()
+        h.apply(L.line(["t": "snapshot_done"]))
+        XCTAssertEqual(h.reducer.dismissals, [dismissal()])
+
+        // The session comes back with the same done record: still hidden.
+        h.restart()
+        h.apply(lines([L.Rec(state: "done", at: 1)]))
+        XCTAssertNil(row(h, "b1"))
+        XCTAssertEqual(h.reducer.dismissals, [dismissal()])
     }
 
     func testDismissalsBeforeAnySnapshotAreNotPruned() {

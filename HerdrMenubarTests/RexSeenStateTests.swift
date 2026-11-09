@@ -85,7 +85,9 @@ final class RexSeenStateTests: XCTestCase {
         h.apply(L.line(["t": "block_closed", "s": "s1", "b": "b2"]))
         XCTAssertEqual(h.reducer.seenMarkCount, 0)
 
-        h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 1)]))
+        // A recreated record is a new report with a new `updated_at` (the same one would be the
+        // same emission after a transient 404, which a persisted dismissal keeps hidden).
+        h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 2)]))
         XCTAssertEqual(row(h, "b1")?.state, .attention(.done), "a recreated record has a new epoch and shows")
     }
 

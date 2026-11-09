@@ -177,12 +177,14 @@ struct RexReducer: Sendable {
         case .blockClosed(let sessionID, let blockID):
             blockRecords[BlockKey(sessionID: sessionID, blockID: blockID)] = nil
             dropLastKnown { $0.sessionID == sessionID && $0.blockID == blockID }
+            removeDismissals { $0.sessionID == sessionID && $0.blockID == blockID }
             affected.insert(sessionID)
 
         case .sessionDestroyed(let sessionID):
             sessions[sessionID] = nil
             blockRecords = blockRecords.filter { $0.key.sessionID != sessionID }
             dropLastKnown { $0.sessionID == sessionID }
+            removeDismissals { $0.sessionID == sessionID }
             if isSnapshotDone, sessionsKnownToStore.remove(sessionID) != nil {
                 lastEmitted[sessionID] = nil
                 output.events.append(.removed(key(sessionID)))
@@ -492,8 +494,12 @@ struct RexReducer: Sendable {
         }
         blockRecords[BlockKey(sessionID: read.sessionID, blockID: read.blockID)] = current
 
-        // 3. Drop records absent from the read.
+        // 3. Drop records absent from the read. A successful read lacking a record also drops its
+        //    dismissal; a `gone` read (a 404, possibly transient) leaves that to `block_closed`.
         dropLastKnown { $0.sessionID == read.sessionID && $0.blockID == read.blockID && !seenIDs.contains($0.recordID) }
+        if !read.gone {
+            removeDismissals { $0.sessionID == read.sessionID && $0.blockID == read.blockID && !seenIDs.contains($0.recordID) }
+        }
     }
 
     private mutating func setLastKnown(_ key: RexRecordKey, state: String, updatedAt: Int64?, newEpoch: Bool,
@@ -526,9 +532,13 @@ struct RexReducer: Sendable {
             seenMarks[key] = nil
             settled[key] = nil
         }
-        // Dismissals of records that no longer exist (including ones loaded at start and never
-        // seen this run: after a successful snapshot, those of unread-and-absent blocks).
-        for key in dismissed.keys where shouldDrop(key) {
+    }
+
+    /// Dismissals go only on explicit evidence (block closed, session destroyed, a successful
+    /// read without the record or with another emission), never because a snapshot lacks them:
+    /// a restarting server may list only some sessions. The cap bounds what is left behind.
+    private mutating func removeDismissals(where shouldRemove: (RexRecordKey) -> Bool) {
+        for key in dismissed.keys where shouldRemove(key) {
             removeDismissal(key)
         }
     }
