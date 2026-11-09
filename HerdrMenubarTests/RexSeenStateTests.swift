@@ -89,18 +89,53 @@ final class RexSeenStateTests: XCTestCase {
         XCTAssertEqual(row(h, "b1")?.state, .finished, "a recreated record has a new epoch and shows")
     }
 
-    func testClearFinishedMarksVisibleDoneRecordsOnly() {
+    func testClearFinishedMarksVisibleDoneAndSettledErrorRecords() {
         var h = started([L.Rec(state: "done", at: 1)],
                         [L.Rec(state: "error", at: 1), L.Rec(id: "d", state: "done", at: 1)])
         h.apply(L.block("s1", "b3", [L.Rec(state: "done", at: 1)]))   // held: not in the view
 
         let events = h.reducer.clearFinished()
         XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(events.lastSnapshot("s1")?.rows.map(\.target.paneID), ["b2"])
-        XCTAssertEqual(h.reducer.seenMarkCount, 2, "both placed done records, not the error or the held block")
+        XCTAssertEqual(events.lastSnapshot("s1")?.rows.map(\.target.paneID), [])
+        XCTAssertEqual(h.reducer.seenMarkCount, 3, "both placed done records and the settled error, not the held block")
         XCTAssertNil(row(h, "b1"))
-        XCTAssertEqual(row(h, "b2")?.state, .attention(.error))
+        XCTAssertNil(row(h, "b2"), "the settled error is cleared too")
         XCTAssertEqual(h.reducer.clearFinished(), [])
+    }
+
+    func testClearFinishedDismissesASettledErrorAndDropsTheAttentionRow() throws {
+        var h = started([L.Rec(state: "working", at: 1)])
+        h.apply(L.block("s1", "b1", [L.Rec(state: "error", at: 2, app: "pi-subagents", title: "workflow", msg: "Failed")],
+                        via: L.changed("error", at: 2)))
+        h.advance(.seconds(2))
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.error))
+
+        let snapshot = try XCTUnwrap(h.reducer.clearFinished().lastSnapshot("s1"))
+        XCTAssertFalse(snapshot.rows.contains { if case .attention = $0.state { true } else { false } },
+                       "no attention row is left to hold the badge up")
+        XCTAssertNil(row(h, "b1"))
+    }
+
+    func testClearFinishedLeavesAnUnsettledErrorVisible() {
+        var h = started([L.Rec(state: "working", at: 1)])
+        h.apply(L.block("s1", "b1", [L.Rec(state: "error", at: 2)], via: L.changed("error", at: 2)))
+
+        XCTAssertEqual(h.reducer.clearFinished(), [])
+        XCTAssertEqual(h.reducer.seenMarkCount, 0, "an error still inside flap protection is not cleared")
+        h.advance(.seconds(2))
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.error))
+    }
+
+    func testErrorReportedAgainAfterClearFinishedShowsAgain() {
+        var h = started([L.Rec(state: "error", at: 1)])
+        h.reducer.clearFinished()
+        XCTAssertNil(row(h, "b1"))
+
+        h.apply(L.block("s1", "b1", [L.Rec(state: "working", at: 2)], via: L.changed("working", at: 2)))
+        let events = h.apply(L.block("s1", "b1", [L.Rec(state: "error", at: 3)], via: L.changed("error", at: 3))).events
+            + h.advance(.seconds(2))
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.error), "a new epoch shows again")
+        XCTAssertEqual(events.lastSnapshot("s1")?.attention.map(\.state), [.error], "and is reported for notification again")
     }
 
     func testMarksPersistAcrossGenerationsAndResetClearsThem() throws {

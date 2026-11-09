@@ -271,15 +271,17 @@ struct RexReducer: Sendable {
         return output.events
     }
 
-    /// Clear Finished: marks every unseen `done` record of every placed block.
+    /// Clear Finished: marks every unseen `done` record, and every unseen `error` record that has
+    /// settled (past flap protection), of every placed block. A later epoch shows again.
     mutating func clearFinished() -> [BackendEvent] {
         var affected: Set<String> = []
         for (sessionID, session) in sessions {
             for block in session.view?.blocks ?? [] {
                 for record in blockRecords[BlockKey(sessionID: sessionID, blockID: block.blockID)] ?? []
-                where record.programState == .done {
+                where record.programState == .done || record.programState == .error {
                     let key = recordKey(sessionID, block.blockID, record.id)
                     guard let epoch = lastKnown[key]?.epoch, seenMarks[key] != epoch else { continue }
+                    if record.programState == .error, settled[key] != epoch { continue }
                     seenMarks[key] = epoch
                     affected.insert(sessionID)
                 }
