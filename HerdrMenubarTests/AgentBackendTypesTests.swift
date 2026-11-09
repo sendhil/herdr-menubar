@@ -69,7 +69,7 @@ final class AgentBackendTypesTests: XCTestCase {
     func testVisibleLabelOmitsMissingOrDuplicateAgentLabel() {
         XCTAssertEqual(row("p", label: "api", agent: "claude", state: .working).visibleLabel, "api · claude")
         XCTAssertEqual(row("p", label: "claude", agent: "claude", state: .working).visibleLabel, "claude")
-        XCTAssertEqual(row("p", label: "Review", agent: nil, state: .finished).visibleLabel, "Review")
+        XCTAssertEqual(row("p", label: "Review", agent: nil, state: .attention(.done)).visibleLabel, "Review")
     }
 
     func testAttentionOrderRanksBlockedErrorDoneThenFoldedLabelThenPaneID() {

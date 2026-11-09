@@ -104,8 +104,6 @@ enum AttentionState: String, Sendable {
 enum RowState: Equatable, Sendable {
     /// NEEDS ATTENTION; counted in the badge.
     case attention(AttentionState)
-    /// FINISHED; not counted (Rex done).
-    case finished
     /// WORKING.
     case working
 }
@@ -154,7 +152,7 @@ struct AgentRow: Identifiable, Equatable, Sendable {
         case .attention(.blocked): 0
         case .attention(.error): 1
         case .attention(.done): 2
-        case .finished, .working: 3
+        case .working: 3
         }
     }
 }

@@ -53,7 +53,7 @@ final class RexSeenStateTests: XCTestCase {
         h2.apply(L.block("s1", "b1", [L.Rec(state: "error", at: 1, msg: "exit 2"), L.Rec(id: "c", state: "done", at: 2)],
                          via: L.changed(id: "c", "done", at: 2)))
         h2.reducer.markSeen(errorOnly)
-        XCTAssertEqual(row(h2, "b1")?.state, .finished)
+        XCTAssertEqual(row(h2, "b1")?.state, .attention(.done))
         XCTAssertEqual(row(h2, "b1")?.seenToken?.marks.count, 2, "the token still lists hidden records")
     }
 
@@ -62,7 +62,7 @@ final class RexSeenStateTests: XCTestCase {
         let token = try XCTUnwrap(row(h, "b1")?.seenToken)
         h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 3)], via: L.changed("working", at: 2)))
         XCTAssertEqual(h.reducer.markSeen(token), [])
-        XCTAssertEqual(row(h, "b1")?.state, .finished)
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done))
     }
 
     func testNewEpochShowsAgainAndPrunesTheMark() throws {
@@ -71,7 +71,7 @@ final class RexSeenStateTests: XCTestCase {
         XCTAssertNil(row(h, "b1"))
 
         let events = h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 3)], via: L.changed("working", at: 2))).events
-        XCTAssertEqual(events.lastSnapshot("s1")?.rows.map(\.state), [.finished])
+        XCTAssertEqual(events.lastSnapshot("s1")?.rows.map(\.state), [.attention(.done)])
         XCTAssertEqual(h.reducer.seenMarkCount, 0)
     }
 
@@ -86,7 +86,7 @@ final class RexSeenStateTests: XCTestCase {
         XCTAssertEqual(h.reducer.seenMarkCount, 0)
 
         h.apply(L.block("s1", "b1", [L.Rec(state: "done", at: 1)]))
-        XCTAssertEqual(row(h, "b1")?.state, .finished, "a recreated record has a new epoch and shows")
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done), "a recreated record has a new epoch and shows")
     }
 
     func testClearFinishedMarksVisibleDoneAndSettledErrorRecords() {
@@ -153,7 +153,7 @@ final class RexSeenStateTests: XCTestCase {
 
         h.reducer.reset()
         h.restart()
-        XCTAssertEqual(h.apply(lines).lastSnapshot("s1")?.rows.map(\.state), [.finished])
+        XCTAssertEqual(h.apply(lines).lastSnapshot("s1")?.rows.map(\.state), [.attention(.done)])
     }
 
     func testMarkSeenBeforeSnapshotDoneEmitsNothing() throws {

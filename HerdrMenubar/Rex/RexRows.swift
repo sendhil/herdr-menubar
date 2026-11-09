@@ -120,7 +120,7 @@ enum RexRows {
         case .blocked: .attention(.blocked)
         case .working: .working
         case .error: .attention(.error)
-        case .done: .finished
+        case .done: .attention(.done)
         case .idle: nil
         }
     }

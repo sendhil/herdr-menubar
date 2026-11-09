@@ -9,13 +9,13 @@ final class AgentStoreBackendTests: XCTestCase {
         let store = makeBackendStore([backend])
         await store.start()
         backend.send(.discovery([rexSession]))
-        backend.send(.connected(rexSession, BackendSnapshot(rows: [finishedRow], attention: [])))
-        await eventually { store.finishedSections.count == 1 }
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [doneRow], attention: [])))
+        await eventually { store.attentionSections.count == 1 }
 
-        await store.selectRow(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        await store.selectRow(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
 
         XCTAssertEqual(backend.calls, ["start", "focus:b1", "activate:b1", "markSeen", "refresh:b1"])
-        XCTAssertEqual(backend.markedTokens, [finishedToken])
+        XCTAssertEqual(backend.markedTokens, [doneToken])
         XCTAssertNil(store.transientError)
         await store.stop()
     }
@@ -25,10 +25,10 @@ final class AgentStoreBackendTests: XCTestCase {
         backend.activationResult = "Turn on Remote Control in Rex Settings → Rex Server to switch sessions."
         let store = makeBackendStore([backend])
         await store.start()
-        backend.send(.connected(rexSession, BackendSnapshot(rows: [finishedRow], attention: [])))
-        await eventually { store.finishedSections.count == 1 }
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [doneRow], attention: [])))
+        await eventually { store.attentionSections.count == 1 }
 
-        await store.selectRow(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        await store.selectRow(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
 
         XCTAssertEqual(backend.calls, ["start", "focus:b1", "activate:b1", "refresh:b1"])
         XCTAssertTrue(backend.markedTokens.isEmpty)
@@ -41,7 +41,7 @@ final class AgentStoreBackendTests: XCTestCase {
         backend.focusError = .failed("That pane no longer exists in fix-playback")
         let store = makeBackendStore([backend])
 
-        await store.selectRow(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        await store.selectRow(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
 
         XCTAssertEqual(backend.calls, ["focus:b1"])
         XCTAssertFalse(backend.calls.contains("retry"))
@@ -54,7 +54,7 @@ final class AgentStoreBackendTests: XCTestCase {
         backend.focusError = .unavailable("fix-playback is not reachable")
         let store = makeBackendStore([herdr, backend])
 
-        await store.selectRow(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        await store.selectRow(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
 
         XCTAssertEqual(backend.calls, ["focus:b1", "retry"])
         XCTAssertTrue(herdr.calls.isEmpty)
@@ -66,11 +66,11 @@ final class AgentStoreBackendTests: XCTestCase {
         backend.heldFocusPaneIDs = ["b1"]
         let store = makeBackendStore([backend])
         await store.start()
-        backend.send(.connected(rexSession, BackendSnapshot(rows: [finishedRow, attentionRow], attention: [])))
-        await eventually { store.finishedSections.count == 1 && store.attentionCount == 1 }
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [doneRow, attentionRow], attention: [])))
+        await eventually { store.attentionCount == 2 }
 
         let first = Task {
-            await store.selectRow(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+            await store.selectRow(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
         }
         await eventually { backend.calls.contains("focus:b1") }
         let second = Task {
@@ -100,7 +100,7 @@ final class AgentStoreBackendTests: XCTestCase {
 
         let selection = Task { await store.selectRow(.herdr(.named("work"), paneID: "p")) }
         await eventually { herdr.calls.contains("focus:p") }
-        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        store.select(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
         herdr.releaseHeldFocus()
         await selection.value
 
@@ -123,7 +123,7 @@ final class AgentStoreBackendTests: XCTestCase {
 
         let selection = Task { await store.selectRow(.herdr(.named("work"), paneID: "p")) }
         await eventually { herdr.calls.contains("focus:p") }
-        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        store.select(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
         XCTAssertEqual(store.transientError, "Rex is not available")
         herdr.releaseHeldFocus()
         await selection.value
@@ -133,16 +133,16 @@ final class AgentStoreBackendTests: XCTestCase {
         await store.stop()
     }
 
-    func testFinishedRowsFormTheirOwnSectionAndAreNotCounted() async {
+    func testRexDoneRowsAreCountedAttentionOrderedBlockedErrorDone() async {
         let backend = FakeAgentBackend(kind: .rex)
         let store = makeBackendStore([backend])
         await store.start()
-        backend.send(.connected(rexSession, BackendSnapshot(rows: [finishedRow, attentionRow, workingRow], attention: [])))
+        let errorRow = row(rexKey, "a-error", .attention(.error))
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [doneRow, errorRow, attentionRow, workingRow], attention: [])))
         await eventually { store.workingSections.count == 1 }
 
-        XCTAssertEqual(store.attentionCount, 1)
-        XCTAssertEqual(store.attentionSections.flatMap(\.items), [attentionRow])
-        XCTAssertEqual(store.finishedSections.flatMap(\.items), [finishedRow])
+        XCTAssertEqual(store.attentionCount, 3)
+        XCTAssertEqual(store.attentionSections.flatMap(\.items), [attentionRow, errorRow, doneRow])
         XCTAssertEqual(store.workingSections.flatMap(\.items), [workingRow])
         await store.stop()
     }
@@ -218,14 +218,14 @@ final class AgentStoreBackendTests: XCTestCase {
         let store = makeBackendStore([backend])
         await store.start()
 
-        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        store.select(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
         XCTAssertNil(store.transientError)
         backend.send(.backendHidden)
         await eventually { store.transientError == "Rex is not available" }
 
         backend.send(.discovery([rexSession]))
-        backend.send(.connected(rexSession, BackendSnapshot(rows: [finishedRow], attention: [])))
-        await eventually { store.finishedSections.count == 1 }
+        backend.send(.connected(rexSession, BackendSnapshot(rows: [doneRow], attention: [])))
+        await eventually { store.attentionSections.count == 1 }
         XCTAssertFalse(backend.calls.contains("focus:b1"))
         await store.stop()
     }
@@ -251,7 +251,7 @@ final class AgentStoreBackendTests: XCTestCase {
         let store = makeBackendStore([herdr], enabledBackends: ["herdr"])
         await store.start()
 
-        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        store.select(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
 
         XCTAssertEqual(store.transientError, "Rex is turned off")
         XCTAssertEqual(herdr.calls, ["start"])
@@ -263,7 +263,7 @@ final class AgentStoreBackendTests: XCTestCase {
         let store = makeBackendStore([herdr], enabledBackends: ["herdr", "rex"])
         await store.start()
 
-        store.select(SelectionTarget(target: finishedRow.target, sessionDisplayName: "fix-playback"))
+        store.select(SelectionTarget(target: doneRow.target, sessionDisplayName: "fix-playback"))
 
         XCTAssertEqual(store.transientError, "Rex is not available")
         await store.stop()
@@ -357,10 +357,10 @@ final class AgentStoreBackendTests: XCTestCase {
 private let rexKey = AgentSessionKey(backend: .rex, rawID: "s1")
 private let herdrWork = AgentSessionDescriptor(key: .named("work"), displayName: "work")
 private let rexSession = AgentSessionDescriptor(key: rexKey, displayName: "fix-playback")
-private let finishedToken = SeenToken(marks: ["s1/b1/:3"])
-private let finishedRow = AgentRow(
+private let doneToken = SeenToken(marks: ["s1/b1/:3"])
+private let doneRow = AgentRow(
     target: AgentTarget(session: rexKey, paneID: "b1"), displayLabel: "Review", agentLabel: "claude-code",
-    state: .finished, subtitle: "done · claude-code", seenToken: finishedToken
+    state: .attention(.done), subtitle: "done · claude-code", seenToken: doneToken
 )
 private let attentionRow = AgentRow(
     target: AgentTarget(session: rexKey, paneID: "b2"), displayLabel: "Playback", agentLabel: "pi",

@@ -37,7 +37,7 @@ final class RexReducerTests: XCTestCase {
         guard case .connected(let connected, let snapshot) = events.last else { return XCTFail("\(events)") }
         XCTAssertEqual(connected, descriptor)
         XCTAssertEqual(snapshot.rows.map(\.displayLabel), ["fix-playback", "Playback"])
-        XCTAssertEqual(snapshot.rows.map(\.state), [.finished, .attention(.blocked)])
+        XCTAssertEqual(snapshot.rows.map(\.state), [.attention(.done), .attention(.blocked)])
         XCTAssertEqual(snapshot.rows.map(\.subtitle), ["done · claude-code", "blocked · Allow rm -rf build?"])
         XCTAssertEqual(snapshot.attention.map(\.state), [.done, .blocked])
         XCTAssertEqual(snapshot.attention.last, AttentionRecord(
@@ -154,7 +154,7 @@ final class RexReducerTests: XCTestCase {
 
         let exited = h.apply(L.block("s1", "b1", [L.Rec(id: "child", state: "done", at: 1, app: "pi")],
                                      via: L.removed([""]))).events
-        XCTAssertEqual(exited.lastSnapshot("s1")?.rows.map(\.state), [.finished])
+        XCTAssertEqual(exited.lastSnapshot("s1")?.rows.map(\.state), [.attention(.done)])
         XCTAssertNil(h.reducer.epoch(of: rk("s1", "b1")))
         XCTAssertNotNil(h.reducer.epoch(of: rk("s1", "b1", "child")))
 

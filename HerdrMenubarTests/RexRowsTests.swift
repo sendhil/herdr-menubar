@@ -105,7 +105,7 @@ final class RexRowsTests: XCTestCase {
             seenToken: token
         ))
         XCTAssertEqual(row, AgentRow(target: AgentTarget(session: session, paneID: "block:1"), displayLabel: "Review",
-                                     agentLabel: "claude-code", state: .finished, subtitle: "done · claude-code", seenToken: token))
+                                     agentLabel: "claude-code", state: .attention(.done), subtitle: "done · claude-code", seenToken: token))
 
         func state(_ s: String) -> RowState? {
             RexRows.row(session: session, block: block(), sessionLabel: nil,

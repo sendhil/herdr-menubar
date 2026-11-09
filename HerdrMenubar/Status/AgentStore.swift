@@ -34,7 +34,6 @@ private struct SessionPresentationState {
     var unavailableMessage: String?
     private(set) var rows: [AgentRow] = []
     private(set) var attentionRows: [AgentRow] = []
-    private(set) var finishedRows: [AgentRow] = []
     private(set) var workingRows: [AgentRow] = []
 
     init(descriptor: AgentSessionDescriptor) {
@@ -45,7 +44,6 @@ private struct SessionPresentationState {
     mutating func setRows(_ newRows: [AgentRow]) {
         rows = newRows
         attentionRows = newRows.filter(\.isAttention).sorted(by: AgentRow.attentionOrder)
-        finishedRows = newRows.filter { $0.state == .finished }.sorted(by: AgentRow.labelOrder)
         workingRows = newRows.filter { $0.state == .working }.sorted(by: AgentRow.labelOrder)
     }
 }
@@ -104,7 +102,6 @@ final class AgentStore {
     var wording: AgentWording { activeBackends.contains(.rex) ? .agents : .herdr }
 
     var attentionSections: [SessionMenuSection] { sections(\.attentionRows) }
-    var finishedSections: [SessionMenuSection] { sections(\.finishedRows) }
     var workingSections: [SessionMenuSection] { sections(\.workingRows) }
 
     var unavailableSessions: [UnavailableSession] {
@@ -278,7 +275,7 @@ final class AgentStore {
         }
     }
 
-    /// Clear Finished: every enabled backend marks its visible finished rows seen.
+    /// Clear Finished: every enabled backend marks its visible done (and settled Rex error) rows seen.
     func clearFinished() async {
         let enabled = preferences.enabledBackends
         let targets = backends.filter { enabled.contains($0.kind) }

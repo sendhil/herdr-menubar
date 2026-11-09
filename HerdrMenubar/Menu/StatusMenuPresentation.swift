@@ -104,21 +104,12 @@ private extension StatusMenuPresentationBuilder {
         var nodes: [StatusMenuNode] = []
 
         let showsBackendPrefix = store.showsBackendPrefix
-        let clearItem = clearFinishedNode(attention: store.attentionSections, finished: store.finishedSections)
         appendAgentSections(
             store.attentionSections,
             heading: "NEEDS ATTENTION",
             quieter: false,
             showsBackendPrefix: showsBackendPrefix,
-            trailing: store.finishedSections.isEmpty ? clearItem : nil,
-            to: &nodes
-        )
-        appendAgentSections(
-            store.finishedSections,
-            heading: "FINISHED",
-            quieter: false,
-            showsBackendPrefix: showsBackendPrefix,
-            trailing: clearItem,
+            trailing: clearFinishedNode(attention: store.attentionSections),
             to: &nodes
         )
         appendAgentSections(
@@ -131,8 +122,7 @@ private extension StatusMenuPresentationBuilder {
 
         if let connectionNode = connectionNode(
             state: store.connectionState,
-            hasPresentedAgents: !store.attentionSections.isEmpty || !store.finishedSections.isEmpty
-                || !store.workingSections.isEmpty,
+            hasPresentedAgents: !store.attentionSections.isEmpty || !store.workingSections.isEmpty,
             wording: wording
         ) {
             nodes.append(connectionNode)
@@ -250,13 +240,12 @@ private extension StatusMenuPresentationBuilder {
         )
     }
 
-    /// Clear Finished dismisses Rex finished rows and settled Rex error rows. It is shown when either
-    /// exists, at the end of FINISHED, or of NEEDS ATTENTION when there is no FINISHED section.
-    func clearFinishedNode(attention: [SessionMenuSection], finished: [SessionMenuSection]) -> StatusMenuNode? {
-        let hasRexError = attention.contains { section in
-            section.session.key.backend == .rex && section.items.contains { $0.state == .attention(.error) }
-        }
-        guard hasRexError || !finished.isEmpty else { return nil }
+    /// Clear Finished dismisses Rex done rows and settled Rex error rows. It is shown at the end of
+    /// NEEDS ATTENTION when a Rex done or error row exists; Herdr rows never show it.
+    func clearFinishedNode(attention: [SessionMenuSection]) -> StatusMenuNode? {
+        let rexStates = attention.filter { $0.session.key.backend == .rex }.flatMap { $0.items.map(\.state) }
+        let hasRexError = rexStates.contains(.attention(.error))
+        guard hasRexError || rexStates.contains(.attention(.done)) else { return nil }
         return .action(
             title: hasRexError ? "Clear Finished and Failed" : "Clear Finished",
             state: .off,
@@ -356,7 +345,7 @@ private extension StatusMenuPresentationBuilder {
             "exclamationmark.triangle.fill"
         case .attention(.error):
             "xmark.octagon"
-        case .attention(.done), .finished:
+        case .attention(.done):
             "checkmark.circle.fill"
         case .working:
             "ellipsis.circle"
