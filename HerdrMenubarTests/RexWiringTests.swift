@@ -8,8 +8,22 @@ import XCTest
 final class RexWiringTests: XCTestCase {
     // MARK: Wiring
 
-    func testDefaultPreferencesBuildHerdrOnlyAndNeverConstructRex() {
+    /// Step 3: with `enabledBackends` absent, both backends are built (default-on).
+    func testDefaultPreferencesBuildHerdrAndRex() {
         let preferences = wiringPreferences(nil)
+        var rexBuilds = 0
+
+        let backends = ApplicationRuntime.makeBackends(
+            preferences: preferences, herdr: FakeAgentBackend(kind: .herdr),
+            makeRex: { _ in rexBuilds += 1; return FakeAgentBackend(kind: .rex) }
+        )
+
+        XCTAssertEqual(backends.map(\.kind), [.herdr, .rex])
+        XCTAssertEqual(rexBuilds, 1)
+    }
+
+    func testHerdrOnlyPreferenceNeverConstructsRex() {
+        let preferences = wiringPreferences(["herdr"])
         var rexBuilds = 0
 
         let backends = ApplicationRuntime.makeBackends(
@@ -175,7 +189,7 @@ final class RexWiringTests: XCTestCase {
             enabled = nil
         case .disabled:
             resolver = FakeRexResolver([.hidden])
-            enabled = nil
+            enabled = ["herdr"]
         case .hidden:
             resolver = FakeRexResolver([.hidden])
             enabled = ["herdr", "rex"]

@@ -174,9 +174,10 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         return runtime
     }
 
-    /// Herdr always; Rex only when `enabledBackends` contains it (off by default in step 2), so a
-    /// Herdr-only install never constructs, resolves, or spawns anything for Rex. Called once per
-    /// app launch, so there is one Rex CLI resolver per launch.
+    /// Herdr always; Rex when `enabledBackends` contains it (the default since step 3). Without a
+    /// Rex install the Rex backend stays hidden (file checks, no shell probe without Rex.app); with
+    /// `enabledBackends` set to `herdr` alone nothing is constructed, resolved, or spawned for Rex.
+    /// Called once per app launch, so there is one Rex CLI resolver per launch.
     static func makeBackends(
         preferences: Preferences,
         herdr: any AgentBackend,

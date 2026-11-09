@@ -10,7 +10,7 @@ final class Preferences {
     static let notificationsEnabledKey = "notificationsEnabled"
     static let notificationSoundEnabledKey = "notificationSoundEnabled"
     static let enabledBackendsKey = "enabledBackends"
-    static let defaultEnabledBackends: Set<BackendKind> = [.herdr]
+    static let defaultEnabledBackends: Set<BackendKind> = [.herdr, .rex]
     static let rexCLIPathKey = "rexCLIPath"
 
     static func notifyStatesKey(for kind: BackendKind) -> String {

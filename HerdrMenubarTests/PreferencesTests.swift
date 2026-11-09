@@ -133,11 +133,27 @@ final class PreferencesTests: XCTestCase {
         withDefaults { defaults in
             let preferences = Preferences(defaults: defaults)
 
-            XCTAssertEqual(preferences.enabledBackends, [.herdr])
+            // Step 3: an absent `enabledBackends` means both backends.
+            XCTAssertEqual(preferences.enabledBackends, [.herdr, .rex])
+            XCTAssertEqual(Preferences.defaultEnabledBackends, [.herdr, .rex])
             XCTAssertEqual(preferences.notifyStates, [.herdr: [.blocked, .done], .rex: [.blocked, .error]])
             XCTAssertNil(defaults.object(forKey: "enabledBackends"))
             XCTAssertNil(defaults.object(forKey: "notifyStates.herdr"))
             XCTAssertNil(defaults.object(forKey: "notifyStates.rex"))
+        }
+    }
+
+    func testStoredEnabledBackendsAreRespectedOverTheDefault() {
+        withDefaults { defaults in
+            defaults.set(["herdr"], forKey: "enabledBackends")
+            XCTAssertEqual(Preferences(defaults: defaults).enabledBackends, [.herdr])
+
+            defaults.set(["rex"], forKey: "enabledBackends")
+            XCTAssertEqual(Preferences(defaults: defaults).enabledBackends, [.rex])
+
+            defaults.removeObject(forKey: "enabledBackends")
+            XCTAssertEqual(Preferences(defaults: defaults).enabledBackends, [.herdr, .rex])
+            XCTAssertNil(defaults.object(forKey: "enabledBackends"))
         }
     }
 

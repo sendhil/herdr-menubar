@@ -44,11 +44,32 @@ Native notifications are opt-in. Turn on **Notifications** in the Herdr Menubar 
 
 After that baseline, each distinct transition into `blocked` or `done` creates one notification for that pane. A change from `blocked` to `done`, or from `done` to `blocked`, creates another notification because the two states call for different attention. Repeated snapshots and an unchanged reconnect do not create duplicates. **Sound** is a separate opt-in setting, defaults off, and is unavailable while Notifications is off.
 
+**Notification states (new in this version).** Below **Notifications**, a **Herdr Agents** submenu chooses which Herdr states notify: **Blocked** and **Finished**, both on by default. This submenu is the one intentional visible change for Herdr-only installs. When Rex support is active (see [Rex support](#rex-support)), a **Rex Agents** submenu offers **Blocked**, **Failed**, and **Finished**; Blocked and Failed are on by default. Each parent item shows a checkmark when every state is on, a dash when some are, and nothing when none are. **Notifications** remains the main switch and **Sound** stays app-wide. Clicking a state closes the menu, as native menus do. Unchecked states still update notification history, so turning one back on does not replay old transitions.
+
 Clicking a notification uses the same exact-session focus path as selecting a menu row: it focuses the identified pane in its owning Herdr session and, when Ghostty is selected, focuses that session's exact existing attached Ghostty surface. The latest-notification shortcut uses this same route. Neither route opens a replacement terminal or chooses another session when the original target is unavailable.
 
 Notification labels are visible to macOS and follow the notification-preview choices in System Settings. The menu toggles record local app intent; macOS notification settings, Focus modes, and sound settings can still suppress presentation or sound. If permission is later disabled in System Settings, Herdr monitoring and the menu badge continue to work.
 
 The menu is status-first: **Needs Attention** and **Working** are the top-level sections, with **Default** followed by named-session groups inside each section. The menu-bar badge is the total number of `blocked` and `done` agents across connected sessions. An unavailable session's last-known state is removed from the badge and menu immediately, without disturbing healthy sessions.
+
+## Rex support
+
+Herdr Menubar also monitors agents running in [Rex](https://www.superlogical.com/rex/docs), alongside Herdr, in the same menu and badge. Rex support is on by default but does nothing visible unless Rex is installed:
+
+- **Requires Rex.** The app looks for the `rex` CLI bundled with the Rex server (`~/Library/Application Support/com.superlogical.rex/RexServer/Versions/*/…/rex`), then `/opt/homebrew/bin/rex`, `/usr/local/bin/rex`, and `~/.local/bin/rex`. A login-shell `command -v rex` probe runs at most once per launch and only when Rex.app is installed. Without Rex the menu looks exactly as before, apart from the **Herdr Agents** submenu; with Rex installed but never running, likewise.
+- **Rows.** Blocked and failed Rex agents appear under **Needs Attention** and count toward the badge. Finished Rex agents appear under **Finished** (not counted, because Rex keeps `done` until it is replaced); **Clear Finished** (or **Clear Finished and Failed**) dismisses them for this app run. Working Rex agents appear under **Working**.
+- **Switching sessions needs Remote Control.** Selecting a Rex row focuses the block on the Rex server and then asks the connected Rex app to show that session. The second step needs **Remote Control** enabled in the Rex app; without it the block is focused but the app shows a partial-focus message instead of switching.
+
+Rex preferences are read once at launch and set with `defaults write dev.herdr.menubar …`:
+
+| Key | Type | Absent means |
+| --- | --- | --- |
+| `enabledBackends` | array of `herdr`, `rex` | both (`defaults write dev.herdr.menubar enabledBackends -array herdr` turns Rex off) |
+| `rexCLIPath` | string | resolve the Rex CLI automatically |
+| `notifyStates.herdr` | array of `blocked`, `done` | `blocked`, `done` (written by the **Herdr Agents** submenu) |
+| `notifyStates.rex` | array of `blocked`, `error`, `done` | `blocked`, `error` (written by the **Rex Agents** submenu) |
+
+The **Rex Agents** submenu appears only when Rex is enabled and has been active during this app run, or when `notifyStates.rex` is already stored.
 
 ## Global keyboard shortcuts
 
@@ -245,6 +266,8 @@ The app persists these preferences:
 - Launch at Login intent.
 - Notifications intent.
 - Notification sound intent.
+- Per-backend notification states (`notifyStates.herdr`, `notifyStates.rex`), written only when changed.
+- `enabledBackends` and `rexCLIPath`, read only (set with `defaults write`; see [Rex support](#rex-support)).
 - Toggle-menu shortcut assignment.
 - Latest-notification shortcut assignment.
 
