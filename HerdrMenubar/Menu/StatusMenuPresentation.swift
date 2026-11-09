@@ -101,11 +101,13 @@ private extension StatusMenuPresentationBuilder {
         var nodes: [StatusMenuNode] = []
 
         let showsBackendPrefix = store.showsBackendPrefix
+        let clearItem = clearFinishedNode(attention: store.attentionSections, finished: store.finishedSections)
         appendAgentSections(
             store.attentionSections,
             heading: "NEEDS ATTENTION",
             quieter: false,
             showsBackendPrefix: showsBackendPrefix,
+            trailing: store.finishedSections.isEmpty ? clearItem : nil,
             to: &nodes
         )
         appendAgentSections(
@@ -113,7 +115,7 @@ private extension StatusMenuPresentationBuilder {
             heading: "FINISHED",
             quieter: false,
             showsBackendPrefix: showsBackendPrefix,
-            trailing: .action(title: "Clear Finished", state: .off, isEnabled: true, action: .clearFinished),
+            trailing: clearItem,
             to: &nodes
         )
         appendAgentSections(
@@ -200,6 +202,21 @@ private extension StatusMenuPresentationBuilder {
         nodes.append(.separator)
         nodes.append(.action(title: "Quit", state: .off, isEnabled: true, action: .quit))
         return nodes
+    }
+
+    /// Clear Finished dismisses Rex finished rows and settled Rex error rows. It is shown when either
+    /// exists, at the end of FINISHED, or of NEEDS ATTENTION when there is no FINISHED section.
+    func clearFinishedNode(attention: [SessionMenuSection], finished: [SessionMenuSection]) -> StatusMenuNode? {
+        let hasRexError = attention.contains { section in
+            section.session.key.backend == .rex && section.items.contains { $0.state == .attention(.error) }
+        }
+        guard hasRexError || !finished.isEmpty else { return nil }
+        return .action(
+            title: hasRexError ? "Clear Finished and Failed" : "Clear Finished",
+            state: .off,
+            isEnabled: true,
+            action: .clearFinished
+        )
     }
 
     func appendAgentSections(
