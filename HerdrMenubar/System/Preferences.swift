@@ -63,8 +63,16 @@ final class Preferences {
     /// One entry per backend. Absent keys use `BackendKind.defaultNotifyStates` and are not written.
     private(set) var notifyStates: [BackendKind: Set<AttentionState>]
 
+    /// Backends whose `notifyStates.<backend>` key is present (written by the user or `defaults write`).
+    private var storedNotifyStateBackends: Set<BackendKind>
+
+    func hasStoredNotifyStates(for kind: BackendKind) -> Bool {
+        storedNotifyStateBackends.contains(kind)
+    }
+
     func setNotifyStates(_ states: Set<AttentionState>, for kind: BackendKind) {
         notifyStates[kind] = states
+        storedNotifyStateBackends.insert(kind)
         defaults.set(states.map(\.rawValue).sorted(), forKey: Self.notifyStatesKey(for: kind))
     }
 
@@ -86,6 +94,9 @@ final class Preferences {
             ?? Self.defaultEnabledBackends
         rexCLIPath = defaults.string(forKey: Self.rexCLIPathKey)
             .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        storedNotifyStateBackends = Set(BackendKind.allCases.filter {
+            defaults.object(forKey: Self.notifyStatesKey(for: $0)) != nil
+        })
         notifyStates = Dictionary(uniqueKeysWithValues: BackendKind.allCases.map { kind in
             let stored = defaults.stringArray(forKey: Self.notifyStatesKey(for: kind))
                 .map { Set($0.compactMap(AttentionState.init(rawValue:))) }

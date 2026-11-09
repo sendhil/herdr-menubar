@@ -97,6 +97,20 @@ final class NotificationSettingsController {
         preferences.notificationSoundEnabled = enabled
     }
 
+    /// The states that notify for `kind` (stored, else `BackendKind.defaultNotifyStates`).
+    func notifyStates(for kind: BackendKind) -> Set<AttentionState> {
+        preferences.notifyStates[kind] ?? kind.defaultNotifyStates
+    }
+
+    /// Turns one state on or off for `kind`. Independent of the main switch; writes
+    /// `notifyStates.<backend>` only when the set actually changes.
+    func setNotifyState(_ state: AttentionState, enabled: Bool, for kind: BackendKind) {
+        var states = notifyStates(for: kind)
+        if enabled { states.insert(state) } else { states.remove(state) }
+        guard states != notifyStates(for: kind) else { return }
+        preferences.setNotifyStates(states, for: kind)
+    }
+
     private var notificationsBlockedBySystem: Bool {
         systemSettings.authorization == .denied
             || (systemSettings.authorization == .authorized && !systemSettings.alertsEnabled)

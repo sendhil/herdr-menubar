@@ -15,6 +15,45 @@ final class NotificationSettingsControllerTests: XCTestCase {
         XCTAssertNil(fixture.controller.helpText)
     }
 
+    /// Spec "Preferences": `notifyStates(for:)` / `setNotifyState(_:enabled:for:)` over
+    /// `Preferences.setNotifyStates`; absent keys use the backend defaults and are not written.
+    func testNotifyStatesReadDefaultsAndToggleOneStateAtATime() {
+        let fixture = makeFixture()
+        defer { fixture.removeDefaults() }
+
+        XCTAssertEqual(fixture.controller.notifyStates(for: .herdr), [.blocked, .done])
+        XCTAssertEqual(fixture.controller.notifyStates(for: .rex), [.blocked, .error])
+        XCTAssertNil(fixture.defaults.object(forKey: "notifyStates.herdr"))
+
+        fixture.controller.setNotifyState(.done, enabled: false, for: .herdr)
+        XCTAssertEqual(fixture.controller.notifyStates(for: .herdr), [.blocked])
+        XCTAssertEqual(fixture.preferences.notifyStates[.herdr], [.blocked])
+        XCTAssertEqual(fixture.defaults.stringArray(forKey: "notifyStates.herdr"), ["blocked"])
+        XCTAssertNil(fixture.defaults.object(forKey: "notifyStates.rex"))
+
+        fixture.controller.setNotifyState(.done, enabled: true, for: .rex)
+        XCTAssertEqual(fixture.controller.notifyStates(for: .rex), [.blocked, .done, .error])
+        XCTAssertEqual(fixture.defaults.stringArray(forKey: "notifyStates.rex"), ["blocked", "done", "error"])
+
+        fixture.controller.setNotifyState(.blocked, enabled: false, for: .herdr)
+        XCTAssertEqual(fixture.controller.notifyStates(for: .herdr), [])
+        XCTAssertEqual(fixture.defaults.stringArray(forKey: "notifyStates.herdr"), [])
+        // Independent of the main switch and of authorization.
+        XCTAssertFalse(fixture.controller.isEnabled)
+        XCTAssertEqual(Preferences(defaults: fixture.defaults).notifyStates[.herdr], [])
+    }
+
+    func testSettingAStateToItsCurrentValueDoesNotWriteTheKey() {
+        let fixture = makeFixture()
+        defer { fixture.removeDefaults() }
+
+        fixture.controller.setNotifyState(.blocked, enabled: true, for: .rex)
+        fixture.controller.setNotifyState(.done, enabled: false, for: .rex)
+
+        XCTAssertNil(fixture.defaults.object(forKey: "notifyStates.rex"))
+        XCTAssertFalse(fixture.preferences.hasStoredNotifyStates(for: .rex))
+    }
+
     func testEnablePersistsAfterGrantedAuthorizedRequest() async throws {
         let fixture = makeFixture(authorizationResult: true, settings: .authorized)
         defer { fixture.removeDefaults() }

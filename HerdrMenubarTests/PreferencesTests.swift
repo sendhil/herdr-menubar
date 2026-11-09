@@ -169,6 +169,18 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
+    func testHasStoredNotifyStatesTracksThePresenceOfEachKey() {
+        withDefaults { defaults in
+            defaults.set([String](), forKey: "notifyStates.rex")
+            let preferences = Preferences(defaults: defaults)
+            XCTAssertTrue(preferences.hasStoredNotifyStates(for: .rex))
+            XCTAssertFalse(preferences.hasStoredNotifyStates(for: .herdr))
+
+            preferences.setNotifyStates([.blocked], for: .herdr)
+            XCTAssertTrue(preferences.hasStoredNotifyStates(for: .herdr))
+        }
+    }
+
     func testStoredNotifyStatesIgnoreUnknownValuesAndMayBeEmpty() {
         withDefaults { defaults in
             defaults.set(["blocked", "exploded"], forKey: "notifyStates.rex")
