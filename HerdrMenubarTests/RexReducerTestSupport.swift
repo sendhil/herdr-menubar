@@ -89,6 +89,9 @@ struct RexReducerHarness {
 
     init(generation: Int = 1) {
         self.generation = generation
+        // The wall clock at the test time base, so no hand-written record predates the first
+        // snapshot unless a test moves the clock (late-read baselines).
+        reducer.wallClock = { RexLines.micros(0) }
         reducer.beginGeneration(generation)
     }
 

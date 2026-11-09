@@ -228,6 +228,108 @@ final class RexDismissalPersistenceTests: XCTestCase {
         XCTAssertEqual(h.reducer.dismissals, [], "stop() resets; start() reloads from the store")
     }
 
+    // MARK: Late-read blocks (unreadable at the first snapshot, read by a later retry)
+
+    /// First snapshot at t=100 s (wall clock); b1's status read fails, b2 reads `working`.
+    private func lateLaunch(_ dismissals: [RexDismissal]?) -> RexReducerHarness {
+        var h = RexReducerHarness()
+        h.reducer.wallClock = { RexLines.micros(100) }
+        h.reducer.loadDismissals(dismissals)
+        h.apply([
+            L.session("s1", label: "work"),
+            L.view("s1", label: "work", [L.ViewBlock(b: "b1", windowLabel: "One"), L.ViewBlock(b: "b2", windowLabel: "Two")]),
+            L.line(["t": "status_error", "s": "s1", "b": "b1", "err": "boom"]),
+            L.block("s1", "b2", [L.Rec(state: "working", at: 1)]),
+            L.line(["t": "snapshot_done"]),
+        ])
+        return h
+    }
+
+    private func attentionBlocks(_ events: [BackendEvent]) -> Set<String> {
+        Set(events.compactMap { $0.snapshotPayload?.1 }.flatMap(\.attention).map(\.target.paneID))
+    }
+
+    func testLateReadOldDoneIsSilentAndSeededWhenSeedingWasPending() {
+        var h = lateLaunch(nil)
+        let events = h.apply([L.block("s1", "b1", [L.Rec(state: "done", at: 10)])]) + h.advance(.seconds(2))
+
+        XCTAssertNil(row(h, "b1"), "an old result is part of the upgrade baseline")
+        XCTAssertEqual(h.reducer.dismissals, [dismissal(at: 10)])
+        XCTAssertFalse(attentionBlocks(events).contains("b1"), "never offered for notification")
+        XCTAssertFalse(h.reducer.snapshot(forSession: "s1").attention.contains { $0.target.paneID == "b1" })
+    }
+
+    func testLateReadOldDoneIsSilentButShownWhenSeedingWasNotPending() {
+        var h = lateLaunch([])
+        let events = h.apply([L.block("s1", "b1", [L.Rec(state: "done", at: 10)])]) + h.advance(.seconds(2))
+
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done), "shown as a normal row")
+        XCTAssertEqual(h.reducer.dismissals, [])
+        XCTAssertFalse(attentionBlocks(events).contains("b1"), "but silent: it predates the first snapshot")
+        XCTAssertEqual(h.reducer.snapshot(forSession: "s1").clearable, ClearableRecords(done: true), "settled at once")
+    }
+
+    func testLateReadRecordNewerThanTheFirstSnapshotNotifies() {
+        var h = lateLaunch(nil)
+        // 96 s is inside the 5-second tolerance before the first snapshot (100 s): treated as new.
+        let events = h.apply([L.block("s1", "b1", [L.Rec(state: "done", at: 96)])]) + h.advance(.seconds(2))
+
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done))
+        XCTAssertEqual(h.reducer.dismissals, [])
+        XCTAssertTrue(attentionBlocks(events).contains("b1"))
+    }
+
+    func testLateReadBaselineAppliesOnlyToTheFirstSuccessfulRead() {
+        var h = lateLaunch([])
+        h.apply(L.block("s1", "b1", [L.Rec(state: "working", at: 10)]))
+        let events = h.apply([L.block("s1", "b1", [L.Rec(state: "error", at: 20)], via: L.changed("error", at: 20))])
+            + h.advance(.seconds(2))
+        XCTAssertTrue(attentionBlocks(events).contains("b1"), "later changes of a baselined block notify as usual")
+    }
+
+    func testUnreadSessionReadThroughALaterViewIsBaselined() {
+        var h = RexReducerHarness()
+        h.reducer.wallClock = { RexLines.micros(100) }
+        h.reducer.loadDismissals(nil)
+        h.apply([
+            L.session("s1", label: "work"),
+            L.line(["t": "list_blocks_error", "s": "s1", "err": "boom"]),
+            L.line(["t": "view_error", "s": "s1", "err": "boom"]),
+            L.line(["t": "snapshot_done"]),
+        ])
+        let events = h.apply([L.view("s1", label: "work", [L.ViewBlock(b: "b1", windowLabel: "One")]),
+                              L.block("s1", "b1", [L.Rec(state: "error", at: 10)])]) + h.advance(.seconds(2))
+
+        XCTAssertNil(row(h, "b1"))
+        XCTAssertEqual(h.reducer.dismissals, [dismissal("b1", "error", at: 10)])
+        XCTAssertFalse(attentionBlocks(events).contains("b1"))
+    }
+
+    func testLateReadBaselineAndPendingSeedCarryAcrossWatcherRestarts() {
+        var h = lateLaunch(nil)
+        h.restart()
+        h.apply([
+            L.session("s1", label: "work"),
+            L.view("s1", label: "work", [L.ViewBlock(b: "b1", windowLabel: "One"), L.ViewBlock(b: "b2", windowLabel: "Two")]),
+            L.block("s1", "b1", [L.Rec(state: "done", at: 10)]),
+            L.block("s1", "b2", [L.Rec(state: "working", at: 1)]),
+            L.line(["t": "snapshot_done"]),
+        ])
+        let events = h.advance(.seconds(2))
+
+        XCTAssertNil(row(h, "b1"))
+        XCTAssertEqual(h.reducer.dismissals, [dismissal(at: 10)])
+        XCTAssertFalse(attentionBlocks(events).contains("b1"))
+        XCTAssertFalse(h.reducer.snapshot(forSession: "s1").attention.contains { $0.target.paneID == "b1" })
+    }
+
+    func testClosedLateBlockIsForgotten() {
+        var h = lateLaunch([])
+        h.apply(L.line(["t": "block_closed", "s": "s1", "b": "b1"]))
+        let events = h.apply([L.block("s1", "b1", [L.Rec(state: "done", at: 10)])]) + h.advance(.seconds(2))
+        XCTAssertTrue(attentionBlocks(events).contains("b1"), "a closed block's id is not a pending baseline")
+    }
+
     // MARK: Store
 
     func testUserDefaultsStoreRoundTripsAndTellsAbsentFromEmpty() throws {

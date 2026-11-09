@@ -89,6 +89,28 @@ struct RexReducer: Sendable {
     private var seedsDismissalsAtFirstSnapshot = false
     /// Set at the first successful `snapshot_done` since start, whose records all settle at once.
     private var hasCompletedFirstSnapshot = false
+
+    /// Wall-clock microseconds since the Unix epoch, comparable with `updated_at` (the server
+    /// runs on this machine). Read once, at the first successful `snapshot_done`.
+    var wallClock: @Sendable () -> Int64 = { Int64((Date().timeIntervalSince1970 * 1_000_000).rounded()) }
+    /// Records up to this long before the first snapshot still count as possibly new.
+    static let lateBaselineTolerance: Int64 = 5_000_000
+
+    /// Blocks and sessions the first successful snapshot could not read. They have no history,
+    /// so on their first successful later read (any generation) a record whose `updated_at`
+    /// predates the first snapshot (minus the tolerance) is baseline, like the first snapshot's
+    /// records: settled at once, never offered for notification, and dismissed if seeding was
+    /// pending then. Newer records behave normally.
+    private struct LateBaseline: Sendable {
+        var cutoff: Int64
+        var seeds: Bool
+        var blocks: Set<BlockKey>
+        var sessions: Set<String>
+    }
+
+    private var lateBaseline: LateBaseline?
+    /// Baseline epochs that are settled but kept out of `attention` (no notification).
+    private var silentEpochs: [RexRecordKey: Int] = [:]
     /// Sessions the store has been told about with `.connected` and not yet `.removed`.
     private(set) var sessionsKnownToStore: Set<String> = []
 
@@ -143,9 +165,10 @@ struct RexReducer: Sendable {
     /// `stop()`: forget everything except the epoch counter's value (dismissals too: `start()`
     /// reloads them). The next generation's first successful snapshot is a fresh "first".
     mutating func reset() {
-        let counter = epochCounter
+        let counter = epochCounter, wallClock = wallClock
         self = RexReducer()
         epochCounter = counter
+        self.wallClock = wallClock
     }
 
     // MARK: Lines
@@ -181,6 +204,7 @@ struct RexReducer: Sendable {
             blockRecords[BlockKey(sessionID: sessionID, blockID: blockID)] = nil
             dropLastKnown { $0.sessionID == sessionID && $0.blockID == blockID }
             removeDismissals { $0.sessionID == sessionID && $0.blockID == blockID }
+            forgetLateBaseline { $0.sessionID == sessionID && $0.blockID == blockID }
             affected.insert(sessionID)
 
         case .sessionDestroyed(let sessionID):
@@ -188,6 +212,7 @@ struct RexReducer: Sendable {
             blockRecords = blockRecords.filter { $0.key.sessionID != sessionID }
             dropLastKnown { $0.sessionID == sessionID }
             removeDismissals { $0.sessionID == sessionID }
+            forgetLateBaseline(where: { $0.sessionID == sessionID }, session: sessionID)
             if isSnapshotDone, sessionsKnownToStore.remove(sessionID) != nil {
                 lastEmitted[sessionID] = nil
                 output.events.append(.removed(key(sessionID)))
@@ -433,8 +458,9 @@ struct RexReducer: Sendable {
                 rows.append(row)
             }
             for candidate in ranked {
+                let candidateKey = recordKey(sessionID, block.blockID, candidate.record.id)
                 guard let state = candidate.record.programState.flatMap(RexRows.attentionState),
-                      settled[recordKey(sessionID, block.blockID, candidate.record.id)] == candidate.epoch
+                      settled[candidateKey] == candidate.epoch, silentEpochs[candidateKey] != candidate.epoch
                 else { continue }
                 attention.append((primary, AttentionRecord(
                     target: AgentTarget(session: sessionKey, paneID: block.blockID),
@@ -492,10 +518,15 @@ struct RexReducer: Sendable {
         for record in records where seenIDs.insert(record.id).inserted {
             current.append(record)
         }
+        let lateCutoff = read.gone ? nil : lateBaselineCutoff(for: BlockKey(sessionID: read.sessionID, blockID: read.blockID))
         for record in current {
             let key = recordKey(read.sessionID, read.blockID, record.id)
+            let isNew = lastKnown[key] == nil
             let changed = lastKnown[key].map { $0.state != record.state } ?? true
             setLastKnown(key, state: record.state, updatedAt: record.updatedAt, newEpoch: changed, now: now)
+            if isNew, let lateCutoff, let at = record.updatedAt, at <= lateCutoff {
+                applyLateBaseline(key)
+            }
         }
         blockRecords[BlockKey(sessionID: read.sessionID, blockID: read.blockID)] = current
 
@@ -513,6 +544,7 @@ struct RexReducer: Sendable {
             epochCounter += 1
             lastKnown[key] = LastKnown(state: state, updatedAt: updatedAt, epoch: epochCounter, epochStart: now)
             settled[key] = nil
+            silentEpochs[key] = nil
             // A persisted dismissal of exactly this emission (same state and `updated_at`) keeps
             // it seen across relaunches; any other emission shows and drops the dismissal.
             if matchesDismissal(key, state: state, updatedAt: updatedAt) {
@@ -536,7 +568,34 @@ struct RexReducer: Sendable {
             lastKnown[key] = nil
             seenMarks[key] = nil
             settled[key] = nil
+            silentEpochs[key] = nil
         }
+    }
+
+    /// The baseline cutoff when this read is the first successful one of a block the first
+    /// snapshot could not read (the block is then no longer pending); nil otherwise.
+    private mutating func lateBaselineCutoff(for block: BlockKey) -> Int64? {
+        guard let baseline = lateBaseline else { return nil }
+        if lateBaseline?.blocks.remove(block) != nil || baseline.sessions.contains(block.sessionID) {
+            return baseline.cutoff
+        }
+        return nil
+    }
+
+    private mutating func applyLateBaseline(_ key: RexRecordKey) {
+        guard let known = lastKnown[key] else { return }
+        settled[key] = known.epoch
+        silentEpochs[key] = known.epoch
+        if lateBaseline?.seeds == true, Self.isTerminal(known.state), seenMarks[key] != known.epoch {
+            dismiss(key, known)
+        }
+    }
+
+    private mutating func forgetLateBaseline(where shouldForget: (BlockKey) -> Bool, session: String? = nil) {
+        guard var baseline = lateBaseline else { return }
+        baseline.blocks = baseline.blocks.filter { !shouldForget($0) }
+        if let session { baseline.sessions.remove(session) }
+        lateBaseline = baseline
     }
 
     /// Dismissals go only on explicit evidence (block closed, session destroyed, a successful
@@ -571,6 +630,12 @@ struct RexReducer: Sendable {
         } else {
             settleImmediately { _ in true }
             hasCompletedFirstSnapshot = true
+            lateBaseline = LateBaseline(
+                cutoff: wallClock() - Self.lateBaselineTolerance,
+                seeds: seedsDismissalsAtFirstSnapshot,
+                blocks: unreadBlocks,
+                sessions: unreadSessions.intersection(liveSessions)
+            )
             if seedsDismissalsAtFirstSnapshot { seedDismissals() }
         }
 
