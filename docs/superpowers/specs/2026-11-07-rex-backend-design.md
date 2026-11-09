@@ -1,6 +1,6 @@
 # Rex Backend and Per-Backend Notifications Design
 
-Revision 6.5 (2026-11-08). See [Revision log](#revision-log).
+Revision 6.6 (2026-11-08). See [Revision log](#revision-log).
 
 ## Summary
 
@@ -106,11 +106,18 @@ One row per placed Rex terminal block, built by `RexBackend`.
 - A partial focus (Remote Control off, no client) marks nothing.
 - **Clear Finished** calls `backend.clearFinished()`, which marks every currently visible `done` record and every currently visible `error` record that has settled (past flap protection) in a placed block. An unsettled `error` is not marked. A later epoch (the agent reports `error` again) shows and notifies as usual.
 - `RexBackend` emits a fresh `.snapshot` for affected sessions after either call.
-- Seen marks are in memory and are cleared when the backend stops. After a relaunch, existing Rex `done` records show in NEEDS ATTENTION (and count toward the badge) until seen or cleared. They do not notify, because they are part of the startup baseline.
+- Seen marks are in memory and are cleared when the backend stops. **Persisted dismissals** (r6.6) carry them across launches:
+  - Marking a record seen (selection or Clear Finished) also records a dismissal keyed by server identity: `(session_id, block_id, record id)` plus the record's state and `updated_at` (microseconds). Never the epoch, which is in-memory only.
+  - Dismissals are saved as JSON in UserDefaults under `rexDismissedRecords` whenever they change, and loaded at `RexBackend.start()`.
+  - When a record gets a new epoch (including its first epoch after launch) with exactly the dismissed state and `updated_at`, it starts out seen. Any other state or `updated_at` (the server re-emitted it) shows the record and drops the dismissal.
+  - While a seen record keeps its epoch but its `updated_at` changes (same state), it stays seen and its dismissal follows the new `updated_at`.
+  - Pruning: a dismissal is dropped with its record (absent from its block's read, block closed, session destroyed) and, after a successful `snapshot_done`, when its block was neither read nor unreadable (a failed status or block-list read keeps it). Capped at the newest 500.
+  - A record without a parseable `updated_at` has no stable identity: it is hidden for this run only (in memory, as before).
+  - Records that were not dismissed show in NEEDS ATTENTION after a relaunch (and count toward the badge) until seen or cleared. Nothing in the first snapshot notifies, dismissed or not, because it is the coordinator's silent baseline; attention records are never seen-filtered.
 
 ### Badge
 
-Badge = every row in NEEDS ATTENTION: Herdr `blocked` + Herdr `done` (unchanged) + Rex `blocked`, `error`, `done`. Rex `done` counts, as Herdr `done` does (r6.5). Rex keeps `done` on the server until it is replaced, so it leaves the badge when its row is visited (marked seen) or dismissed with **Clear Finished**; seen marks are in memory, so after a relaunch existing Rex `done` records count again until seen or cleared. SketchyBar uses the same count.
+Badge = every row in NEEDS ATTENTION: Herdr `blocked` + Herdr `done` (unchanged) + Rex `blocked`, `error`, `done`. Rex `done` counts, as Herdr `done` does (r6.5). Rex keeps `done` on the server until it is replaced, so it leaves the badge when its row is visited (marked seen) or dismissed with **Clear Finished**, and stays out of it after a relaunch through persisted dismissals (r6.6) until the server re-emits the record. SketchyBar uses the same count.
 
 ### Notification settings (rollout step 3)
 
@@ -330,6 +337,7 @@ A superseding selection cancels the previous task. `RexBackend` runs child proce
 | `notifyStates.rex` | [String] | `["blocked","error","done"]` | user changes it |
 | `enabledBackends` | [String] | `["herdr"]` until step 3, then `["herdr","rex"]` | `defaults write` only |
 | `rexCLIPath` | String | resolve automatically | `defaults write` only |
+| `rexDismissedRecords` | Data (JSON array of `{sessionID, blockID, recordID, state, updatedAt}`) | empty | RexBackend, when dismissals change |
 
 `NotificationSettingsController` gains `notifyStates(for:)` and `setNotifyState(_:enabled:for:)`. A backend missing from `enabledBackends` emits `.backendHidden` at start and never spawns anything.
 
@@ -725,7 +733,7 @@ The icon dims only when no session of any active backend is connected.
 
 ## Open questions
 
-- Persist Rex seen-state across relaunches? Deferred.
+- Persist Rex seen-state across relaunches? Done in r6.6 (persisted dismissals).
 - Show `progress` on Rex rows? Deferred.
 - Upstream requests to Rex:
   - report each client's displayed session in `client.list`
@@ -734,6 +742,7 @@ The icon dims only when no session of any active backend is connected.
 
 ## Revision log
 
+- **r6.6 (2026-11-08).** Follow-up to r6.5 (the user's server holds many old `done` records, which refilled the badge on every launch). Behaviour change: seen and cleared Rex records persist across launches as dismissals keyed by `(session_id, block_id, record id, state, updated_at)` under `rexDismissedRecords`, loaded at start, pruned with their records after a successful snapshot (unread blocks kept), capped at 500; a re-emission with a new `updated_at` or state shows again. Records without `updated_at` stay in-memory only. Startup notifications are unchanged (silent baseline).
 - **r6.5 (2026-11-08).** User request: Rex mirrors Herdr for finished work. Behaviour change: Rex `done` rows are `.attention(.done)` — shown in NEEDS ATTENTION after `blocked` and `error`, and counted in the badge and SketchyBar. The FINISHED section and `RowState.finished` are removed. Visiting a Rex done row still marks it seen; seen-state, epochs, and flap protection are unchanged. **Clear Finished** (or "Clear Finished and Failed") stays for Rex, because Rex keeps `done`/`error` on the server, and now sits at the end of NEEDS ATTENTION whenever a Rex `done` or `error` row exists. Rex's default notify states become `blocked`+`error`+`done`; a stored `notifyStates.rex` is kept.
 - **r6.4 (2026-11-08).** From live testing (a stale Pi subagent `error` kept the badge up and could only be dismissed by focusing it). Behaviour change: **Clear Finished** also marks settled Rex `error` records seen; the item appears when any Rex finished or error row exists, is labelled "Clear Finished and Failed" when a Rex error row exists, and sits at the end of NEEDS ATTENTION when there is no FINISHED section.
 - **r6.3 (2026-11-08).** From the step-2 final review. Clarifications matching the implementation: `activate` brings Rex.app forward only if it is already running and never launches it; focus and session-select timeouts read "Rex did not respond in time" (the partial ends with a period); `client ls` has a 5-second timeout; only the snapshot fixture is recorded, event fixtures are hand-written; the outage reason quotes the watcher's last stderr line only for a real `Error:` line (not the `listening:` banner or `Error: interrupted`), else the exit status; the hidden-backend check for a notification target runs before the current selection is superseded. Behaviour changes: **resilience** (a per-block `status_error`, per-session `view_error`, or `list_blocks` failure is logged and that block or session skipped, never failing the generation or marking the candidate; the script emits `list_blocks_error`, reads such a session through its view, and re-views stale sessions after 30 s; unread blocks keep their history through the snapshot's pruning; only the snapshot as a whole failing marks the candidate); **sleep/wake grace** (a supervision deadline that fires more than 5 s late, or a system wake, re-arms a fresh 20 s/15 s window instead of failing; at most one late re-arm until a watcher line arrives); **heading prefix** counts only backends that emitted `.discovery` this run, not merely enabled ones.
