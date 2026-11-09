@@ -1,12 +1,12 @@
 # Rex Backend and Per-Backend Notifications Design
 
-Revision 6.4 (2026-11-08). See [Revision log](#revision-log).
+Revision 6.5 (2026-11-08). See [Revision log](#revision-log).
 
 ## Summary
 
 Herdr Menubar will monitor agents running in [Rex](https://www.superlogical.com/rex/docs) alongside agents running in Herdr. Both appear in one menu and feed one badge. Selecting an agent focuses its exact pane. Notifications become configurable per backend and per state.
 
-A backend layer is introduced below `AgentStore`. The existing Herdr supervisor becomes one backend. Rex becomes a second backend driven by the `rex` CLI through one long-running Lua watcher process. **Everything Rex-specific (record reduction, ranking, seen-state, flap protection) lives inside `RexBackend`.** The store, coordinator, and menu see finished rows and attention records from every backend in the same shape. Retiring a terminal later means deleting its backend.
+A backend layer is introduced below `AgentStore`. The existing Herdr supervisor becomes one backend. Rex becomes a second backend driven by the `rex` CLI through one long-running Lua watcher process. **Everything Rex-specific (record reduction, ranking, seen-state, flap protection) lives inside `RexBackend`.** The store, coordinator, and menu see final rows and attention records from every backend in the same shape. Retiring a terminal later means deleting its backend.
 
 ## Goals
 
@@ -63,8 +63,6 @@ NEEDS ATTENTION
     api-server · claude                     blocked · claude
   Rex · fix-playback-completion
     Playback · pi                           blocked · Allow rm -rf build?
-FINISHED
-  Rex · fix-playback-completion
     Review · claude-code                    done · claude-code
   Clear Finished
 WORKING
@@ -72,11 +70,10 @@ WORKING
     rex-menubar-design · claude-code        working · claude-code
 ```
 
-- **NEEDS ATTENTION**: Herdr `blocked`, `done` (unchanged); Rex `blocked`, `error`. Order within a session: `blocked`, `error`, `done`, then label (Herdr's existing `attentionOrder`, extended).
-- **FINISHED**: Rex `done`. Shown only when non-empty. Order: label.
-- **Clear Finished** item: shown when there is at least one Rex finished row or at least one Rex `error` row in NEEDS ATTENTION. Label: "Clear Finished" when only finished rows exist; "Clear Finished and Failed" when any Rex error row exists. Position: the end of FINISHED; with no FINISHED section, the end of NEEDS ATTENTION. Herdr rows never make it appear. The detached menu shows the same nodes.
+- **NEEDS ATTENTION**: Herdr `blocked`, `done` (unchanged); Rex `blocked`, `error`, `done`, mirroring Herdr. Order within a session: `blocked`, `error`, `done`, then label (Herdr's existing `attentionOrder`, extended). There is no separate FINISHED section (r6.5).
+- **Clear Finished** item: shown at the end of NEEDS ATTENTION when there is at least one Rex `done` or Rex `error` row. Label: "Clear Finished" when no Rex error row exists; "Clear Finished and Failed" when any Rex error row exists. Herdr rows never make it appear (Herdr clears `done` itself when the pane is visited). The detached menu shows the same nodes.
 - **WORKING**: unchanged for Herdr; Rex `working`. Order: label.
-- "No active agents" considers all three sections.
+- "No active agents" considers both sections.
 - Herdr rows are unchanged. Rex rows:
   - **Primary label**: the window label unless it is the default (`Window ` + last 8 hex of the window id); else the block label unless it is `shell`; else the session label.
   - **Agent label**: the deciding record's `title`, else `effective_app`, else none.
@@ -109,18 +106,18 @@ One row per placed Rex terminal block, built by `RexBackend`.
 - A partial focus (Remote Control off, no client) marks nothing.
 - **Clear Finished** calls `backend.clearFinished()`, which marks every currently visible `done` record and every currently visible `error` record that has settled (past flap protection) in a placed block. An unsettled `error` is not marked. A later epoch (the agent reports `error` again) shows and notifies as usual.
 - `RexBackend` emits a fresh `.snapshot` for affected sessions after either call.
-- Seen marks are in memory and are cleared when the backend stops. After a relaunch, existing Rex `done` records show in FINISHED until seen. They do not notify, because they are part of the startup baseline.
+- Seen marks are in memory and are cleared when the backend stops. After a relaunch, existing Rex `done` records show in NEEDS ATTENTION (and count toward the badge) until seen or cleared. They do not notify, because they are part of the startup baseline.
 
 ### Badge
 
-Badge = Herdr `blocked` + Herdr `done` (unchanged) + Rex rows in NEEDS ATTENTION (`blocked`, `error`). Rex `done` is never counted: Rex keeps it until replaced or cleared and provides no shared way to clear it, so counting it would make the badge grow without bound. SketchyBar uses the same count.
+Badge = every row in NEEDS ATTENTION: Herdr `blocked` + Herdr `done` (unchanged) + Rex `blocked`, `error`, `done`. Rex `done` counts, as Herdr `done` does (r6.5). Rex keeps `done` on the server until it is replaced, so it leaves the badge when its row is visited (marked seen) or dismissed with **Clear Finished**; seen marks are in memory, so after a relaunch existing Rex `done` records count again until seen or cleared. SketchyBar uses the same count.
 
 ### Notification settings (rollout step 3)
 
 ```
 Notifications                 ✓
   Herdr Agents                ▸  Blocked ✓  Finished ✓
-  Rex Agents                  ▸  Blocked ✓  Failed ✓  Finished ☐
+  Rex Agents                  ▸  Blocked ✓  Failed ✓  Finished ✓
 Sound
 ```
 
@@ -128,7 +125,7 @@ Sound
 - The Herdr submenu is always shown, when Herdr is enabled. The Rex submenu is shown only when Rex is enabled **and** (Rex has been active in this run, or `notifyStates.rex` is stored). Users without Rex, or with Rex installed but never running, never see it.
 - Each item is a toggle. The parent shows a checkmark (all on), a dash (some), or nothing (none). `StatusMenuNode.submenu` gains a `state`.
 - **Sound** stays app-wide.
-- Defaults: Herdr `blocked`+`done` (today). Rex `blocked`+`error`. Until step 3, the defaults apply with no UI.
+- Defaults: Herdr `blocked`+`done` (today). Rex `blocked`+`error`+`done` (r6.5; was `blocked`+`error`). A stored `notifyStates.rex` is kept as stored, including the old default. Until step 3, the defaults apply with no UI.
 
 ### Notifications
 
@@ -186,8 +183,7 @@ struct SelectionTarget: Sendable {
 
 enum AttentionState: String, Sendable { case blocked, error, done }
 enum RowState: Equatable, Sendable {
-    case attention(AttentionState)   // NEEDS ATTENTION; counted in the badge
-    case finished                    // FINISHED; not counted (Rex done)
+    case attention(AttentionState)   // NEEDS ATTENTION; counted in the badge (incl. Rex done)
     case working                     // WORKING
 }
 
@@ -331,7 +327,7 @@ A superseding selection cancels the previous task. `RexBackend` runs child proce
 |---|---|---|---|
 | `notificationsEnabled`, `notificationSoundEnabled` | Bool | unchanged | unchanged |
 | `notifyStates.herdr` | [String] | `["blocked","done"]` | user changes it |
-| `notifyStates.rex` | [String] | `["blocked","error"]` | user changes it |
+| `notifyStates.rex` | [String] | `["blocked","error","done"]` | user changes it |
 | `enabledBackends` | [String] | `["herdr"]` until step 3, then `["herdr","rex"]` | `defaults write` only |
 | `rexCLIPath` | String | resolve automatically | `defaults write` only |
 
@@ -630,7 +626,7 @@ The icon dims only when no session of any active backend is connected.
 
 ### Implementation decisions
 
-- **Sections and badge** come from `RowState` only. `.attention` goes to NEEDS ATTENTION and counts toward the badge, `.finished` goes to FINISHED, and `.working` goes to WORKING. The store never branches on backend for presentation.
+- **Sections and badge** come from `RowState` only. `.attention` goes to NEEDS ATTENTION and counts toward the badge, and `.working` goes to WORKING. The store never branches on backend for presentation.
 - **`connectionState` aggregation**, over enabled backends that are active (plus Herdr when enabled), first match wins:
 
   | Condition | State |
@@ -716,7 +712,7 @@ The icon dims only when no session of any active backend is connected.
 - **Payload:** v1 and v2 decode.
 - **Live check (manual, Remote Control on, `enabledBackends` including `rex`):**
   - Use a throwaway session that reports each state with `printf '\e]7501;state=…\e\\'`. `rex new` attaches the Rex app to it.
-  - Confirm rows, FINISHED, the badge, notifications, focus from a notification, and cleanup on kill.
+  - Confirm rows (Rex `done` in NEEDS ATTENTION), Clear Finished, the badge, notifications, focus from a notification, and cleanup on kill.
 
 ## Rollout
 
@@ -738,6 +734,7 @@ The icon dims only when no session of any active backend is connected.
 
 ## Revision log
 
+- **r6.5 (2026-11-08).** User request: Rex mirrors Herdr for finished work. Behaviour change: Rex `done` rows are `.attention(.done)` — shown in NEEDS ATTENTION after `blocked` and `error`, and counted in the badge and SketchyBar. The FINISHED section and `RowState.finished` are removed. Visiting a Rex done row still marks it seen; seen-state, epochs, and flap protection are unchanged. **Clear Finished** (or "Clear Finished and Failed") stays for Rex, because Rex keeps `done`/`error` on the server, and now sits at the end of NEEDS ATTENTION whenever a Rex `done` or `error` row exists. Rex's default notify states become `blocked`+`error`+`done`; a stored `notifyStates.rex` is kept.
 - **r6.4 (2026-11-08).** From live testing (a stale Pi subagent `error` kept the badge up and could only be dismissed by focusing it). Behaviour change: **Clear Finished** also marks settled Rex `error` records seen; the item appears when any Rex finished or error row exists, is labelled "Clear Finished and Failed" when a Rex error row exists, and sits at the end of NEEDS ATTENTION when there is no FINISHED section.
 - **r6.3 (2026-11-08).** From the step-2 final review. Clarifications matching the implementation: `activate` brings Rex.app forward only if it is already running and never launches it; focus and session-select timeouts read "Rex did not respond in time" (the partial ends with a period); `client ls` has a 5-second timeout; only the snapshot fixture is recorded, event fixtures are hand-written; the outage reason quotes the watcher's last stderr line only for a real `Error:` line (not the `listening:` banner or `Error: interrupted`), else the exit status; the hidden-backend check for a notification target runs before the current selection is superseded. Behaviour changes: **resilience** (a per-block `status_error`, per-session `view_error`, or `list_blocks` failure is logged and that block or session skipped, never failing the generation or marking the candidate; the script emits `list_blocks_error`, reads such a session through its view, and re-views stale sessions after 30 s; unread blocks keep their history through the snapshot's pruning; only the snapshot as a whole failing marks the candidate); **sleep/wake grace** (a supervision deadline that fires more than 5 s late, or a system wake, re-arms a fresh 20 s/15 s window instead of failing; at most one late re-arm until a watcher line arrives); **heading prefix** counts only backends that emitted `.discovery` this run, not merely enabled ones.
 - **r6.2 (2026-11-08).** Client selection keeps clients whose `connection_state` is not `"lost"`; a missing or unknown value counts as connected, as documented by `rex api describe client.list`.
