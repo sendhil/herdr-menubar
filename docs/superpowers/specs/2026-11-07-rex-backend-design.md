@@ -1,6 +1,6 @@
 # Rex Backend and Per-Backend Notifications Design
 
-Revision 6.3 (2026-11-08). See [Revision log](#revision-log).
+Revision 6.4 (2026-11-08). See [Revision log](#revision-log).
 
 ## Summary
 
@@ -73,7 +73,8 @@ WORKING
 ```
 
 - **NEEDS ATTENTION**: Herdr `blocked`, `done` (unchanged); Rex `blocked`, `error`. Order within a session: `blocked`, `error`, `done`, then label (Herdr's existing `attentionOrder`, extended).
-- **FINISHED**: Rex `done`. Shown only when non-empty; ends with **Clear Finished**. Order: label.
+- **FINISHED**: Rex `done`. Shown only when non-empty. Order: label.
+- **Clear Finished** item: shown when there is at least one Rex finished row or at least one Rex `error` row in NEEDS ATTENTION. Label: "Clear Finished" when only finished rows exist; "Clear Finished and Failed" when any Rex error row exists. Position: the end of FINISHED; with no FINISHED section, the end of NEEDS ATTENTION. Herdr rows never make it appear. The detached menu shows the same nodes.
 - **WORKING**: unchanged for Herdr; Rex `working`. Order: label.
 - "No active agents" considers all three sections.
 - Herdr rows are unchanged. Rex rows:
@@ -106,7 +107,7 @@ One row per placed Rex terminal block, built by `RexBackend`.
 - The store captures the token when a selection starts. If the selection completes fully (server focus succeeded, client switch succeeded, still the current selection), the store calls `backend.markSeen(token)`.
 - Marks only hide records whose epoch still matches, so a record that changed during focus stays visible.
 - A partial focus (Remote Control off, no client) marks nothing.
-- **Clear Finished** calls `backend.clearFinished()`, which marks every currently visible `done` record.
+- **Clear Finished** calls `backend.clearFinished()`, which marks every currently visible `done` record and every currently visible `error` record that has settled (past flap protection) in a placed block. An unsettled `error` is not marked. A later epoch (the agent reports `error` again) shows and notifies as usual.
 - `RexBackend` emits a fresh `.snapshot` for affected sessions after either call.
 - Seen marks are in memory and are cleared when the backend stops. After a relaunch, existing Rex `done` records show in FINISHED until seen. They do not notify, because they are part of the startup baseline.
 
@@ -737,6 +738,7 @@ The icon dims only when no session of any active backend is connected.
 
 ## Revision log
 
+- **r6.4 (2026-11-08).** From live testing (a stale Pi subagent `error` kept the badge up and could only be dismissed by focusing it). Behaviour change: **Clear Finished** also marks settled Rex `error` records seen; the item appears when any Rex finished or error row exists, is labelled "Clear Finished and Failed" when a Rex error row exists, and sits at the end of NEEDS ATTENTION when there is no FINISHED section.
 - **r6.3 (2026-11-08).** From the step-2 final review. Clarifications matching the implementation: `activate` brings Rex.app forward only if it is already running and never launches it; focus and session-select timeouts read "Rex did not respond in time" (the partial ends with a period); `client ls` has a 5-second timeout; only the snapshot fixture is recorded, event fixtures are hand-written; the outage reason quotes the watcher's last stderr line only for a real `Error:` line (not the `listening:` banner or `Error: interrupted`), else the exit status; the hidden-backend check for a notification target runs before the current selection is superseded. Behaviour changes: **resilience** (a per-block `status_error`, per-session `view_error`, or `list_blocks` failure is logged and that block or session skipped, never failing the generation or marking the candidate; the script emits `list_blocks_error`, reads such a session through its view, and re-views stale sessions after 30 s; unread blocks keep their history through the snapshot's pruning; only the snapshot as a whole failing marks the candidate); **sleep/wake grace** (a supervision deadline that fires more than 5 s late, or a system wake, re-arms a fresh 20 s/15 s window instead of failing; at most one late re-arm until a watcher line arrives); **heading prefix** counts only backends that emitted `.discovery` this run, not merely enabled ones.
 - **r6.2 (2026-11-08).** Client selection keeps clients whose `connection_state` is not `"lost"`; a missing or unknown value counts as connected, as documented by `rex api describe client.list`.
 - **r6.1 (2026-11-07).** From the r6 confirmation review. The `connectionState` rows were reordered so the Rex rows can be reached. Clarifications:
