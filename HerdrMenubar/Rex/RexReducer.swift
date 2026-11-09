@@ -313,21 +313,32 @@ struct RexReducer: Sendable {
     /// settled (past flap protection), of every placed block. A later epoch shows again.
     mutating func clearFinished() -> [BackendEvent] {
         var affected: Set<String> = []
-        for (sessionID, session) in sessions {
-            for block in session.view?.blocks ?? [] {
-                for record in blockRecords[BlockKey(sessionID: sessionID, blockID: block.blockID)] ?? []
-                where record.programState == .done || record.programState == .error {
-                    let key = recordKey(sessionID, block.blockID, record.id)
-                    guard let known = lastKnown[key], seenMarks[key] != known.epoch else { continue }
-                    if record.programState == .error, settled[key] != known.epoch { continue }
-                    dismiss(key, known)
-                    affected.insert(sessionID)
-                }
+        for sessionID in sessions.keys {
+            for (key, known, _) in clearableRecords(sessionID) where seenMarks[key] != known.epoch {
+                dismiss(key, known)
+                affected.insert(sessionID)
             }
         }
         var output = RexReducerOutput()
         emitChangedSnapshots(for: affected, into: &output)
         return output.events
+    }
+
+    /// The records Clear Finished would dismiss in a session: unseen `done`, and unseen settled
+    /// `error`, records of its placed blocks, whether or not they decide the block's row.
+    private func clearableRecords(_ sessionID: String) -> [(RexRecordKey, LastKnown, RexProgramState)] {
+        var result: [(RexRecordKey, LastKnown, RexProgramState)] = []
+        var placed: Set<String> = []
+        for block in sessions[sessionID]?.view?.blocks ?? [] where placed.insert(block.blockID).inserted {
+            for record in blockRecords[BlockKey(sessionID: sessionID, blockID: block.blockID)] ?? [] {
+                guard let state = record.programState, state == .done || state == .error else { continue }
+                let key = recordKey(sessionID, block.blockID, record.id)
+                guard let known = lastKnown[key], seenMarks[key] != known.epoch else { continue }
+                if state == .error, settled[key] != known.epoch { continue }
+                result.append((key, known, state))
+            }
+        }
+        return result
     }
 
     /// Marks the record's current epoch seen and persists it by server identity. A record without
@@ -438,7 +449,11 @@ struct RexReducer: Sendable {
             }
             return lhs.record.recordID < rhs.record.recordID
         }.map(\.record)
-        return BackendSnapshot(rows: rows, attention: orderedAttention)
+        var clearable = ClearableRecords.none
+        for (_, _, state) in clearableRecords(sessionID) {
+            if state == .done { clearable.done = true } else { clearable.error = true }
+        }
+        return BackendSnapshot(rows: rows, attention: orderedAttention, clearable: clearable)
     }
 
     /// The descriptor the store would receive for a session of this generation.

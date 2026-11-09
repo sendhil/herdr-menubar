@@ -13,7 +13,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         await fixture.start()
         fixture.herdr.send(.discovery([]))   // both backends active: headings carry the prefix
         fixture.rex.send(.discovery([rexFix]))
-        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexDone, rexBlocked, rexWorking], attention: [])))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexDone, rexBlocked, rexWorking], attention: [], clearable: clearDone)))
         await fixture.waitUntil { fixture.store.workingSections.count == 1 }
 
         let menu = fixture.presentation().menu
@@ -57,7 +57,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         fixture.herdr.send(.discovery([herdrWork]))
         fixture.herdr.send(.connected(herdrWork, .empty))
         fixture.rex.send(.discovery([rexFix]))
-        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexDone], attention: [])))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexDone], attention: [], clearable: clearDone)))
         await fixture.waitUntil { fixture.store.attentionCount == 1 && fixture.store.connectionState == .connected }
 
         var menu = fixture.presentation().menu
@@ -77,7 +77,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         let fixture = RexPresentationFixture()
         await fixture.start()
         fixture.rex.send(.discovery([rexFix]))
-        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexDone, rexError], attention: [])))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexDone, rexError], attention: [], clearable: clearBoth)))
         await fixture.waitUntil { fixture.store.attentionCount == 2 }
 
         let menu = fixture.presentation().menu
@@ -99,7 +99,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         let fixture = RexPresentationFixture()
         await fixture.start()
         fixture.rex.send(.discovery([rexFix]))
-        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked, rexError], attention: [])))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked, rexError], attention: [], clearable: clearError)))
         await fixture.waitUntil { fixture.store.attentionCount == 2 }
 
         let menu = fixture.presentation().menu
@@ -122,7 +122,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         let fixture = RexPresentationFixture()
         await fixture.start()
         fixture.rex.send(.discovery([rexFix]))
-        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked, rexDone], attention: [])))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked, rexDone], attention: [], clearable: clearDone)))
         await fixture.waitUntil { fixture.store.attentionCount == 2 }
 
         let menu = fixture.presentation().menu
@@ -143,6 +143,70 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         await fixture.waitUntil { fixture.store.attentionCount == 1 }
 
         XCTAssertEqual(clearItems(fixture.presentation().menu), [])
+        await fixture.stop()
+    }
+
+    /// The item follows what Clear Finished would dismiss (the backend's `clearable`), not the
+    /// visible rows: a done record under a blocked primary row counts.
+    func testHiddenDoneRecordUnderABlockedRowShowsClearFinished() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.discovery([rexFix]))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked], attention: [], clearable: clearDone)))
+        await fixture.waitUntil { fixture.store.attentionCount == 1 }
+
+        let menu = fixture.presentation().menu
+        XCTAssertEqual(clearItems(menu).map(\.actionTitle), ["Clear Finished"])
+        XCTAssertEqual(menu[3], clearItems(menu)[0], "the last item of NEEDS ATTENTION")
+        await fixture.stop()
+    }
+
+    func testUnsettledErrorRowShowsNoClearItemOrFailedLabel() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.discovery([rexFix]))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexError], attention: [])))
+        await fixture.waitUntil { fixture.store.attentionCount == 1 }
+        XCTAssertEqual(clearItems(fixture.presentation().menu), [], "nothing would be cleared yet")
+
+        fixture.rex.send(.snapshot(rexFix.key, BackendSnapshot(rows: [rexError, rexDone], attention: [], clearable: clearDone)))
+        await fixture.waitUntil { fixture.store.attentionCount == 2 }
+        XCTAssertEqual(clearItems(fixture.presentation().menu).map(\.actionTitle), ["Clear Finished"],
+                       "only a settled error earns \"and Failed\"")
+        await fixture.stop()
+    }
+
+    func testClearableWithOnlyWorkingRowsEndsWorking() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.discovery([rexFix]))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexWorking], attention: [], clearable: clearDone)))
+        await fixture.waitUntil { fixture.store.workingSections.count == 1 }
+
+        let menu = fixture.presentation().menu
+        XCTAssertEqual(Array(menu.prefix(5)), [
+            .heading("WORKING"),
+            .heading("FIX-PLAYBACK"),
+            .agent(title: "Design · claude-code", subtitle: "working · claude-code",
+                   symbol: "ellipsis.circle", quieter: true, target: target(rexWorking)),
+            .action(title: "Clear Finished", state: .off, isEnabled: true, action: .clearFinished),
+            .separator,
+        ])
+        await fixture.stop()
+    }
+
+    func testStoreMergesClearableAcrossSessionsAndForgetsUnavailableOnes() async {
+        let fixture = RexPresentationFixture()
+        await fixture.start()
+        fixture.rex.send(.discovery([rexFix, rexOther]))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexBlocked], attention: [], clearable: clearDone)))
+        fixture.rex.send(.connected(rexOther, BackendSnapshot(rows: [], attention: [], clearable: clearError)))
+        await fixture.waitUntil { fixture.store.clearable == clearBoth }
+
+        fixture.rex.send(.sessionUnavailable(rexOther.key, "gone"))
+        await fixture.waitUntil { fixture.store.clearable == clearDone }
+        fixture.rex.send(.backendUnavailable("watcher exited"))
+        await fixture.waitUntil { fixture.store.clearable == .none }
         await fixture.stop()
     }
 
@@ -172,7 +236,7 @@ final class StatusMenuRexPresentationTests: XCTestCase {
         let fixture = RexPresentationFixture()
         await fixture.start()
         fixture.rex.send(.discovery([rexFix]))
-        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexError], attention: [])))
+        fixture.rex.send(.connected(rexFix, BackendSnapshot(rows: [rexError], attention: [], clearable: clearError)))
         await fixture.waitUntil { fixture.store.attentionCount == 1 }
         let presentation = fixture.presentation()
 
@@ -587,6 +651,10 @@ private let herdrWorking = AgentRow(
     target: AgentTarget(session: .named("work"), paneID: "p1"), displayLabel: "api", agentLabel: "claude",
     state: .working, subtitle: "working · claude", seenToken: nil
 )
+
+private let clearDone = ClearableRecords(done: true)
+private let clearError = ClearableRecords(error: true)
+private let clearBoth = ClearableRecords(done: true, error: true)
 
 private func clearItems(_ menu: [StatusMenuNode]) -> [StatusMenuNode] {
     menu.filter { if case .action(_, _, _, .clearFinished) = $0 { true } else { false } }

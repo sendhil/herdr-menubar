@@ -104,12 +104,13 @@ private extension StatusMenuPresentationBuilder {
         var nodes: [StatusMenuNode] = []
 
         let showsBackendPrefix = store.showsBackendPrefix
+        let clearItem = clearFinishedNode(store.clearable)
         appendAgentSections(
             store.attentionSections,
             heading: "NEEDS ATTENTION",
             quieter: false,
             showsBackendPrefix: showsBackendPrefix,
-            trailing: clearFinishedNode(attention: store.attentionSections),
+            trailing: clearItem,
             to: &nodes
         )
         appendAgentSections(
@@ -117,6 +118,7 @@ private extension StatusMenuPresentationBuilder {
             heading: "WORKING",
             quieter: true,
             showsBackendPrefix: showsBackendPrefix,
+            trailing: store.attentionSections.isEmpty ? clearItem : nil,
             to: &nodes
         )
 
@@ -240,14 +242,14 @@ private extension StatusMenuPresentationBuilder {
         )
     }
 
-    /// Clear Finished dismisses Rex done rows and settled Rex error rows. It is shown at the end of
-    /// NEEDS ATTENTION when a Rex done or error row exists; Herdr rows never show it.
-    func clearFinishedNode(attention: [SessionMenuSection]) -> StatusMenuNode? {
-        let rexStates = attention.filter { $0.session.key.backend == .rex }.flatMap { $0.items.map(\.state) }
-        let hasRexError = rexStates.contains(.attention(.error))
-        guard hasRexError || rexStates.contains(.attention(.done)) else { return nil }
+    /// Clear Finished is shown when it would dismiss something (the backends' `clearable`: an
+    /// unseen done or settled error record), at the end of NEEDS ATTENTION, or of WORKING when
+    /// there is no NEEDS ATTENTION. "and Failed" only when a settled error would be cleared.
+    /// Herdr never reports anything clearable.
+    func clearFinishedNode(_ clearable: ClearableRecords) -> StatusMenuNode? {
+        guard !clearable.isEmpty else { return nil }
         return .action(
-            title: hasRexError ? "Clear Finished and Failed" : "Clear Finished",
+            title: clearable.error ? "Clear Finished and Failed" : "Clear Finished",
             state: .off,
             isEnabled: true,
             action: .clearFinished

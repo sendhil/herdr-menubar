@@ -138,6 +138,39 @@ final class RexSeenStateTests: XCTestCase {
         XCTAssertEqual(events.lastSnapshot("s1")?.attention.map(\.state), [.error], "and is reported for notification again")
     }
 
+    // MARK: Clearable (what Clear Finished would dismiss)
+
+    private func clearable(_ h: RexReducerHarness) -> ClearableRecords {
+        h.reducer.snapshot(forSession: "s1").clearable
+    }
+
+    func testClearableCountsADoneRecordUnderABlockedPrimary() {
+        let h = started([L.Rec(state: "blocked", at: 1), L.Rec(id: "c", state: "done", at: 1)])
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.blocked))
+        XCTAssertEqual(clearable(h), ClearableRecords(done: true))
+    }
+
+    func testClearableErrorOnlyOnceSettledAndNothingAfterClearing() {
+        var h = started([L.Rec(state: "working", at: 1)])
+        h.apply(L.block("s1", "b1", [L.Rec(state: "error", at: 2)], via: L.changed("error", at: 2)))
+        XCTAssertEqual(clearable(h), .none, "an unsettled error would not be cleared")
+
+        let settled = h.advance(.seconds(2))
+        XCTAssertEqual(clearable(h), ClearableRecords(error: true))
+        XCTAssertEqual(settled.lastSnapshot("s1")?.clearable, ClearableRecords(error: true), "reported to the store")
+
+        let cleared = h.reducer.clearFinished()
+        XCTAssertEqual(clearable(h), .none)
+        XCTAssertEqual(cleared.lastSnapshot("s1")?.clearable, ClearableRecords.none)
+    }
+
+    func testClearableIgnoresSeenAndHeldRecords() throws {
+        var h = started([L.Rec(state: "done", at: 1)])
+        h.apply(L.block("s1", "b3", [L.Rec(state: "done", at: 1)]))   // held: not in the view
+        h.reducer.markSeen(try XCTUnwrap(row(h, "b1")?.seenToken))
+        XCTAssertEqual(clearable(h), .none)
+    }
+
     func testMarksPersistAcrossGenerationsAndResetClearsThem() throws {
         var h = started([L.Rec(state: "done", at: 1)])
         h.reducer.markSeen(try XCTUnwrap(row(h, "b1")?.seenToken))

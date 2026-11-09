@@ -35,13 +35,16 @@ private struct SessionPresentationState {
     private(set) var rows: [AgentRow] = []
     private(set) var attentionRows: [AgentRow] = []
     private(set) var workingRows: [AgentRow] = []
+    private(set) var clearable = ClearableRecords.none
 
     init(descriptor: AgentSessionDescriptor) {
         self.descriptor = descriptor
     }
 
     /// Sections and badge come from `RowState` only.
-    mutating func setRows(_ newRows: [AgentRow]) {
+    mutating func setSnapshot(_ snapshot: BackendSnapshot) {
+        clearable = snapshot.clearable
+        let newRows = snapshot.rows
         rows = newRows
         attentionRows = newRows.filter(\.isAttention).sorted(by: AgentRow.attentionOrder)
         workingRows = newRows.filter { $0.state == .working }.sorted(by: AgentRow.labelOrder)
@@ -103,6 +106,11 @@ final class AgentStore {
 
     var attentionSections: [SessionMenuSection] { sections(\.attentionRows) }
     var workingSections: [SessionMenuSection] { sections(\.workingRows) }
+
+    /// What Clear Finished would dismiss, over every session with rows.
+    var clearable: ClearableRecords {
+        sessions.values.reduce(ClearableRecords.none) { $0.merged(with: $1.clearable) }
+    }
 
     var unavailableSessions: [UnavailableSession] {
         sessions.values.compactMap { state in
@@ -396,7 +404,7 @@ private extension AgentStore {
             state.descriptor = descriptor
             state.isConnected = true
             state.unavailableMessage = nil
-            state.setRows(snapshot.rows)
+            state.setSnapshot(snapshot)
             sessions[descriptor.key] = state
             await attentionCoordinator.reconcile(
                 session: descriptor,
@@ -409,7 +417,7 @@ private extension AgentStore {
             }
         case .snapshot(let key, let snapshot):
             guard var state = sessions[key], state.isConnected else { return }
-            state.setRows(snapshot.rows)
+            state.setSnapshot(snapshot)
             sessions[key] = state
             await attentionCoordinator.reconcile(
                 session: state.descriptor,
@@ -420,7 +428,7 @@ private extension AgentStore {
             guard var state = sessions[key] else { return }
             state.isConnected = false
             state.unavailableMessage = message
-            state.setRows([])
+            state.setSnapshot(.empty)
             sessions[key] = state
             await attentionCoordinator.unavailable(session: key)
         case .removed(let key):
@@ -444,7 +452,7 @@ private extension AgentStore {
             let keys = sessions.keys.filter { $0.backend == kind }
             for key in keys {
                 sessions[key]?.isConnected = false
-                sessions[key]?.setRows([])
+                sessions[key]?.setSnapshot(.empty)
             }
             // Publish the outage before awaiting the coordinator.
             deriveConnectionState()

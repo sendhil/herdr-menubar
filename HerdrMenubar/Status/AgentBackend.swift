@@ -170,10 +170,33 @@ struct AttentionRecord: Equatable, Sendable {
     let message: String?
 }
 
+/// What Clear Finished would dismiss in a session: any settled, unseen `done` or `error` record
+/// of a placed block, including records that do not decide the block's row. Rex only; Herdr
+/// clears `done` itself and always reports `.none`.
+struct ClearableRecords: Equatable, Sendable {
+    var done = false
+    var error = false
+
+    static let none = ClearableRecords()
+
+    var isEmpty: Bool { !done && !error }
+
+    func merged(with other: ClearableRecords) -> ClearableRecords {
+        ClearableRecords(done: done || other.done, error: error || other.error)
+    }
+}
+
 struct BackendSnapshot: Equatable, Sendable {
     let rows: [AgentRow]
     /// In delivery order (Herdr: label order).
     let attention: [AttentionRecord]
+    let clearable: ClearableRecords
+
+    init(rows: [AgentRow], attention: [AttentionRecord], clearable: ClearableRecords = .none) {
+        self.rows = rows
+        self.attention = attention
+        self.clearable = clearable
+    }
 
     static let empty = BackendSnapshot(rows: [], attention: [])
 }
