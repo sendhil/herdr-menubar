@@ -84,6 +84,9 @@ struct RexReducer: Sendable {
     private var dismissalOrder = 0
     /// Bumped whenever `dismissals` changes, so RexBackend saves only real changes.
     private(set) var dismissalsRevision = 0
+    /// Nothing was stored yet (upgrade or first run): the first successful snapshot dismisses
+    /// every settled terminal record it has, so existing results do not flood the badge.
+    private var seedsDismissalsAtFirstSnapshot = false
     /// Set at the first successful `snapshot_done` since start, whose records all settle at once.
     private var hasCompletedFirstSnapshot = false
     /// Sessions the store has been told about with `.connected` and not yet `.removed`.
@@ -277,10 +280,12 @@ struct RexReducer: Sendable {
     // MARK: Seen-state
 
     /// Replaces the dismissals with `list` (oldest first; the newest `dismissalCap` are kept) and
-    /// hides any known record they match. Called by RexBackend at `start()`.
-    mutating func loadDismissals(_ list: [RexDismissal]) {
+    /// hides any known record they match. `nil` (nothing stored yet) seeds them at the first
+    /// successful snapshot instead. Called by RexBackend at `start()`.
+    mutating func loadDismissals(_ list: [RexDismissal]?) {
         dismissed = [:]
-        for dismissal in list.suffix(Self.dismissalCap) {
+        seedsDismissalsAtFirstSnapshot = list == nil
+        for dismissal in (list ?? []).suffix(Self.dismissalCap) {
             dismissalOrder += 1
             dismissed[dismissal.key] = Dismissed(state: dismissal.state, updatedAt: dismissal.updatedAt, order: dismissalOrder)
         }
@@ -566,6 +571,7 @@ struct RexReducer: Sendable {
         } else {
             settleImmediately { _ in true }
             hasCompletedFirstSnapshot = true
+            if seedsDismissalsAtFirstSnapshot { seedDismissals() }
         }
 
         // 2–4. Discovery, then `.connected` per session, then `.removed` for vanished sessions.
@@ -581,6 +587,18 @@ struct RexReducer: Sendable {
         for sessionID in vanished {
             output.events.append(.removed(key(sessionID)))
         }
+    }
+
+    /// Upgrade or first run: dismiss every settled, unseen terminal record that has an
+    /// `updated_at`, and mark the (possibly empty) result for saving so later launches load it.
+    private mutating func seedDismissals() {
+        seedsDismissalsAtFirstSnapshot = false
+        for (key, known) in lastKnown
+        where Self.isTerminal(known.state) && known.updatedAt != nil
+            && settled[key] == known.epoch && seenMarks[key] != known.epoch {
+            dismiss(key, known)
+        }
+        dismissalsRevision += 1
     }
 
     private func emitDescriptorChange(_ sessionID: String, oldName: String, into output: inout RexReducerOutput) {

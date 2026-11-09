@@ -358,16 +358,17 @@ extension FakeWatcherProcess {
 /// Dismissal store that starts with `initial` and records every save.
 final class RecordingRexDismissalStore: RexDismissalStoring, @unchecked Sendable {
     private let lock = NSLock()
-    private var current: [RexDismissal]
+    private var current: [RexDismissal]?
     private var _saved: [[RexDismissal]] = []
     private var _loadCount = 0
 
-    init(_ initial: [RexDismissal] = []) { current = initial }
+    /// `nil` means nothing stored yet (seeding).
+    init(_ initial: [RexDismissal]? = []) { current = initial }
 
     var saved: [[RexDismissal]] { lock.withLock { _saved } }
     var loadCount: Int { lock.withLock { _loadCount } }
 
-    func load() -> [RexDismissal] {
+    func load() -> [RexDismissal]? {
         lock.withLock {
             _loadCount += 1
             return current

@@ -156,6 +156,52 @@ final class RexDismissalPersistenceTests: XCTestCase {
         XCTAssertEqual(h.reducer.dismissals, [dismissal()])
     }
 
+    // MARK: Seeding (no stored dismissals yet: upgrade or first run)
+
+    func testAbsentStoreSeedsEverySettledTerminalRecordAtTheFirstSnapshot() {
+        var h = RexReducerHarness()
+        h.reducer.loadDismissals(nil)
+        let revision = h.reducer.dismissalsRevision
+        let events = h.apply(lines([L.Rec(state: "done", at: 1), L.Rec(id: "c", state: "error", at: 1)],
+                                   [L.Rec(state: "blocked", at: 1)]))
+
+        XCTAssertNil(row(h, "b1"), "old results do not flood the badge after upgrading")
+        XCTAssertEqual(row(h, "b2")?.state, .attention(.blocked))
+        XCTAssertEqual(Set(h.reducer.dismissals), [dismissal(), dismissal(id: "c", "error")])
+        XCTAssertGreaterThan(h.reducer.dismissalsRevision, revision)
+        guard case .connected(_, let first)? = events.first(where: { if case .connected = $0 { true } else { false } }) else {
+            return XCTFail("\(events)")
+        }
+        XCTAssertEqual(first.rows.map(\.target.paneID), ["b2"], "hidden already in the first .connected")
+    }
+
+    func testSeedingWithNothingToSeedStillMarksTheStoreForSaving() {
+        var h = RexReducerHarness()
+        h.reducer.loadDismissals(nil)
+        let revision = h.reducer.dismissalsRevision
+        h.apply(lines([L.Rec(state: "working", at: 1)]))
+        XCTAssertEqual(h.reducer.dismissals, [])
+        XCTAssertGreaterThan(h.reducer.dismissalsRevision, revision, "[] is saved so the next launch does not seed")
+    }
+
+    func testSeedingHappensOnlyAtTheFirstSnapshotAndSkipsRecordsWithoutTimestamp() {
+        var h = RexReducerHarness()
+        h.reducer.loadDismissals(nil)
+        h.apply(lines([L.Rec(state: "done", at: nil)]))
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done), "no stable identity, so not seeded")
+
+        h.apply(L.block("s1", "b2", [L.Rec(state: "done", at: 5)]))
+        XCTAssertEqual(row(h, "b2")?.state, .attention(.done), "a result after the first snapshot is new")
+        h.restart()
+        h.apply(lines([L.Rec(state: "done", at: nil)], [L.Rec(state: "done", at: 5)]))
+        XCTAssertEqual(row(h, "b2")?.state, .attention(.done), "a later snapshot does not seed")
+    }
+
+    func testStoredEmptyListDoesNotSeed() {
+        let (h, _) = launch([], lines([L.Rec(state: "done", at: 1)]))
+        XCTAssertEqual(row(h, "b1")?.state, .attention(.done))
+    }
+
     func testDismissalsBeforeAnySnapshotAreNotPruned() {
         var h = RexReducerHarness()
         h.reducer.loadDismissals([dismissal("b9")])
@@ -184,19 +230,21 @@ final class RexDismissalPersistenceTests: XCTestCase {
 
     // MARK: Store
 
-    func testUserDefaultsStoreRoundTripsAndIgnoresMalformedData() throws {
+    func testUserDefaultsStoreRoundTripsAndTellsAbsentFromEmpty() throws {
         let suite = "dev.herdr.menubar.tests.dismissals.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UserDefaultsRexDismissalStore(defaults: defaults)
 
-        XCTAssertEqual(store.load(), [])
+        XCTAssertNil(store.load(), "absent")
+        store.save([])
+        XCTAssertEqual(store.load(), [], "stored empty is not absent")
         store.save([dismissal(), dismissal("b2", "error", at: 4)])
         XCTAssertNotNil(defaults.data(forKey: UserDefaultsRexDismissalStore.key))
         XCTAssertEqual(UserDefaultsRexDismissalStore(defaults: defaults).load(), [dismissal(), dismissal("b2", "error", at: 4)])
 
         defaults.set("garbage", forKey: UserDefaultsRexDismissalStore.key)
-        XCTAssertEqual(store.load(), [])
+        XCTAssertNil(store.load(), "undecodable reads as absent")
         XCTAssertEqual(UserDefaultsRexDismissalStore.key, "rexDismissedRecords")
     }
 }

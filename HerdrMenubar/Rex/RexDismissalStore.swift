@@ -17,19 +17,20 @@ struct RexDismissal: Codable, Hashable, Sendable {
 
 /// Where RexBackend keeps dismissals between launches. Loaded at `start()`, saved when they change.
 protocol RexDismissalStoring: Sendable {
-    /// Oldest first.
-    func load() -> [RexDismissal]
+    /// Oldest first. `nil` when nothing is stored yet (or it is unreadable): the reducer then
+    /// seeds dismissals from the first snapshot. A stored empty list is `[]`.
+    func load() -> [RexDismissal]?
     func save(_ dismissals: [RexDismissal])
 }
 
-/// Keeps nothing: dismissals last for the backend's run only. The default, so tests and
-/// previews never touch real preferences.
+/// Keeps nothing: dismissals last for the backend's run only, and nothing is seeded. The default,
+/// so tests and previews never touch real preferences.
 struct NoRexDismissalStore: RexDismissalStoring {
-    func load() -> [RexDismissal] { [] }
+    func load() -> [RexDismissal]? { [] }
     func save(_ dismissals: [RexDismissal]) {}
 }
 
-/// JSON-encoded under `rexDismissedRecords`. Unreadable data loads as empty.
+/// JSON-encoded under `rexDismissedRecords`. Absent or unreadable data loads as `nil`.
 final class UserDefaultsRexDismissalStore: RexDismissalStoring, @unchecked Sendable {
     // UserDefaults is thread-safe; it is just not annotated Sendable.
     static let key = "rexDismissedRecords"
@@ -40,10 +41,9 @@ final class UserDefaultsRexDismissalStore: RexDismissalStoring, @unchecked Senda
         self.defaults = defaults
     }
 
-    func load() -> [RexDismissal] {
-        guard let data = defaults.data(forKey: Self.key),
-              let dismissals = try? JSONDecoder().decode([RexDismissal].self, from: data) else { return [] }
-        return dismissals
+    func load() -> [RexDismissal]? {
+        guard let data = defaults.data(forKey: Self.key) else { return nil }
+        return try? JSONDecoder().decode([RexDismissal].self, from: data)
     }
 
     func save(_ dismissals: [RexDismissal]) {

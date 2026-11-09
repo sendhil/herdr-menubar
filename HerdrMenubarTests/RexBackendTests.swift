@@ -234,6 +234,16 @@ final class RexBackendTests: XCTestCase {
         XCTAssertEqual(relaunched.rows, [])
     }
 
+    func testFirstLaunchWithoutStoredDismissalsSeedsAndSaves() async {
+        let store = RecordingRexDismissalStore(nil)
+        dismissalStore = store
+        await startHealthy(state: "done")
+        guard case .connected(_, let snapshot) = recorder.events.last else { return XCTFail("\(recorder.events)") }
+        XCTAssertEqual(snapshot.rows, [], "existing results are seeded as dismissed")
+        let seeded = RexDismissal(sessionID: "s1", blockID: "b1", recordID: "", state: "done", updatedAt: RexLines.micros(1))
+        XCTAssertEqual(store.saved.last, [seeded])
+    }
+
     // MARK: Supervision
 
     func testSnapshotTimeoutFailsAfterTwentySecondsWithoutMarkingTheCandidate() async {
