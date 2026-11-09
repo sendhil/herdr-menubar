@@ -27,7 +27,8 @@ indirect enum StatusMenuNode: Equatable, Sendable {
         isEnabled: Bool,
         action: StatusMenuAction
     )
-    case submenu(title: String, children: [StatusMenuNode])
+    /// `state` marks the parent item: on (checkmark), mixed (dash), or off (nothing).
+    case submenu(title: String, state: MenuItemState = .off, children: [StatusMenuNode])
     case action(
         title: String,
         state: MenuItemState,

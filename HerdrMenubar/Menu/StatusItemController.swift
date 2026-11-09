@@ -262,8 +262,9 @@ private extension NativeStatusMenuRenderer {
             item.isEnabled = isEnabled
             return item
 
-        case let .submenu(title, children):
+        case let .submenu(title, state, children):
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.state = nativeState(state)
             item.submenu = makeMenu(children)
             return item
 

@@ -300,6 +300,60 @@ final class StatusItemControllerTests: XCTestCase {
         ])
     }
 
+    /// Spec "Notification settings": the parent shows a checkmark (all on), a dash (some), or
+    /// nothing (none). The status item and the detached menu share this renderer.
+    func testNativeRendererShowsSubmenuStateOnTheParentItem() throws {
+        let child = StatusMenuNode.toggle(title: "Blocked", isOn: true, isEnabled: true, action: .setSound(false))
+        let nodes: [StatusMenuNode] = [
+            .submenu(title: "All", state: .on, children: [child]),
+            .submenu(title: "Some", state: .mixed, children: [child]),
+            .submenu(title: "None", state: .off, children: [child]),
+            .submenu(title: "Terminal", children: [child])
+        ]
+        var received: [StatusMenuAction] = []
+        let renderer = NativeStatusMenuRenderer { received.append($0) }
+
+        let menu = renderer.makeMenu(nodes)
+
+        XCTAssertEqual(menu.items.map(\.state), [.on, .mixed, .off, .off])
+        XCTAssertEqual(menu.items.map(\.title), ["All", "Some", "None", "Terminal"])
+        for item in menu.items {
+            XCTAssertNil(item.representedObject)
+            XCTAssertTrue(item.isEnabled)
+        }
+        let toggle = try XCTUnwrap(menu.items[1].submenu?.items.first)
+        XCTAssertEqual(toggle.state, .on)
+        XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(toggle.action), to: toggle.target, from: toggle))
+        XCTAssertEqual(received, [.setSound(false)])
+    }
+
+    func testDetachedMenuPresentsSubmenuStateNodesUnchanged() {
+        let nodes: [StatusMenuNode] = [
+            .submenu(title: "Herdr Agents", state: .mixed, children: [
+                .toggle(title: "Blocked", isOn: true, isEnabled: true, action: .setSound(false))
+            ])
+        ]
+        var shown: [[StatusMenuNode]] = []
+        var performed: [StatusMenuAction] = []
+        let detached = DetachedMenuController(
+            show: { nodes, action in shown.append(nodes); action(.setSound(false)) },
+            cancel: {},
+            action: { performed.append($0) }
+        )
+        detached.apply(StatusItemPresentation(
+            icon: MenuBarIconPresentation(connectionState: .connected, attentionCount: 0),
+            accessibilityValue: "",
+            menu: nodes
+        ))
+        detached.show()
+
+        XCTAssertEqual(shown, [nodes])
+        XCTAssertNotEqual(nodes[0], .submenu(title: "Herdr Agents", state: .on, children: [
+            .toggle(title: "Blocked", isOn: true, isEnabled: true, action: .setSound(false))
+        ]))
+        XCTAssertEqual(performed, [.setSound(false)])
+    }
+
     func testNativeIconApplicationPreservesExactAttentionCountAndAccessibility() throws {
         let button = NSButton()
         let snapshot = presentation(12, node: .heading("TWELVE"))

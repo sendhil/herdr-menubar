@@ -422,7 +422,7 @@ private final class PresentationFixture {
 
     func terminalNode() -> StatusMenuNode? {
         presentation().menu.first {
-            if case .submenu(title: "Terminal", children: _) = $0 { return true }
+            if case .submenu(title: "Terminal", state: _, children: _) = $0 { return true }
             return false
         }
     }
