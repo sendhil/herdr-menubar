@@ -56,11 +56,11 @@ The menu is status-first: **Needs Attention** and **Working** are the top-level 
 
 Herdr Menubar also monitors agents running in [Rex](https://www.superlogical.com/rex/docs), alongside Herdr, in the same menu and badge. Rex support is on by default but does nothing visible unless Rex is installed:
 
-- **Requires Rex.** The app looks for the `rex` CLI bundled with the Rex server (`~/Library/Application Support/com.superlogical.rex/RexServer/Versions/*/…/rex`), then `/opt/homebrew/bin/rex`, `/usr/local/bin/rex`, and `~/.local/bin/rex`. A login-shell `command -v rex` probe runs at most once per launch and only when Rex.app is installed. Without Rex the menu looks exactly as before, apart from the **Herdr Agents** submenu; with Rex installed but never running, likewise.
+- **Requires Rex.** The app looks for the `rex` CLI bundled with the Rex server (`~/Library/Application Support/com.superlogical.rex/RexServer/Versions/*/…/rex`), then `/opt/homebrew/bin/rex`, `/usr/local/bin/rex`, and `~/.local/bin/rex`. A login-shell `command -v rex` probe runs at most once per launch and only when Rex.app is installed. Without Rex the menu looks exactly as before, apart from the **Herdr Agents** submenu, and the app rechecks those paths every 5 minutes. With Rex installed but its server not running the menu also looks as before, but the app runs the `rex` CLI (`rex version` and `rex --autostart=false server status`, which never starts the server) about once a minute to notice when the server comes up.
 - **Rows.** Blocked and failed Rex agents appear under **Needs Attention** and count toward the badge. Finished Rex agents appear under **Finished** (not counted, because Rex keeps `done` until it is replaced); **Clear Finished** (or **Clear Finished and Failed**) dismisses them for this app run. Working Rex agents appear under **Working**.
 - **Switching sessions needs Remote Control.** Selecting a Rex row focuses the block on the Rex server and then asks the connected Rex app to show that session. The second step needs **Remote Control** enabled in the Rex app; without it the block is focused but the app shows a partial-focus message instead of switching.
 
-Rex preferences are read once at launch and set with `defaults write dev.herdr.menubar …`:
+`enabledBackends` and `rexCLIPath` are read once at launch (relaunch after changing them) and are set only with `defaults write dev.herdr.menubar …`. The notify-state keys are written by the submenus and take effect immediately (a value set with `defaults write` applies at the next launch):
 
 | Key | Type | Absent means |
 | --- | --- | --- |
