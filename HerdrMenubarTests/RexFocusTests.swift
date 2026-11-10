@@ -49,10 +49,15 @@ final class RexFocusTests: XCTestCase {
         #"{"client_id":"\#(id)","connection_state":"\#(state)","info":{"kind":"\#(kind)","platform":"\#(platform)","label":"\#(label)"}}"#
     }
 
-    /// Answers `client ls` with `clientList` and `session.select` with `select`.
-    private func script(clientList: ProcessResult, select: ProcessResult = result(.exited(0))) {
+    nonisolated private static let windowFound = result(.exited(0), #"{"lookup":"ok","window":"w1"}"# + "\n")
+
+    /// Answers `client ls` with `clientList`, the fresh block-window lookup (`rex do -s … -e`) with
+    /// `lookup`, and `session.select` with `select`.
+    private func script(clientList: ProcessResult, select: ProcessResult = result(.exited(0)),
+                        lookup: ProcessResult = windowFound) {
         runner.setHandler { request in
             if request.arguments == RexFocus.clientListArguments { return clientList }
+            if request.arguments.contains("-e") { return lookup }
             if request.arguments.contains("session.select") { return select }
             return ProcessResult(outcome: .launchFailed("unexpected \(request.arguments)"))
         }
@@ -163,11 +168,88 @@ final class RexFocusTests: XCTestCase {
         let partial = await backend.activate(target)
         XCTAssertNil(partial)
         XCTAssertEqual(app.activations, 1)
-        let list = runner.requests[0]
+        XCTAssertEqual(runner.requests.count, 3)
+        let list = try XCTUnwrap(runner.requests.first)
         XCTAssertEqual(list.arguments, ["--autostart=false", "client", "ls", "--json"])
-        let select = runner.requests[1]
-        XCTAssertEqual(select.arguments, ["--autostart=false", "-C", "c1", "do", "session.select", "--args", #"{"session_id":"s1"}"#])
+        let select = try XCTUnwrap(runner.requests.last)
+        XCTAssertEqual(select.arguments, ["--autostart=false", "-C", "c1", "do", "session.select", "--args", #"{"session_id":"s1","window_id":"w1"}"#])
         XCTAssertEqual(select.timeout, .seconds(5))
+    }
+
+    func testActivateLooksUpTheBlockWindowFreshOnTheSessionByIDs() async throws {
+        await startBackend()
+        script(clientList: Self.result(.exited(0), Self.clients([Self.client("c1")])))
+        _ = await backend.activate(target)
+        let lookup = try XCTUnwrap(runner.requests.first { $0.arguments.contains("-e") })
+        XCTAssertEqual(Array(lookup.arguments.prefix(7)),
+                       ["--autostart=false", "do", "-s", "s1", "--args", #"{"block":"b1","session":"s1"}"#, "-e"])
+        XCTAssertEqual(lookup.timeout, .seconds(5))
+    }
+
+    /// Session s1 has windows w1 (its usual tab) and w2. The watcher's view (stale) puts b1 in w1;
+    /// the block has since moved, so the fresh lookup answers w2, then w3. Each activation uses
+    /// only its own lookup.
+    func testActivateUsesTheFreshWindowNotStaleWatcherMetadataOrALastWindow() async {
+        await startBackend()
+        let list = Self.result(.exited(0), Self.clients([Self.client("c1")]))
+        script(clientList: list, lookup: Self.result(.exited(0), #"{"lookup":"ok","window":"w2"}"#))
+        _ = await backend.activate(target)
+        script(clientList: list, lookup: Self.result(.exited(0), #"{"lookup":"ok","window":"w3"}"#))
+        _ = await backend.activate(target)
+        let selects = runner.requests.filter { $0.arguments.contains("session.select") }.map { $0.arguments.last }
+        XCTAssertEqual(selects, [#"{"session_id":"s1","window_id":"w2"}"#, #"{"session_id":"s1","window_id":"w3"}"#].map { Optional($0) })
+    }
+
+    func testActivateWithoutAUsableWindowIsPartialAndNeverSelectsTheSessionOnly() async {
+        await startBackend()
+        let list = Self.result(.exited(0), Self.clients([Self.client("c1")]))
+        let cases: [(ProcessResult, String)] = [
+            (Self.result(.exited(0), #"{"lookup":"missing"}"#), "That pane no longer exists in work"),
+            (Self.result(.exited(0), #"{"lookup":"detached"}"#), "That pane is not in a tab in work"),
+            (Self.result(.exited(0), #"{"lookup":"ok"}"#), "That pane is not in a tab in work"),
+            (Self.result(.exited(0), #"{"lookup":"error","err":"code=internal boom"}"#), "work: code=internal boom"),
+            (Self.result(.exited(3), stderr: "Error: session target s1 not found\n"), "work is no longer running in Rex"),
+            (Self.result(.timedOut), "Rex did not respond in time."),
+            (Self.result(.exited(1), "hello", stderr: "Error: broken\n"), "Error: broken"),
+            (Self.result(.exited(0), "hello"), "Could not find the pane's tab in work"),
+        ]
+        for (lookup, message) in cases {
+            script(clientList: list, lookup: lookup)
+            let partial = await backend.activate(target)
+            XCTAssertEqual(partial, message)
+        }
+        XCTAssertFalse(runner.requests.contains { $0.arguments.contains("session.select") }, "no session-only success path")
+        XCTAssertEqual(app.activations, cases.count, "Rex.app is still brought forward")
+    }
+
+    func testClientRejectingTheWindowArgumentIsPartialNotSuccess() async {
+        await startBackend()
+        script(clientList: Self.result(.exited(0), Self.clients([Self.client("c1")])),
+               select: Self.result(.exited(2), stderr: "Error: invalid args: unknown property window_id\n"))
+        let partial = await backend.activate(target)
+        XCTAssertEqual(partial, "Error: invalid args: unknown property window_id")
+        XCTAssertEqual(runner.requests.filter { $0.arguments.contains("session.select") }.count, 1, "no session-only retry")
+    }
+
+    func testSupersededWindowLookupNeverSelectsOrActivates() async {
+        await startBackend()
+        let gate = RexTestGate()
+        let list = Self.result(.exited(0), Self.clients([Self.client("c1")]))
+        runner.setHandler { request in
+            if request.arguments == RexFocus.clientListArguments { return list }
+            await gate.wait()
+            return Self.windowFound
+        }
+        let backend = self.backend!
+        let task = Task { await backend.activate(self.target) }
+        await rexWaitUntil { self.runner.requests.count == 2 }
+        task.cancel()
+        gate.open()
+        let partial = await task.value
+        XCTAssertNil(partial)
+        XCTAssertEqual(runner.requests.count, 2, "no session.select after cancellation")
+        XCTAssertFalse(runner.requests.contains { $0.arguments.contains("session.select") })
+        XCTAssertEqual(app.activations, 0)
     }
 
     func testActivateWithoutAClient() async {
@@ -216,12 +298,13 @@ final class RexFocusTests: XCTestCase {
         let list = Self.result(.exited(0), Self.clients([Self.client("c1")]))
         runner.setHandler { request in
             if request.arguments == RexFocus.clientListArguments { return list }
+            if request.arguments.contains("-e") { return Self.windowFound }
             await gate.wait()
             return Self.result(.exited(0))   // the switch finished, but the selection was superseded
         }
         let backend = self.backend!
         let task = Task { await backend.activate(self.target) }
-        await rexWaitUntil { self.runner.requests.count == 2 }
+        await rexWaitUntil { self.runner.requests.count == 3 }
         task.cancel()
         gate.open()
         let partial = await task.value
@@ -244,6 +327,66 @@ final class RexFocusTests: XCTestCase {
         _ = await task.value
         XCTAssertEqual(runner.requests.count, 1, "no session.select after cancellation")
         XCTAssertEqual(app.activations, 0)
+    }
+
+    // MARK: AgentStore wiring (real RexBackend, fake process runner)
+
+    /// A store over the real RexBackend with a "done" row for b1, then one selection of it.
+    private func storeAfterSelecting(lookup: ProcessResult, select: ProcessResult = result(.exited(0))) async -> AgentStore {
+        runner.setHandler { request in
+            if request.arguments == RexFocus.clientListArguments { return Self.result(.exited(0), Self.clients([Self.client("c1")])) }
+            if request.arguments.contains("session.select") { return select }
+            if request.arguments.contains(RexFocus.script) { return Self.result(.exited(0), #"{"focus":"ok"}"#) }
+            return lookup
+        }
+        backend = RexBackend(resolver: FakeRexResolver([.ready(cli)]), scriptURL: URL(fileURLWithPath: "/x.lua"),
+                             makeWatcher: watchers.factory, runner: runner, app: app, clock: ManualRexClock(),
+                             hostName: { "Studio" }, isEnabled: { true })
+        let store = makeBackendStore([backend])
+        await store.start()
+        await rexWaitUntil { watchers.processes.count == 1 && watchers.processes[0].started }
+        watchers.last!.send(RexJSON.snapshot(state: "done"))
+        await rexWaitUntil { !store.attentionSections.isEmpty }
+        await store.selectRow(SelectionTarget(target: target, sessionDisplayName: "work"))
+        return store
+    }
+
+    func testFailedWindowLookupKeepsTheDoneRowAndShowsTheError() async {
+        let store = await storeAfterSelecting(lookup: Self.result(.exited(0), #"{"lookup":"detached"}"#))
+        XCTAssertEqual(store.transientError, "That pane is not in a tab in work")
+        XCTAssertFalse(store.attentionSections.isEmpty, "the indicator is retained, nothing is marked seen")
+        await store.stop()
+    }
+
+    /// A runner may report `.cancelled` while the caller is not cancelled; that is a failure, not a silent success.
+    func testRunnerCancelledLookupWithAnUncancelledCallerKeepsTheRowAndNeverSelects() async {
+        let store = await storeAfterSelecting(lookup: Self.result(.cancelled))
+        XCTAssertNotNil(store.transientError)
+        XCTAssertFalse(store.attentionSections.isEmpty)
+        XCTAssertFalse(runner.requests.contains { $0.arguments.contains("session.select") })
+        await store.stop()
+    }
+
+    func testRunnerCancelledSelectWithAnUncancelledCallerKeepsTheRow() async {
+        let store = await storeAfterSelecting(lookup: Self.windowFound, select: Self.result(.cancelled))
+        XCTAssertNotNil(store.transientError)
+        XCTAssertFalse(store.attentionSections.isEmpty)
+        await store.stop()
+    }
+
+    func testClientRejectingTheWindowArgumentKeepsTheRowThroughTheStore() async {
+        let store = await storeAfterSelecting(lookup: Self.windowFound,
+                                              select: Self.result(.exited(2), stderr: "Error: invalid args\n"))
+        XCTAssertEqual(store.transientError, "Error: invalid args")
+        XCTAssertFalse(store.attentionSections.isEmpty)
+        await store.stop()
+    }
+
+    func testExactTabSuccessMarksTheDoneRowSeen() async {
+        let store = await storeAfterSelecting(lookup: Self.windowFound)
+        XCTAssertNil(store.transientError)
+        await rexWaitUntil { store.attentionSections.isEmpty }
+        await store.stop()
     }
 
     func testRefreshAfterSelectionIsANoOp() async {

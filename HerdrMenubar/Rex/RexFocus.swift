@@ -1,8 +1,9 @@
 import Foundation
 
 // Two-step Rex focus (spec "Focus"): `focusServer` focuses the block on the server through a
-// one-shot `rex do -s <session> -e <script>`; `activate` switches the local Rex app to the
-// session (`-C <client> do session.select`) and brings Rex.app forward. Pure argv building and
+// one-shot `rex do -s <session> -e <script>`; `activate` freshly looks up the block's containing
+// window, switches the local Rex app to that exact session window
+// (`-C <client> do session.select` with `session_id` and `window_id`) and brings Rex.app forward. Pure argv building and
 // result mapping live in `RexFocus`; the actor extension runs the processes.
 
 /// One entry of `rex client ls --json` (F13).
@@ -20,6 +21,27 @@ enum RexFocus {
     print(rex.json.encode(r and { focus = "ok" } or { focus = "error", err = tostring(err) }))
     """
 
+    /// Resolves the block's containing window from `session.list_blocks` at activation time.
+    /// `placement` other than "placed" (including unknown values) counts as detached.
+    static let windowLookupScript = """
+    local r, err = rex.session.list_blocks{ session_id = rex.args.session }
+    if not r then
+      print(rex.json.encode({ lookup = "error", err = tostring(err) }))
+      return
+    end
+    for _, b in ipairs(r.blocks or {}) do
+      if b.block_id == rex.args.block then
+        if b.placement == "placed" and b.window_id then
+          print(rex.json.encode({ lookup = "ok", window = b.window_id }))
+        else
+          print(rex.json.encode({ lookup = "detached" }))
+        end
+        return
+      end
+    end
+    print(rex.json.encode({ lookup = "missing" }))
+    """
+
     static let clientListArguments = ["--autostart=false", "client", "ls", "--json"]
     static let remoteControlOffMarker = "not accepting actions"
     static let notFoundMarker = "code=not_found"
@@ -35,6 +57,8 @@ enum RexFocus {
 
     static func paneGone(_ session: String) -> String { "That pane no longer exists in \(session)" }
     static func sessionGone(_ session: String) -> String { "\(session) is no longer running in Rex" }
+    static func paneNotInTab(_ session: String) -> String { "That pane is not in a tab in \(session)" }
+    static func windowLookupFailed(_ session: String) -> String { "Could not find the pane's tab in \(session)" }
 
     // MARK: Arguments
 
@@ -44,9 +68,16 @@ enum RexFocus {
         ["--autostart=false", "do", "-s", sessionID, "--args", json(["block": blockID]), "-e", script]
     }
 
-    /// `rex --autostart=false -C <client_id> do session.select --args '{"session_id":"<id>"}'`.
-    static func selectArguments(clientID: String, sessionID: String) -> [String] {
-        ["--autostart=false", "-C", clientID, "do", "session.select", "--args", json(["session_id": sessionID])]
+    /// `rex --autostart=false do -s <session_id> --args '{"block":…,"session":…}' -e '<lookup script>'`.
+    static func windowLookupArguments(sessionID: String, blockID: String) -> [String] {
+        ["--autostart=false", "do", "-s", sessionID, "--args", json(["block": blockID, "session": sessionID]),
+         "-e", windowLookupScript]
+    }
+
+    /// `rex --autostart=false -C <client_id> do session.select --args '{"session_id":…,"window_id":…}'`.
+    static func selectArguments(clientID: String, sessionID: String, windowID: String) -> [String] {
+        ["--autostart=false", "-C", clientID, "do", "session.select", "--args",
+         json(["session_id": sessionID, "window_id": windowID])]
     }
 
     private static func json(_ object: [String: String]) -> String {
@@ -119,6 +150,40 @@ enum RexFocus {
         return nil
     }
 
+    /// The window id, or the partial-focus message when the lookup could not name one.
+    static func windowLookup(_ result: ProcessResult, sessionName: String) -> Result<String, LookupFailure> {
+        func fail(_ message: String) -> Result<String, LookupFailure> { .failure(LookupFailure(message: message)) }
+        switch result.outcome {
+        case .exited(0):
+            var reply: [String: Any]?
+            for line in String(decoding: result.stdout, as: UTF8.self).split(whereSeparator: \.isNewline).reversed() {
+                if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                   object["lookup"] is String { reply = object; break }
+            }
+            guard let reply, let kind = reply["lookup"] as? String else {
+                return fail(result.lastStderrLine ?? windowLookupFailed(sessionName))
+            }
+            switch kind {
+            case "ok":
+                if let window = reply["window"] as? String, !window.isEmpty { return .success(window) }
+                return fail(paneNotInTab(sessionName))
+            case "missing": return fail(paneGone(sessionName))
+            case "detached": return fail(paneNotInTab(sessionName))
+            default:
+                let message = reply["err"] as? String ?? "unknown error"
+                if message.contains(notFoundMarker) { return fail(sessionGone(sessionName)) }
+                return fail("\(sessionName): \(message)")
+            }
+        case .exited(3): return fail(sessionGone(sessionName))
+        case .exited(4): return fail(rexNotRunning)
+        case .timedOut: return fail(timedOut + ".")
+        case .exited, .signaled, .launchFailed, .cancelled:
+            return fail(result.lastStderrLine ?? windowLookupFailed(sessionName))
+        }
+    }
+
+    struct LookupFailure: Error, Equatable { let message: String }
+
     /// nil when the client switched; otherwise the partial-focus message.
     static func selectPartial(_ result: ProcessResult, sessionName: String) -> String? {
         switch result.outcome {
@@ -163,12 +228,29 @@ extension RexBackend {
             return RexFocus.noClientRexRunning
         }
 
-        let result = await runner.run(ProcessRequest(
+        // Resolved fresh, after focus_block: never a remembered tab, watcher window or last window.
+        let lookup = await runner.run(ProcessRequest(
             executable: cli.path,
-            arguments: RexFocus.selectArguments(clientID: client.id, sessionID: target.session.rawID),
+            arguments: RexFocus.windowLookupArguments(sessionID: target.session.rawID, blockID: target.paneID),
             timeout: RexTimeouts.focus
         ))
-        if result.outcome == .cancelled || Task.isCancelled { return nil }
+        // Only caller cancellation is silent; a runner-reported .cancelled maps to a failure below.
+        if Task.isCancelled { return nil }
+        let windowID: String
+        switch RexFocus.windowLookup(lookup, sessionName: name) {
+        case .success(let id): windowID = id
+        case .failure(let failure):
+            // Never fall back to a session-only select: it cannot name the tab.
+            await app.activate()
+            return failure.message
+        }
+
+        let result = await runner.run(ProcessRequest(
+            executable: cli.path,
+            arguments: RexFocus.selectArguments(clientID: client.id, sessionID: target.session.rawID, windowID: windowID),
+            timeout: RexTimeouts.focus
+        ))
+        if Task.isCancelled { return nil }
         let partial = RexFocus.selectPartial(result, sessionName: name)
         if Task.isCancelled { return nil }
         await app.activate()
