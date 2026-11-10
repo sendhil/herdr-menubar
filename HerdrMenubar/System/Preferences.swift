@@ -12,6 +12,7 @@ final class Preferences {
     static let enabledBackendsKey = "enabledBackends"
     static let defaultEnabledBackends: Set<BackendKind> = [.herdr, .rex]
     static let rexCLIPathKey = "rexCLIPath"
+    static let hideRexResultsViewedInRexKey = "hideRexResultsViewedInRex"
 
     static func notifyStatesKey(for kind: BackendKind) -> String {
         "notifyStates.\(kind.rawValue)"
@@ -60,6 +61,11 @@ final class Preferences {
     /// resolve the Rex CLI automatically.
     let rexCLIPath: String?
 
+    /// Read once at launch, default off. Changed only with `defaults write`; there is no UI.
+    /// "Hide Rex results I viewed in Rex": a Done/Error row disappears once Rex's own viewed
+    /// receipt exactly matches it.
+    let hidesRexResultsViewedInRex: Bool
+
     /// One entry per backend. Absent keys use `BackendKind.defaultNotifyStates` and are not written.
     private(set) var notifyStates: [BackendKind: Set<AttentionState>]
 
@@ -94,6 +100,7 @@ final class Preferences {
             ?? Self.defaultEnabledBackends
         rexCLIPath = defaults.string(forKey: Self.rexCLIPathKey)
             .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        hidesRexResultsViewedInRex = (defaults.object(forKey: Self.hideRexResultsViewedInRexKey) as? Bool) ?? true
         storedNotifyStateBackends = Set(BackendKind.allCases.filter {
             defaults.stringArray(forKey: Self.notifyStatesKey(for: $0)) != nil
         })

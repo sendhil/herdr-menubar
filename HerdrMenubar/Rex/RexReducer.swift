@@ -62,6 +62,11 @@ struct RexReducer: Sendable {
     /// `reset()`, so an epoch is never reused.
     private var epochCounter = 0
     private var lastKnown: [RexRecordKey: LastKnown] = [:]
+    /// Per root record: the distinct results (epoch + exact `updated_at`) observed this run for
+    /// each millisecond. More than one for a millisecond makes a receipt match ambiguous.
+    private struct ResultID: Hashable, Sendable { let epoch: Int; let updatedAt: Int64 }
+    private var observedResults: [RexRecordKey: [Int64: Set<ResultID>]] = [:]
+    private static let observedResultCap = 4000
     /// Seen marks: the epoch of each record the user has seen. A `done`/`error` record is hidden
     /// iff its mark equals its current epoch. Pruned when the record gets a new epoch or is dropped.
     private var seenMarks: [RexRecordKey: Int] = [:]
@@ -341,6 +346,41 @@ struct RexReducer: Sendable {
         return output.events
     }
 
+    /// Passive acknowledgement from Rex's viewed receipts (`nil`: unavailable, change nothing).
+    /// Hides a root `done`/`error` result (a settled one, for errors) only when a root receipt for
+    /// its block carries exactly the result's current `updated_at` in milliseconds, the result is
+    /// unambiguous this run, and the block id is unique. It reuses the seen-mark path, so the
+    /// acknowledgement belongs to that epoch alone and a later result shows again.
+    mutating func acknowledgeViewedReceipts(_ receipts: [RexViewReceipt]?) -> [BackendEvent] {
+        guard let receipts, generation != nil, isSnapshotDone else { return [] }
+        var wanted: [String: Set<Int64>] = [:]
+        for receipt in receipts where receipt.recordID.isEmpty {
+            wanted[receipt.blockID, default: []].insert(receipt.millis)
+        }
+        guard !wanted.isEmpty else { return [] }
+        var blockCounts: [String: Int] = [:]
+        for key in lastKnown.keys where key.recordID.isEmpty { blockCounts[key.blockID, default: 0] += 1 }
+        var affected: Set<String> = []
+        for (key, known) in lastKnown
+        where key.recordID.isEmpty && Self.isTerminal(known.state) && seenMarks[key] != known.epoch {
+            guard let at = known.updatedAt, blockCounts[key.blockID] == 1 else { continue }
+            let millis = RexViewReceipt.millis(fromMicroseconds: at)
+            guard wanted[key.blockID]?.contains(millis) == true,
+                  observedResults[key]?[millis]?.count == 1 else { continue }
+            if known.state == RexProgramState.error.rawValue, settled[key] != known.epoch { continue }
+            dismiss(key, known)
+            affected.insert(key.sessionID)
+        }
+        var output = RexReducerOutput()
+        emitChangedSnapshots(for: affected, into: &output)
+        return output.events
+    }
+
+    /// True when a receipt could hide something: an unseen root `done`/`error` record exists.
+    var hasUnseenRootResults: Bool {
+        lastKnown.contains { $0.key.recordID.isEmpty && Self.isTerminal($0.value.state) && seenMarks[$0.key] != $0.value.epoch }
+    }
+
     /// Clear Finished: marks every unseen `done` record, and every unseen `error` record that has
     /// settled (past flap protection), of every placed block. A later epoch shows again.
     mutating func clearFinished() -> [BackendEvent] {
@@ -540,6 +580,7 @@ struct RexReducer: Sendable {
 
     private mutating func setLastKnown(_ key: RexRecordKey, state: String, updatedAt: Int64?, newEpoch: Bool,
                                        now: ContinuousClock.Instant) {
+        defer { observeResult(key) }
         if newEpoch || lastKnown[key] == nil {
             epochCounter += 1
             lastKnown[key] = LastKnown(state: state, updatedAt: updatedAt, epoch: epochCounter, epochStart: now)
@@ -561,6 +602,16 @@ struct RexReducer: Sendable {
                 setDismissal(key, state: state, updatedAt: updatedAt, keepOrder: true)
             }
         }
+    }
+
+    private mutating func observeResult(_ key: RexRecordKey) {
+        guard key.recordID.isEmpty, let known = lastKnown[key], let at = known.updatedAt,
+              Self.isTerminal(known.state) else { return }
+        if observedResults.count >= Self.observedResultCap, observedResults[key] == nil {
+            observedResults = observedResults.filter { lastKnown[$0.key] != nil }
+        }
+        observedResults[key, default: [:]][RexViewReceipt.millis(fromMicroseconds: at), default: []]
+            .insert(ResultID(epoch: known.epoch, updatedAt: at))
     }
 
     private mutating func dropLastKnown(where shouldDrop: (RexRecordKey) -> Bool) {

@@ -583,17 +583,37 @@ There is no fallback.
 1. No client selected:
    - If Rex.app is running, activate it and return "Rex app is not connected to the server." (Activation brings an already-running Rex.app forward and never launches it.)
    - Otherwise return "Rex is not running."
-2. Run `rex --autostart=false -C <client_id> do session.select --args '{"session_id":"<session_id>"}'`.
+2. Resolve the block's containing window freshly, after `focus_block` (never a remembered tab index, label, watcher view window, or shared last-window state; `focus_block` returns only `revision`):
+
+   ```
+   rex --autostart=false do -s <session_id> --args '{"block":"<block_id>","session":"<session_id>"}' -e '<RexFocus.windowLookupScript>'
+   ```
+
+   The script calls `rex.session.list_blocks{ session_id = rex.args.session }`, finds the block, and prints `{lookup:"ok",window}` only for `placement == "placed"` with a `window_id`; `detached` (any other placement counts as detached), `missing`, or `error` otherwise.
+
+   | Lookup result | Outcome |
+   |---|---|
+   | `ok` with window | continue |
+   | `missing` | partial: "That pane no longer exists in <session label>" |
+   | `detached`, or `ok` without a window | partial: "That pane is not in a tab in <session label>" |
+   | `error` | partial: "<session label>: <err>" (`not_found` reads "<session label> is no longer running in Rex") |
+   | exit 3 / exit 4 / timeout | partial: "… is no longer running in Rex" / "Rex is not running" / "Rex did not respond in time." |
+   | no JSON or other failure | partial with the last stderr line, else "Could not find the pane's tab in <session label>" |
+
+   On any partial here no `session.select` is sent: there is no session-only fallback.
+3. Run `rex --autostart=false -C <client_id> do session.select --args '{"session_id":"<session_id>","window_id":"<window_id>"}'`.
 
    | Result | Outcome |
    |---|---|
-   | exit 0 | continue |
+   | exit 0 | continue (the exact-tab request succeeded) |
    | exit 1 with `not accepting actions` | partial: "Turn on Remote Control in Rex Settings → Rex Server to switch sessions." |
    | exit 3 | partial: "Rex app disconnected." |
    | timeout (5 s) | partial: "Rex did not respond in time." |
-   | other | partial with the last stderr line |
-3. If not cancelled, activate Rex.app with `NSWorkspace` (bundle identifier `com.superlogical.rex`) if it is running; it is never launched. No Apple Events are needed.
-4. Return the partial message, or nil.
+   | other, including a client that rejects `window_id` (no retry without it) | partial with the last stderr line |
+4. If not cancelled, activate Rex.app with `NSWorkspace` (bundle identifier `com.superlogical.rex`) if it is running; it is never launched. No Apple Events are needed.
+5. Return the partial message, or nil. `AgentStore` marks a row seen only when `activate` returns nil, so a partial keeps the indicator.
+
+**Cancellation.** Only cancellation of the calling task returns nil silently (no select, no app activation). A process runner that reports `.cancelled` while the caller is not cancelled is mapped to a failure partial, so the row is retained.
 
 Server focus runs before the client switch, matching the user's `jump_attention` action.
 
@@ -808,3 +828,9 @@ The icon dims only when no session of any active backend is connected.
 - **r3 (2026-11-07).** From review round 2: session-attached focus, `session_id` in calls, `pcall` snapshot, lenient arrays, Lua clipping, per-block re-read, views on create, CLI candidates, two-step focus, Herdr `named:` keys, per-backend discovery, backend-level RECONNECTING, per-record coordinator input, rate limiting, preferences, payload v2, strings, test budget.
 - **r2 (2026-11-07).** From review round 1: CLI resolution, timer snapshot, exact-id removal, event field sources, label events, detached blocks, Remote Control, client selection, Herdr-only visibility, `connected` event, baselines, Rex done excluded from badge, sanitization, process runner, heartbeat, payload versions.
 - **r1 (2026-11-07).** Initial draft.
+
+## Addendum (2026-11-10): passive acknowledgement from Rex viewed receipts
+
+On by default (`hideRexResultsViewedInRex`, read at launch; set false to disable). `RexBackend` gets an injected `RexViewReceiptReading` (live: `CFPreferencesCopyAppValue` for `com.superlogical.rex` / `Workspace.programActivitySeen`; read-only, no synchronize), polled about once a second while an unseen root result exists and after each applied watcher batch. Only block, record and date are read; entries are capped (2000) and type-validated, and any malformed or oversized snapshot is treated as unavailable (no change).
+
+`RexReducer.acknowledgeViewedReceipts` hides a root `done`/`error` record (errors only once settled) iff a root receipt has the same block id and `updated_at / 1000` (truncation) equals the receipt's milliseconds, the block id is unique, and only one result (epoch, exact `updated_at`) was observed for that millisecond this run. It reuses `dismiss` (seen mark for the current epoch plus the persisted dismissal), so it is consumed once and a later result shows again. Existing Done rows at startup are acknowledged by the same exact match; there is no tolerance or nearest matching. Receipts carry no client provenance, so this is a heuristic for the single-user local case.

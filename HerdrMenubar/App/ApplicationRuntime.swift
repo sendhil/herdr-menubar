@@ -94,7 +94,7 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
             preferences: preferences
         )
         let store = AgentStore(
-            backends: makeBackends(preferences: preferences, herdr: herdrBackend, makeRex: liveRexBackend),
+            backends: makeBackends(preferences: preferences, herdr: herdrBackend, makeRex: { liveRexBackend(configuredCLIPath: $0, hidesViewedResults: preferences.hidesRexResultsViewedInRex) }),
             attentionCoordinator: attentionCoordinator,
             notificationService: notificationService,
             preferences: preferences
@@ -190,10 +190,11 @@ final class ApplicationRuntime: ApplicationRuntimeServing {
         return backends
     }
 
-    static func liveRexBackend(configuredCLIPath: String?) -> any AgentBackend {
+    static func liveRexBackend(configuredCLIPath: String?, hidesViewedResults: Bool = false) -> any AgentBackend {
         RexBackend(
             resolver: RexCLIResolver(configuredPath: configuredCLIPath),
             dismissalStore: UserDefaultsRexDismissalStore(defaults: Preferences.applicationDefaults()),
+            receiptReader: hidesViewedResults ? LiveRexViewReceiptReader() : nil,
             isEnabled: { true }
         )
     }

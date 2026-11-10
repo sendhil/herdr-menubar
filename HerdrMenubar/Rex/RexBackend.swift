@@ -120,6 +120,10 @@ actor RexBackend: AgentBackend {
     private let observeWake: RexWakeSubscription
     private var cancelWakeObservation: (@Sendable () -> Void)?
     private let dismissalStore: any RexDismissalStoring
+    /// Non-nil only when "hide Rex results I viewed in Rex" is on.
+    private let receiptReader: (any RexViewReceiptReading)?
+    private var receiptPollTask: Task<Void, Never>?
+    static let receiptPollInterval: Duration = .seconds(1)
     /// The reducer's `dismissalsRevision` last saved (or loaded).
     private var savedDismissalsRevision = 0
 
@@ -185,10 +189,12 @@ actor RexBackend: AgentBackend {
         hostName: @escaping @Sendable () -> String? = { Host.current().localizedName },
         observeWake: @escaping RexWakeSubscription = RexSystemWake.live,
         dismissalStore: any RexDismissalStoring = NoRexDismissalStore(),
+        receiptReader: (any RexViewReceiptReading)? = nil,
         isEnabled: @escaping @Sendable () -> Bool
     ) {
         self.observeWake = observeWake
         self.dismissalStore = dismissalStore
+        self.receiptReader = receiptReader
         self.resolver = resolver
         self.scriptURL = scriptURL
         self.makeWatcher = makeWatcher
@@ -233,6 +239,26 @@ actor RexBackend: AgentBackend {
             Task { await self?.systemDidWake() }
         }
         loopTask = Task { [weak self] in await self?.runLoop(lifecycle: owner) }
+        if receiptReader != nil {
+            receiptPollTask = Task { [weak self] in await self?.receiptPollLoop(lifecycle: owner) }
+        }
+    }
+
+    /// Polls Rex's viewed receipts about once a second, only while an unseen root result exists.
+    private func receiptPollLoop(lifecycle owner: Int) async {
+        let clock = self.clock
+        while owns(owner) {
+            do { try await clock.sleep(until: clock.now + Self.receiptPollInterval) } catch { return }
+            guard owns(owner) else { return }
+            acknowledgeViewedResults()
+        }
+    }
+
+    /// One read-only receipt pass. Unavailable receipts change nothing; it never fails the watcher.
+    private func acknowledgeViewedResults() {
+        guard let receiptReader, reducer.isSnapshotDone, reducer.hasUnseenRootResults else { return }
+        emit(reducer.acknowledgeViewedReceipts(receiptReader.readReceipts()))
+        saveDismissalsIfChanged()
     }
 
     func stop() async {
@@ -242,6 +268,8 @@ actor RexBackend: AgentBackend {
         cancelWakeObservation = nil
         let loop = loopTask
         loopTask = nil
+        receiptPollTask?.cancel()
+        receiptPollTask = nil
         loop?.cancel()
         backoffWait?.cancel()
         backoffWait = nil
@@ -505,6 +533,7 @@ actor RexBackend: AgentBackend {
 
         emit(RexEventCoalescer.coalesce(events))
         saveDismissalsIfChanged()
+        if ended == nil { acknowledgeViewedResults() }
         if let ended { finishGeneration(ended) }
         rearmTimer()
     }

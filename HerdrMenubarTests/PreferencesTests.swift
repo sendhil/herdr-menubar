@@ -234,6 +234,17 @@ final class PreferencesTests: XCTestCase {
         }
     }
 
+    func testHideRexResultsViewedInRexDefaultsOnAndReadsBool() {
+        withDefaults { defaults in
+            XCTAssertTrue(Preferences(defaults: defaults).hidesRexResultsViewedInRex)
+            XCTAssertNil(defaults.object(forKey: "hideRexResultsViewedInRex"))
+            defaults.set(false, forKey: "hideRexResultsViewedInRex")
+            XCTAssertFalse(Preferences(defaults: defaults).hidesRexResultsViewedInRex)
+            defaults.set("yes", forKey: "hideRexResultsViewedInRex")
+            XCTAssertTrue(Preferences(defaults: defaults).hidesRexResultsViewedInRex)
+        }
+    }
+
     func testRexCLIPathIsReadFromDefaultsWriteAndBlankMeansAutomatic() {
         withDefaults { defaults in
             XCTAssertNil(Preferences(defaults: defaults).rexCLIPath)
